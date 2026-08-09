@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PreviewDescriptorV1 } from '@/lib/preview/protocol';
 import { SpreadsheetPreviewRenderer } from '../SpreadsheetPreviewRenderer';
+import { workbookCellDisplayText } from '../spreadsheet-cell-text';
 
 vi.mock('ag-grid-community', () => ({
   AllCommunityModule: {},
@@ -42,6 +43,20 @@ afterEach(() => {
 });
 
 describe('SpreadsheetPreviewRenderer lifecycle', () => {
+  it('shows a formula when the workbook has no cached calculation result', () => {
+    expect(workbookCellDisplayText({
+      text: '',
+      value: { formula: 'SUM(B5:B10)' },
+    })).toBe('=SUM(B5:B10)');
+  });
+
+  it('prefers a cached formula result when ExcelJS exposes one as text', () => {
+    expect(workbookCellDisplayText({
+      text: '$2,192,850.00',
+      value: { formula: 'SUM(E5:E10)', result: 2192850 },
+    })).toBe('$2,192,850.00');
+  });
+
   it('keeps structured text tables read-only even if a stale descriptor advertises edit', async () => {
     render(
       <SpreadsheetPreviewRenderer

@@ -23,6 +23,7 @@ import {
 } from '@/lib/preview/table-parser';
 import { PreviewErrorState } from './PreviewErrorState';
 import type { PreviewRendererProps } from './renderer-types';
+import { workbookCellDisplayText } from './spreadsheet-cell-text';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -108,13 +109,13 @@ async function loadWorkbook(
       });
     }
     const columns = Array.from({ length: columnCount }, (_value, index) => {
-      const text = worksheet.getRow(1).getCell(index + 1).text.trim();
+      const text = workbookCellDisplayText(worksheet.getRow(1).getCell(index + 1)).trim();
       return text || `Column ${index + 1}`;
     });
     const rows = Array.from({ length: dataRowCount }, (_value, rowIndex) =>
       Object.fromEntries(columns.map((_name, columnIndex) => [
         `c${columnIndex}`,
-        worksheet.getRow(rowIndex + 2).getCell(columnIndex + 1).text ?? '',
+        workbookCellDisplayText(worksheet.getRow(rowIndex + 2).getCell(columnIndex + 1)),
       ])),
     );
     return { name: worksheet.name, columns, rows };
