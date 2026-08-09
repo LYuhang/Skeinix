@@ -1,0 +1,89 @@
+name: Production evidence promotion gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character commit SHA being promoted
+        required: true
+        type: string
+      release_tag:
+        description: Exact semantic v* tag being promoted
+        required: true
+        type: string
+      manifest_path:
+        description: Reviewed evidence manifest path on the default branch
+        required: true
+        default: docs/production-evidence-manifest.json
+        type: string
+      max_age_days:
+        description: Maximum accepted evidence age in days
+        required: true
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-evidence-${{ inputs.release_sha }}
+  cancel-in-progress: false
+
+jobs:
+  reject-unprotected-ref:
+    name: Reject an unprotected workflow ref
+    if: github.ref_name != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the protected default branch
+        run: |
+          echo "Production evidence must run from the default branch." >&2
+          exit 1
+
+  verify:
+    name: Verify independently reviewed production evidence
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-release
+    steps:
+      - name: Check out the protected default branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind tag, commit, repository, and evidence manifest
+        env:
+          EVIDENCE_MANIFEST: ${{ inputs.manifest_path }}
+          MAX_AGE_DAYS: ${{ inputs.max_age_days }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          [[ "$MAX_AGE_DAYS" =~ ^[1-9][0-9]*$ ]]
+          (( MAX_AGE_DAYS <= 180 ))
+          test -f "$EVIDENCE_MANIFEST"
+          test ! -L "$EVIDENCE_MANIFEST"
+          git ls-files --error-unmatch -- "$EVIDENCE_MANIFEST"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_SHA"
+          git merge-base --is-ancestor \
+            "$RELEASE_SHA" "origin/${{ github.event.repository.default_branch }}"
+          python3 scripts/security/verify_production_evidence.py \
+            "$EVIDENCE_MANIFEST" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$RELEASE_SHA" \
+            --tag "$RELEASE_TAG" \
+            --max-age-days "$MAX_AGE_DAYS"
+          sha256sum "$EVIDENCE_MANIFEST" > "$RUNNER_TEMP/production-evidence.sha256"
+
+      - name: Retain the exact accepted manifest and digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-evidence-${{ inputs.release_sha }}
+          path: |
+            ${{ inputs.manifest_path }}
+            ${{ runner.temp }}/production-evidence.sha256
+          if-no-files-found: error
+          retention-days: 90

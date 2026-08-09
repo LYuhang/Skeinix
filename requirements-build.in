@@ -1,0 +1,6 @@
+# Build-only Python tooling. This input is compiled with hashes into
+# requirements-build.txt and removed from production images after local wheels
+# are materialized.
+pip==26.2.1
+hatchling==1.31.0
+editables==0.5

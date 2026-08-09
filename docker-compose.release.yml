@@ -1,0 +1,60 @@
+# Production release overlay. The base Compose file deliberately keeps local
+# build definitions for development. Production MUST combine this overlay with
+# ``--no-build --pull always`` after verifying both exact digest references with
+# scripts/security/verify_release_attestations.sh.
+x-openfga-production: &openfga-production
+  VIBECANVAS_ENV: production
+  SANDBOX_TYPE: rootful-snapshot
+  SANDBOX_NETWORK: none
+  SANDBOX_EGRESS_MODE: proxy
+  SANDBOX_AGENT_EGRESS_POLICY: "${SANDBOX_AGENT_EGRESS_POLICY:-public}"
+  OPENFGA_API_URL: "${OPENFGA_API_URL:?Set the production HTTPS OpenFGA URL}"
+  OPENFGA_API_TOKEN: "${OPENFGA_API_TOKEN:?Set the production OpenFGA credential}"
+  OPENFGA_STORE_ID: "${OPENFGA_STORE_ID:?Pin the production OpenFGA store ID}"
+  OPENFGA_AUTHORIZATION_MODEL_ID: "${OPENFGA_AUTHORIZATION_MODEL_ID:?Pin an immutable model ID}"
+  OPENFGA_MODEL_SHA256: "${OPENFGA_MODEL_SHA256:?Pin the reviewed model SHA256}"
+
+services:
+  openfga_bootstrap:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  migrate:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+
+  sandboxd:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  sandbox_prewarm:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  api:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  celery_worker:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  celery_beat:
+    image: "${VIBECANVAS_API_IMAGE:?Set VIBECANVAS_API_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always
+    environment:
+      <<: *openfga-production
+
+  web:
+    image: "${VIBECANVAS_WEB_IMAGE:?Set VIBECANVAS_WEB_IMAGE to an attested image@sha256 digest}"
+    pull_policy: always

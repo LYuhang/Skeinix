@@ -1,0 +1,104 @@
+"""LLM credential schemas for the API Management Center.
+
+THE SECRECY CONTRACT. ``api_key`` (and the model_name / api_url config) are
+private to the owner; they are surfaced through layered out-shapes so a "list"
+or "picker" surface (PromptNode / agent — a LATER phase) NEVER sees secret
+material:
+
+  - ``CredentialPublicOut``  — id, name, description, provider, timestamps.
+    The ONLY fields any list/public surface returns. NO model_name / api_url /
+    api_key. (``provider`` IS public — it lets a picker show a provider badge.)
+  - ``CredentialOwnerOut``   — the owner's management/edit view: adds
+    model_name + api_url + an ``api_key_set: bool`` flag. STILL no plaintext key.
+
+Keys are write-only at the API boundary and stored through the envelope-
+encrypted SecretService; ordinary management APIs never reveal plaintext.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from vibecanvas_api.schemas.access import ResourceAccessOut
+
+# ----------------------------------------------------------------- out shapes
+
+
+class CredentialPublicOut(BaseModel):
+    """Public / list view. NEVER includes model_name, api_url, or api_key."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    provider: str
+    runtime_scope: Literal["langchain", "codex"]
+    model_context_tokens: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    access: ResourceAccessOut | None = None
+
+
+class CredentialOwnerOut(BaseModel):
+    """Owner management / edit view. Exposes the non-secret config
+    (model_name, api_url) plus an ``api_key_set`` flag — but NEVER the
+    plaintext key."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    provider: str
+    runtime_scope: Literal["langchain", "codex"]
+    model_name: str
+    model_context_tokens: Optional[int] = None
+    api_url: Optional[str] = None
+    # Optional outbound proxy. Owner-only (like api_url) — may carry
+    # ``user:pass@host``, so it is NEVER on CredentialPublicOut.
+    proxy: Optional[str] = None
+    api_key_set: bool
+    created_at: datetime
+    updated_at: datetime
+    access: ResourceAccessOut | None = None
+
+
+# ----------------------------------------------------------------- in shapes
+
+
+class CredentialCreate(BaseModel):
+    """Create body. ``extra='forbid'`` blocks a client smuggling
+    tenant_id / user_id / id / enabled (G4b trust boundary)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    provider: str = Field(..., min_length=1, max_length=100)
+    runtime_scope: Literal["langchain", "codex"] = "langchain"
+    model_name: str = Field(..., min_length=1, max_length=200)
+    model_context_tokens: Optional[int] = Field(default=None, gt=0)
+    api_url: Optional[str] = Field(default=None, max_length=2000)
+    proxy: Optional[str] = Field(default=None, max_length=2000)
+    api_key: str = Field(..., min_length=1, max_length=4000)
+
+
+class CredentialUpdate(BaseModel):
+    """Update body. All fields optional (partial update). ``api_key`` omitted
+    OR empty => keep the existing key (the handler keys off
+    ``exclude_unset=True`` + a non-empty check). ``extra='forbid'``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    provider: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    runtime_scope: Optional[Literal["langchain", "codex"]] = None
+    model_name: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
+    model_context_tokens: Optional[int] = Field(default=None, gt=0)
+    api_url: Optional[str] = Field(default=None, max_length=2000)
+    proxy: Optional[str] = Field(default=None, max_length=2000)
+    # Empty string is allowed here (means "keep existing"); the handler treats
+    # a falsy api_key as "no change".
+    api_key: Optional[str] = Field(default=None, max_length=4000)

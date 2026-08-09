@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.tools/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+*.log
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Claude / superpowers
+.claude/
+.gradio/
+.playwright/
+.playwright-cli/
+/test-results/
+web/screenshots/
+web/playwright-report/
+web/test-results/
+output/playwright/
+
+# Private development documentation
+# Keep public user/contributor documentation directly under docs/. Put local
+# plans, drafts, reviews, handoffs, and generated evidence in one of these
+# ignored directories so they can never be included in a GitHub push.
+**/docs/internal/
+**/docs/development/
+**/docs/drafts/
+**/docs/plans/
+**/docs/reviews/
+**/docs/superpowers/
+**/docs/.private/

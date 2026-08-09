@@ -1,0 +1,595 @@
+# Skeinix self-hosted stack
+# Run:  ./scripts/deploy/local_server.sh up
+# Stop: ./scripts/deploy/local_server.sh down  (keeps persistent volumes)
+
+services:
+
+  # ─────── infra ───────
+  postgres:
+    image: pgvector/pgvector:0.8.5-pg15-bookworm@sha256:18d16372b8406bb38a9f94cbff15d125c463d71fde2770aa8b5c64bfcc1578ee
+    environment:
+      POSTGRES_DB: vibecanvas
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev}
+      VIBECANVAS_APP_PASSWORD: ${VIBECANVAS_APP_PASSWORD:-vc_app}
+      VIBECANVAS_MIGRATOR_PASSWORD: ${VIBECANVAS_MIGRATOR_PASSWORD:-vc_migrator}
+      VIBECANVAS_MAINTENANCE_PASSWORD: ${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d vibecanvas"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      - data
+
+  # Valkey is the BSD-licensed, Redis-protocol-compatible queue and cache.
+  # Keep the service name `redis` so existing REDIS_URL values remain stable.
+  redis:
+    image: valkey/valkey:9.1.1-alpine3.24@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_REDIS_PORT:-6379}:6379"
+    volumes:
+      # Keep Valkey persistence separate from legacy Redis volumes. Redis 7.4
+      # can write RDB v12 files, which Valkey cannot import directly.
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+    networks:
+      - data
+
+  # OpenFGA has its own datastore and credentials. Relationship metadata is
+  # never mixed into the application database or exposed to sandboxes.
+  openfga_postgres:
+    image: postgres:17.10-trixie@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317
+    environment:
+      POSTGRES_DB: openfga
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: ${OPENFGA_POSTGRES_PASSWORD:-openfga-development-only}
+    volumes:
+      - openfga_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      - authorization_data
+
+  openfga_migrate:
+    image: openfga/openfga:v1.18.1@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
+    command: ["migrate"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgresql://openfga:${OPENFGA_POSTGRES_PASSWORD:-openfga-development-only}@openfga_postgres:5432/openfga?sslmode=disable
+    depends_on:
+      openfga_postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - authorization_data
+
+  openfga:
+    image: openfga/openfga:v1.18.1@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
+    command: ["run"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgresql://openfga:${OPENFGA_POSTGRES_PASSWORD:-openfga-development-only}@openfga_postgres:5432/openfga?sslmode=disable
+      OPENFGA_DATASTORE_MAX_OPEN_CONNS: "30"
+      OPENFGA_DATASTORE_METRICS_ENABLED: "true"
+      OPENFGA_AUTHN_METHOD: preshared
+      OPENFGA_AUTHN_PRESHARED_KEYS: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
+      OPENFGA_PLAYGROUND_ENABLED: "false"
+      OPENFGA_LOG_FORMAT: json
+      OPENFGA_LOG_LEVEL: info
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_PORT:-8080}:8080"
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_METRICS_PORT:-2112}:2112"
+    depends_on:
+      openfga_migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/grpc_health_probe
+        - -addr=openfga:8081
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      - authorization
+      - authorization_data
+
+  openfga_bootstrap:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: ["python", "-m", "vibecanvas_api.authorization.bootstrap"]
+    user: "10001:10001"
+    environment:
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
+      OPENFGA_STORE_NAME: vibecanvas-development
+      OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+    volumes:
+      - openfga_bootstrap_data:/run/vibecanvas-openfga
+    depends_on:
+      openfga:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - authorization
+      - maintenance_egress
+
+  # ─────── one-shot: schema migration ───────
+  # Short-lived BYPASSRLS/DDL identity; never injected into runtime services.
+  migrate:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        # The strict rev-067 backfill includes legacy Runtime State rows. The
+        # broker/checkpointer schema must therefore exist before that backfill,
+        # including on a brand-new database. Both setup and migration commands
+        # are idempotent, so this ordering is safe for upgrades and retries.
+        python /app/scripts/security/setup_runtime_checkpointer.py
+        python /app/scripts/security/migrate_strict_content_encryption.py
+        if [ "$${OBJECT_STORE_PROVIDER}" = "filesystem" ]; then
+          python /app/scripts/security/migrate_filesystem_object_store.py
+        fi
+    user: "10001:10001"
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vibecanvas_migrator:${VIBECANVAS_MIGRATOR_PASSWORD:-vc_migrator}@postgres:5432/vibecanvas
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://vibecanvas_migrator:${VIBECANVAS_MIGRATOR_PASSWORD:-vc_migrator}@postgres:5432/vibecanvas
+      OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
+      OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+      KMS_PROVIDER: ${KMS_PROVIDER:-local}
+      KMS_KEY_ID: ${KMS_KEY_ID:-vibecanvas-local-development}
+      KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
+      KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
+      CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
+    volumes:
+      - object_store_data:/var/lib/vibecanvas/objectstore
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - data
+      - maintenance_egress
+
+  # ─────── sandbox control/data plane ───────
+  # The only service allowed to own runsc processes, Runtime brokers and
+  # resident SandboxSession state. API/Celery instances connect through the
+  # shared Unix socket, so a request may move between workers without creating
+  # a second sandbox for the same logical scope.
+  sandboxd:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 0007
+        exec python -m vibecanvas_api.services.sandbox.service \
+          --socket /run/vibecanvas-sandbox/sandboxd.sock
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    # runsc save/restore is unavailable rootless. This is the only privileged
+    # service in the stack; API, workers, databases and Web remain unprivileged.
+    user: "0:10001"
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vibecanvas_app:${VIBECANVAS_APP_PASSWORD:-vc_app}@postgres:5432/vibecanvas
+      MAINTENANCE_DATABASE_URL: postgresql+asyncpg://vibecanvas_maintenance:${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}@postgres:5432/vibecanvas
+      REDIS_URL: redis://redis:6379/0
+      # In host-network mode Agent Runtimes share sandboxd's network namespace;
+      # in proxy mode sandboxd's per-Runtime broker makes this same private hop.
+      # Compose service discovery is therefore authoritative in both profiles.
+      PLATFORM_MCP_INTERNAL_BASE_URL: ${PLATFORM_MCP_INTERNAL_BASE_URL:-http://api:8000}
+      OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
+      OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+      KMS_PROVIDER: ${KMS_PROVIDER:-local}
+      KMS_KEY_ID: ${KMS_KEY_ID:-vibecanvas-local-development}
+      KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
+      KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
+      CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
+      LIB_OVERLAY_ROOT: /var/lib/vibecanvas/lib-overlay
+      AGENT_RUNTIME_ROOT: /var/lib/vibecanvas/agent-runtime
+      VFS_VOLUME_ROOT: /var/lib/vibecanvas/vfs-volumes
+      RUNSC_PATH: /usr/local/bin/runsc
+      SANDBOX_TYPE: ${SANDBOX_TYPE:-rootful-snapshot}
+      # ptrace is the portable Docker baseline, including Docker Desktop/WSL2.
+      # Native Linux operators may explicitly select systrap after the startup
+      # probe succeeds on their kernel/seccomp profile.
+      SANDBOX_GVISOR_PLATFORM: ${SANDBOX_GVISOR_PLATFORM:-ptrace}
+      # gVisor cannot checkpoint hostinet state. Snapshot deployments use the
+      # isolated netstack; networked application integrations remain host-side
+      # or use the explicit egress broker rather than inheriting host sockets.
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
+      # Snapshot workers cannot use hostinet. Pair network=none with the UDS
+      # egress proxy so Prompt/HTTP nodes and live Agent Runtimes retain
+      # controlled HTTP(S)/WebSocket access without sacrificing checkpointing.
+      SANDBOX_EGRESS_MODE: ${SANDBOX_EGRESS_MODE:-proxy}
+      # One policy applies identically to Chat, Workflow, MCP, Skill and all
+      # one-shot/resident/snapshot execution paths.
+      SANDBOX_EGRESS_POLICY: ${SANDBOX_EGRESS_POLICY:-public}
+      SANDBOX_EGRESS_ALLOW_HOSTS: ${SANDBOX_EGRESS_ALLOW_HOSTS:-}
+      SANDBOX_EGRESS_PRIVATE_TARGETS: ${SANDBOX_EGRESS_PRIVATE_TARGETS:-}
+      SANDBOX_SNAPSHOT_ROOT: /var/lib/vibecanvas/snapshots
+      SANDBOX_SERVICE_MODE: service
+      SANDBOX_SERVICE_SOCKET: /run/vibecanvas-sandbox/sandboxd.sock
+      SANDBOX_SERVICE_SOCKET_MODE: "0660"
+      SANDBOX_SERVICE_SOCKET_DIR_MODE: "0770"
+      SANDBOX_SERVICE_SOCKET_GID: "10001"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    volumes:
+      - sandbox_socket:/run/vibecanvas-sandbox
+      - object_store_data:/var/lib/vibecanvas/objectstore
+      - lib_overlay_data:/var/lib/vibecanvas/lib-overlay
+      - agent_runtime_data:/var/lib/vibecanvas/agent-runtime
+      - vfs_volume_data:/var/lib/vibecanvas/vfs-volumes
+      - sandbox_snapshot_data:/var/lib/vibecanvas/snapshots
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - vibecanvas_api.services.sandbox.service
+        - --socket
+        - /run/vibecanvas-sandbox/sandboxd.sock
+        - --health
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - control
+      - data
+      # This otherwise-single-member network gives the rootful daemon a
+      # default route for the local host-network profile without placing it on
+      # the browser-facing edge network. Production sandboxes still use
+      # network=none and a capability/allowlist-controlled relay.
+      - runtime_egress
+
+  # One-shot readiness gate. The probe executes inside sandboxd through its
+  # private UDS, uses only daemon-created temporary roots, and exits before any
+  # API/worker can accept application traffic.
+  sandbox_prewarm:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command:
+      - python
+      - -m
+      - vibecanvas_api.services.sandbox.service
+      - --socket
+      - /run/vibecanvas-sandbox/sandboxd.sock
+      - --prewarm
+    user: "10001:10001"
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    environment:
+      SANDBOX_SERVICE_MODE: service
+      SANDBOX_SERVICE_SOCKET: /run/vibecanvas-sandbox/sandboxd.sock
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+    volumes:
+      - sandbox_socket:/run/vibecanvas-sandbox
+    depends_on:
+      sandboxd:
+        condition: service_healthy
+    restart: "no"
+    network_mode: none
+
+  # ─────── application ───────
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_API_PORT:-8000}:8000"
+    user: "10001:10001"
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    # NOTE: compose merges env_file + environment; environment wins on conflict.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vibecanvas_app:${VIBECANVAS_APP_PASSWORD:-vc_app}@postgres:5432/vibecanvas
+      MAINTENANCE_DATABASE_URL: postgresql+asyncpg://vibecanvas_maintenance:${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}@postgres:5432/vibecanvas
+      REDIS_URL: redis://redis:6379/0
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
+      OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
+      PLATFORM_MCP_INTERNAL_BASE_URL: ${PLATFORM_MCP_INTERNAL_BASE_URL:-http://api:8000}
+      VIBECANVAS_API_CORS_ORIGINS: http://localhost,http://localhost:5173
+      WEB_SESSION_COOKIE_ENABLED: ${WEB_SESSION_COOKIE_ENABLED:-true}
+      EXTENSION_SCOPED_TOKEN_ENABLED: ${EXTENSION_SCOPED_TOKEN_ENABLED:-true}
+      DISTRIBUTED_AUTH_RATE_LIMIT_ENABLED: ${DISTRIBUTED_AUTH_RATE_LIMIT_ENABLED:-true}
+      HIGH_RISK_STEP_UP_REQUIRED: ${HIGH_RISK_STEP_UP_REQUIRED:-false}
+      # Cross-process blob store: the SAME named volume is mounted
+      # into api + celery_worker + celery_beat so a blob put by one is
+      # fetchable by the others. inmemory would not span the boundary.
+      OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
+      OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+      KMS_PROVIDER: ${KMS_PROVIDER:-local}
+      KMS_KEY_ID: ${KMS_KEY_ID:-vibecanvas-local-development}
+      KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
+      KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
+      CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
+      # CodeNode 3rd-party library overlay (content-addressed). The celery_worker
+      # BUILDS it (env_build task); the api READS + bind-mounts it read-only into
+      # the sandbox. Like object_store_data above, it MUST be the SAME shared
+      # named volume on api + celery_worker — otherwise the api binds an empty
+      # dir and declared libs fail with ImportError at run time (the unset-env
+      # default is a per-container /tmp path, which does NOT span the boundary).
+      LIB_OVERLAY_ROOT: /var/lib/vibecanvas/lib-overlay
+      # Private durable Codex account authentication. Chat-owned thread files
+      # live in VFS_VOLUME_ROOT; auth is mounted only for explicit account turns.
+      AGENT_RUNTIME_ROOT: /var/lib/vibecanvas/agent-runtime
+      VFS_VOLUME_ROOT: /var/lib/vibecanvas/vfs-volumes
+      # The image contains runsc, but this unprivileged API service never launches
+      # it. Only sandboxd owns gVisor processes and host capabilities.
+      RUNSC_PATH: /usr/local/bin/runsc
+      SANDBOX_SERVICE_MODE: service
+      SANDBOX_SERVICE_SOCKET: /run/vibecanvas-sandbox/sandboxd.sock
+      # Observability: env_file already supplies these from .env;
+      # listed explicitly here so the api's signals are self-documenting and so
+      # the OTel SDK picks up the standard OTEL_* vars. OTLP export is off
+      # unless OTEL_TRACES_ENABLED=true AND an endpoint is set.
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      OTEL_TRACES_ENABLED: ${OTEL_TRACES_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vibecanvas-api}
+    volumes:
+      - object_store_data:/var/lib/vibecanvas/objectstore
+      - lib_overlay_data:/var/lib/vibecanvas/lib-overlay
+      - agent_runtime_data:/var/lib/vibecanvas/agent-runtime
+      - vfs_volume_data:/var/lib/vibecanvas/vfs-volumes
+      - sandbox_socket:/run/vibecanvas-sandbox
+      - openfga_bootstrap_data:/run/vibecanvas-openfga:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openfga_bootstrap:
+        condition: service_completed_successfully
+      sandbox_prewarm:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - edge
+      - control
+      - data
+      - authorization
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command:
+      - celery
+      - -A
+      - vibecanvas_api.celery_app
+      - worker
+      - -Q
+      - interactive,deployments,kb_indexing
+      - --concurrency=2
+    user: "10001:10001"
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vibecanvas_app:${VIBECANVAS_APP_PASSWORD:-vc_app}@postgres:5432/vibecanvas
+      MAINTENANCE_DATABASE_URL: postgresql+asyncpg://vibecanvas_maintenance:${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}@postgres:5432/vibecanvas
+      REDIS_URL: redis://redis:6379/0
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
+      OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
+      PLATFORM_MCP_INTERNAL_BASE_URL: ${PLATFORM_MCP_INTERNAL_BASE_URL:-http://api:8000}
+      CELERY_QUEUES: interactive,deployments,kb_indexing
+      OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
+      OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+      KMS_PROVIDER: ${KMS_PROVIDER:-local}
+      KMS_KEY_ID: ${KMS_KEY_ID:-vibecanvas-local-development}
+      KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
+      KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
+      CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
+      # Same shared overlay volume as the api (see api service comment). The
+      # worker WRITES overlays here (env_build task) + runs batch/deployment
+      # sandboxes; the api binds the same path RO.
+      LIB_OVERLAY_ROOT: /var/lib/vibecanvas/lib-overlay
+      RUNSC_PATH: /usr/local/bin/runsc
+      SANDBOX_SERVICE_MODE: service
+      SANDBOX_SERVICE_SOCKET: /run/vibecanvas-sandbox/sandboxd.sock
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prom_multiproc
+      WORKER_METRICS_PORT: "9100"
+    tmpfs:
+      - /tmp/prom_multiproc:rw,uid=10001,gid=10001,mode=0700
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_WORKER_METRICS_PORT:-9100}:9100"
+    volumes:
+      - object_store_data:/var/lib/vibecanvas/objectstore
+      - lib_overlay_data:/var/lib/vibecanvas/lib-overlay
+      - openfga_bootstrap_data:/run/vibecanvas-openfga:ro
+      - sandbox_socket:/run/vibecanvas-sandbox
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openfga_bootstrap:
+        condition: service_completed_successfully
+      sandbox_prewarm:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - data
+      - authorization
+      - worker_egress
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command:
+      - celery
+      - -A
+      - vibecanvas_api.celery_app
+      - beat
+      - --schedule=/var/lib/celerybeat/schedule
+    user: "10001:10001"
+    env_file:
+      - ${VIBECANVAS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vibecanvas_app:${VIBECANVAS_APP_PASSWORD:-vc_app}@postgres:5432/vibecanvas
+      MAINTENANCE_DATABASE_URL: postgresql+asyncpg://vibecanvas_maintenance:${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}@postgres:5432/vibecanvas
+      REDIS_URL: redis://redis:6379/0
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
+      OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
+      OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
+      OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
+      VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
+      KMS_PROVIDER: ${KMS_PROVIDER:-local}
+      KMS_KEY_ID: ${KMS_KEY_ID:-vibecanvas-local-development}
+      KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
+      KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
+      CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
+      SANDBOX_SERVICE_MODE: service
+      SANDBOX_SERVICE_SOCKET: /run/vibecanvas-sandbox/sandboxd.sock
+    volumes:
+      - celery_beat_data:/var/lib/celerybeat
+      - object_store_data:/var/lib/vibecanvas/objectstore
+      - openfga_bootstrap_data:/run/vibecanvas-openfga:ro
+      - sandbox_socket:/run/vibecanvas-sandbox
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openfga_bootstrap:
+        condition: service_completed_successfully
+      sandbox_prewarm:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - data
+      - authorization
+      - worker_egress
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-}
+        VIBECANVAS_BROWSER_EXTENSION_ID: ${VIBECANVAS_BROWSER_EXTENSION_ID:-mkfldhmlgdbpmhplaphhcfcdcoaakcik}
+    environment:
+      VIBECANVAS_BROWSER_EXTENSION_ID: ${VIBECANVAS_BROWSER_EXTENSION_ID:-mkfldhmlgdbpmhplaphhcfcdcoaakcik}
+    user: "101:101"
+    ports:
+      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_HTTP_PORT:-9001}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - edge
+
+networks:
+  # Browser-facing reverse proxy and API. This is the only application network
+  # that needs a published HTTP endpoint.
+  edge:
+  # Private runtime control plane: sandboxd reaches API-hosted MCP/model
+  # brokers by the stable `api` service name. No database is attached here.
+  control:
+    internal: true
+  # Application persistence and queues. Web/OpenFGA are deliberately absent.
+  data:
+    internal: true
+  # API/worker authorization clients and the OpenFGA service.
+  authorization:
+    internal: true
+  # OpenFGA's independent PostgreSQL datastore.
+  authorization_data:
+    internal: true
+  # One-member/maintenance outbound networks provide a default route without
+  # flattening all application services into one mutually reachable segment.
+  runtime_egress:
+  worker_egress:
+  maintenance_egress:
+
+volumes:
+  postgres_data:
+  valkey_data:
+  openfga_postgres_data:
+  openfga_bootstrap_data:
+  celery_beat_data:
+  # Shared blob store mounted into api + celery_worker + celery_beat
+  # at OBJECT_STORE_FS_ROOT so the filesystem object store spans processes.
+  object_store_data:
+  # Shared CodeNode library overlay — mounted into api + celery_worker at
+  # LIB_OVERLAY_ROOT so worker-built overlays are bind-mountable by the api.
+  lib_overlay_data:
+  # Private Codex account authentication. Back this volume with encrypted
+  # storage in production; never mount it into the Web container.
+  agent_runtime_data:
+  # Direct POSIX Runtime Volumes. In production use an encrypted persistent
+  # block/CSI volume; do not replace this mount with an object-store FUSE shim
+  # without validating SQLite WAL, mmap, locking, fsync, and crash recovery.
+  vfs_volume_data:
+  # Root-owned gVisor checkpoint images. Only sandboxd may mount this volume.
+  sandbox_snapshot_data:
+  # Private IPC endpoint shared only by sandboxd and trusted backend services.
+  sandbox_socket:

@@ -1,0 +1,39 @@
+module private_resources
+
+type chat
+  relations
+    define organization: [organization]
+    define creator: [user]
+    define can_view_metadata: creator or can_administer from organization or can_view_audit from organization
+    define can_view: creator
+    define can_export: creator
+    define can_update: creator
+    define can_delete: creator or can_administer from organization
+    define can_use: creator
+    define can_execute: creator
+    define can_cancel: creator
+    define can_resume: creator
+    define can_inspect_runs: creator
+    define can_mount: creator
+
+type mcp_installation
+  relations
+    define organization: [organization]
+    define installer: [user]
+    define can_view_metadata: installer or can_administer from organization or can_view_audit from organization
+    define can_view: installer
+    define can_update: installer
+    define can_delete: installer or can_administer from organization
+    define can_use: installer
+    define can_manage_secret: installer
+
+type llm_credential
+  relations
+    define organization: [organization]
+    define owner: [user]
+    define consumer: [user, service_account]
+    define manager: [user]
+    define can_view_metadata: owner or manager or can_administer from organization or can_view_audit from organization
+    define can_use: owner or consumer
+    define can_manage_secret: owner or manager or can_administer from organization
+    define can_delete: owner or manager or can_administer from organization

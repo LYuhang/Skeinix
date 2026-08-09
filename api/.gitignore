@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.whl
+*.tar.gz
+# `build/` above ignores Python packaging output (any dir named build). The
+# agent's /build-mode tools package is real SOURCE, not packaging output — so
+# re-include it (un-ignore the dir; its files are then tracked normally).
+!/src/vibecanvas_api/agents/tools/build/
+
+# Pre-Phase-4 file store + its archive (not migrated; superseded by Postgres)
+local_data/
+local_data.bak.*/

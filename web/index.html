@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <!--
+      The app provides its own zh/en localization. Browser translation tools
+      rewrite React-owned text nodes in place, which can make a later React
+      commit fail with insertBefore/removeChild NotFoundError. Keep the React
+      root out of automatic translation; users switch language inside the app.
+    -->
+    <meta name="google" content="notranslate" />
+    <meta id="theme-color" name="theme-color" content="#f1f3f6" />
+    <title>Skeinix</title>
+    <script>
+      /*
+       * Resolve the reverse-proxy mount before the browser discovers any
+       * stylesheet, module-preload, or entry-script URL.  Vite emits those
+       * URLs relative to this <base>, so one production build works both at
+       * the origin root and below an opaque workspace prefix.
+       *
+       * The proxy prefix is deployment-owned and may change between visits.
+       * App routes are the only stable suffix, so strip the final route from
+       * the current pathname.  A serving host can always override this by
+       * injecting __VIBECANVAS_RUNTIME_CONFIG__ before this script.
+       */
+      (function () {
+        var existing = window.__VIBECANVAS_RUNTIME_CONFIG__ || {};
+        var pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+        /*
+         * Match multi-segment routes before the generic final-segment rule.
+         * With only the generic greedy expression, `/embed/chat` was parsed as
+         * deployment prefix `/embed` + route `/chat`, so the side-panel tried
+         * to load `/embed/assets/*` and rendered a completely blank iframe.
+         * The same explicit suffix works below any opaque proxy prefix:
+         * `/pws/.../tasks/embed/chat` -> `/pws/.../tasks`.
+         */
+        var route =
+          pathname.match(/^(.*)\/embed\/chat(?:\/.*)?$/) ||
+          pathname.match(
+            /^(.*)\/(?:chat|workspace|management|tasks|deployments|credentials|mcp-servers|skills|knowledge|storage|settings|workflow|login|signup|reset-password)(?:\/.*)?$/,
+          );
+        var inferred = route ? route[1] : pathname === '/' ? '' : pathname;
+        var normalize = function (value) {
+          if (!value || value === '/') return '';
+          return '/' + String(value).replace(/^\/+|\/+$/g, '');
+        };
+        var basePath = normalize(existing.basePath || inferred);
+        window.__VIBECANVAS_RUNTIME_CONFIG__ = Object.assign({}, existing, {
+          inferredBasePath: basePath,
+        });
+        var base = document.createElement('base');
+        base.href = basePath + '/';
+        document.head.appendChild(base);
+      })();
+    </script>
+    <!-- Keep this after the runtime <base> so it also resolves below opaque proxy prefixes. -->
+    <link data-app-favicon rel="icon" type="image/png" sizes="any" href="branding/icon-light.png" />
+    <link rel="apple-touch-icon" href="branding/icon-light.png" />
+  </head>
+  <body>
+    <div id="root" class="notranslate" translate="no"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

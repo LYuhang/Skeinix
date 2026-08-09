@@ -1,0 +1,650 @@
+name: Skeinix authorization model
+model_file: ./fga.mod
+tuples:
+  # Organization roles are deliberately disjoint. In particular, guests are
+  # not organization#member subjects and receive only explicit shares.
+  - user: user:alice
+    relation: owner
+    object: organization:acme
+  - user: user:olivia
+    relation: admin
+    object: organization:acme
+  - user: user:bob
+    relation: member
+    object: organization:acme
+  - user: user:eve
+    relation: guest
+    object: organization:acme
+  - user: user:audrey
+    relation: auditor
+    object: organization:acme
+  - user: user:mallory
+    relation: member
+    object: organization:other
+
+  # Nested-group and orthogonal editor/operator fixtures.
+  - user: organization:acme
+    relation: organization
+    object: group:engineering
+  - user: organization:acme
+    relation: organization
+    object: group:backend
+  - user: organization:acme
+    relation: organization
+    object: group:editors
+  - user: organization:acme
+    relation: organization
+    object: group:operators
+  - user: user:bob
+    relation: direct_member
+    object: group:backend
+  - user: group:backend#member
+    relation: descendant
+    object: group:engineering
+  - user: user:dave
+    relation: direct_member
+    object: group:editors
+  - user: user:dave
+    relation: direct_member
+    object: group:operators
+
+  # A representative shareable Workflow.
+  - user: organization:acme
+    relation: organization
+    object: workflow:shared
+  - user: group:engineering#member
+    relation: editor
+    object: workflow:shared
+  - user: group:editors#direct_member
+    relation: editor
+    object: workflow:shared
+  - user: group:operators#direct_member
+    relation: operator
+    object: workflow:shared
+  - user: organization:acme#member
+    relation: viewer
+    object: workflow:org-visible
+  - user: organization:acme
+    relation: organization
+    object: workflow:org-visible
+  - user: user:eve
+    relation: viewer
+    object: workflow:guest-explicit
+  - user: organization:acme
+    relation: organization
+    object: workflow:guest-explicit
+  - user: service_account:runner
+    relation: operator
+    object: workflow:shared
+  - user: organization:acme
+    relation: organization
+    object: service_account:runner
+
+  # Private resources never accept share relations.
+  - user: organization:acme
+    relation: organization
+    object: chat:alice-chat
+  - user: user:alice
+    relation: creator
+    object: chat:alice-chat
+  - user: organization:acme
+    relation: organization
+    object: mcp_installation:alice-mcp
+  - user: user:alice
+    relation: installer
+    object: mcp_installation:alice-mcp
+  - user: organization:acme
+    relation: organization
+    object: llm_credential:team-model
+  - user: user:alice
+    relation: owner
+    object: llm_credential:team-model
+  - user: service_account:runner
+    relation: consumer
+    object: llm_credential:team-model
+
+  # Minimal fixtures ensure every collaborative resource type is queryable.
+  - user: organization:acme
+    relation: organization
+    object: template:template-1
+  - user: user:alice
+    relation: manager
+    object: template:template-1
+  - user: user:eve
+    relation: viewer
+    object: template:template-1
+  - user: organization:acme
+    relation: organization
+    object: task:task-1
+  - user: user:alice
+    relation: manager
+    object: task:task-1
+  - user: user:eve
+    relation: viewer
+    object: task:task-1
+  - user: organization:acme
+    relation: organization
+    object: deployment:deployment-1
+  - user: user:alice
+    relation: manager
+    object: deployment:deployment-1
+  - user: user:eve
+    relation: viewer
+    object: deployment:deployment-1
+  - user: organization:acme
+    relation: organization
+    object: storage_root:mount-1
+  - user: user:alice
+    relation: manager
+    object: storage_root:mount-1
+  - user: user:eve
+    relation: viewer
+    object: storage_root:mount-1
+  - user: organization:acme
+    relation: organization
+    object: knowledge_base:kb-1
+  - user: user:alice
+    relation: manager
+    object: knowledge_base:kb-1
+  - user: user:eve
+    relation: viewer
+    object: knowledge_base:kb-1
+  - user: organization:acme
+    relation: organization
+    object: skill_installation:skill-1
+  - user: user:alice
+    relation: manager
+    object: skill_installation:skill-1
+  - user: user:eve
+    relation: viewer
+    object: skill_installation:skill-1
+
+tests:
+  - name: organization role boundaries
+    check:
+      - user: user:alice
+        object: organization:acme
+        assertions:
+          can_administer: true
+          can_create_resource: true
+          can_transfer: true
+          can_delete: true
+      - user: user:olivia
+        object: organization:acme
+        assertions:
+          can_administer: true
+          can_create_resource: true
+          can_transfer: false
+          can_delete: false
+      - user: user:bob
+        object: organization:acme
+        assertions:
+          can_view_metadata: true
+          can_create_resource: true
+          can_administer: false
+      - user: user:eve
+        object: organization:acme
+        assertions:
+          can_view_metadata: false
+          can_create_resource: false
+          can_view_audit: false
+      - user: user:audrey
+        object: organization:acme
+        assertions:
+          can_view_metadata: true
+          can_view_audit: true
+          can_create_resource: false
+          can_administer: false
+
+  - name: nested groups and orthogonal capabilities
+    check:
+      - user: user:bob
+        object: group:engineering
+        assertions:
+          direct_member: false
+          member: true
+          can_view: true
+          can_manage_members: false
+      - user: user:olivia
+        object: group:engineering
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_manage_members: true
+      - user: user:eve
+        object: group:engineering
+        assertions:
+          can_view_metadata: false
+          can_view: false
+      - user: user:dave
+        object: workflow:shared
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: true
+          can_execute: true
+          can_manage_access: false
+          can_delete: false
+      - user: user:bob
+        object: workflow:shared
+        assertions:
+          can_view: true
+          can_update: true
+          can_execute: false
+
+  - name: organization admin and auditor cannot read content
+    check:
+      - user: user:olivia
+        object: workflow:shared
+        assertions:
+          can_view_metadata: true
+          can_manage_access: true
+          can_delete: true
+          can_view: false
+          can_update: false
+          can_execute: false
+      - user: user:audrey
+        object: workflow:shared
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_update: false
+          can_execute: false
+          can_manage_access: false
+      - user: user:mallory
+        object: workflow:shared
+        assertions:
+          can_view_metadata: false
+          can_view: false
+          can_manage_access: false
+
+  - name: guest and organization-wide access
+    check:
+      - user: user:bob
+        object: workflow:org-visible
+        assertions:
+          can_view_metadata: true
+          can_view: true
+      - user: user:eve
+        object: workflow:org-visible
+        assertions:
+          can_view_metadata: false
+          can_view: false
+      - user: user:eve
+        object: workflow:guest-explicit
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: false
+      - user: user:olivia
+        object: workflow:org-visible
+        assertions:
+          can_view_metadata: true
+          can_view: false
+
+  - name: guest auditor and admin matrix for every collaborative resource
+    check:
+      - user: user:eve
+        object: template:template-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: false
+          can_manage_access: false
+          can_delete: false
+          can_publish: false
+      - user: user:audrey
+        object: template:template-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_update: false
+          can_manage_access: false
+          can_delete: false
+      - user: user:olivia
+        object: template:template-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_manage_access: true
+          can_delete: true
+
+      - user: user:eve
+        object: task:task-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_inspect_runs: true
+          can_execute: false
+          can_cancel: false
+          can_manage_access: false
+      - user: user:audrey
+        object: task:task-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_inspect_runs: false
+          can_manage_access: false
+          can_delete: false
+      - user: user:olivia
+        object: task:task-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_inspect_runs: false
+          can_manage_access: true
+          can_delete: true
+
+      - user: user:eve
+        object: deployment:deployment-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_inspect_runs: false
+          can_execute: false
+          can_manage_secret: false
+      - user: user:audrey
+        object: deployment:deployment-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_inspect_runs: false
+          can_manage_secret: false
+          can_delete: false
+      - user: user:olivia
+        object: deployment:deployment-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_inspect_runs: false
+          can_manage_access: true
+          can_manage_secret: true
+          can_delete: true
+
+      - user: user:eve
+        object: storage_root:mount-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: false
+          can_mount: false
+          can_manage_access: false
+      - user: user:audrey
+        object: storage_root:mount-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_mount: false
+          can_delete: false
+      - user: user:olivia
+        object: storage_root:mount-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_mount: false
+          can_manage_access: true
+          can_delete: true
+
+      - user: user:eve
+        object: knowledge_base:kb-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: false
+          can_use: false
+          can_manage_access: false
+      - user: user:audrey
+        object: knowledge_base:kb-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_use: false
+          can_delete: false
+      - user: user:olivia
+        object: knowledge_base:kb-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_use: false
+          can_manage_access: true
+          can_delete: true
+
+      - user: user:eve
+        object: skill_installation:skill-1
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: false
+          can_use: false
+          can_publish: false
+      - user: user:audrey
+        object: skill_installation:skill-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_use: false
+          can_delete: false
+      - user: user:olivia
+        object: skill_installation:skill-1
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_use: false
+          can_manage_access: true
+          can_delete: true
+
+  - name: guest auditor and admin private-resource boundaries
+    check:
+      - user: user:eve
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: false
+          can_view: false
+          can_delete: false
+      - user: user:audrey
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_execute: false
+          can_delete: false
+      - user: user:olivia
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_execute: false
+          can_delete: true
+      - user: user:eve
+        object: mcp_installation:alice-mcp
+        assertions:
+          can_view_metadata: false
+          can_view: false
+          can_manage_secret: false
+      - user: user:audrey
+        object: mcp_installation:alice-mcp
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_manage_secret: false
+          can_delete: false
+      - user: user:olivia
+        object: mcp_installation:alice-mcp
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_manage_secret: false
+          can_delete: true
+      - user: user:eve
+        object: llm_credential:team-model
+        assertions:
+          can_view_metadata: false
+          can_use: false
+          can_manage_secret: false
+      - user: user:audrey
+        object: llm_credential:team-model
+        assertions:
+          can_view_metadata: true
+          can_use: false
+          can_manage_secret: false
+          can_delete: false
+      - user: user:olivia
+        object: llm_credential:team-model
+        assertions:
+          can_view_metadata: true
+          can_use: false
+          can_manage_secret: true
+          can_delete: true
+
+  - name: private chat is creator content only
+    check:
+      - user: user:alice
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: true
+          can_view: true
+          can_update: true
+          can_execute: true
+          can_delete: true
+      - user: user:olivia
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: true
+          can_delete: true
+          can_view: false
+          can_update: false
+          can_execute: false
+      - user: user:audrey
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: true
+          can_view: false
+          can_delete: false
+      - user: user:bob
+        object: chat:alice-chat
+        assertions:
+          can_view_metadata: false
+          can_view: false
+          can_update: false
+
+  - name: private MCP and use-without-reveal credential
+    check:
+      - user: user:alice
+        object: mcp_installation:alice-mcp
+        assertions:
+          can_view: true
+          can_update: true
+          can_use: true
+          can_manage_secret: true
+      - user: user:olivia
+        object: mcp_installation:alice-mcp
+        assertions:
+          can_view_metadata: true
+          can_delete: true
+          can_view: false
+          can_use: false
+          can_manage_secret: false
+      - user: service_account:runner
+        object: llm_credential:team-model
+        assertions:
+          can_use: true
+          can_manage_secret: false
+      - user: user:olivia
+        object: llm_credential:team-model
+        assertions:
+          can_view_metadata: true
+          can_use: false
+          can_manage_secret: true
+      - user: user:audrey
+        object: llm_credential:team-model
+        assertions:
+          can_view_metadata: true
+          can_use: false
+          can_manage_secret: false
+
+  - name: service account may operate but not manage workflow
+    check:
+      - user: service_account:runner
+        object: workflow:shared
+        assertions:
+          can_view: true
+          can_execute: true
+          can_cancel: true
+          can_inspect_runs: true
+          can_update: false
+          can_manage_access: false
+          can_delete: false
+
+  - name: every collaborative root exposes its intended manager capabilities
+    check:
+      - user: user:alice
+        object: template:template-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_use: true
+          can_publish: true
+          can_manage_access: true
+      - user: user:alice
+        object: task:task-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_execute: true
+          can_resume: true
+          can_manage_access: true
+      - user: user:alice
+        object: deployment:deployment-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_execute: true
+          can_manage_secret: true
+          can_manage_access: true
+      - user: user:alice
+        object: storage_root:mount-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_mount: true
+          can_manage_access: true
+      - user: user:alice
+        object: knowledge_base:kb-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_use: true
+          can_manage_access: true
+      - user: user:alice
+        object: skill_installation:skill-1
+        assertions:
+          can_view: true
+          can_update: true
+          can_use: true
+          can_publish: true
+          can_manage_access: true
+
+    list_objects:
+      - user: user:dave
+        type: workflow
+        assertions:
+          can_view:
+            - workflow:shared
+          can_update:
+            - workflow:shared
+          can_execute:
+            - workflow:shared
+          can_manage_access: []
+      - user: user:eve
+        type: workflow
+        assertions:
+          can_view:
+            - workflow:guest-explicit
+      - user: user:olivia
+        type: workflow
+        assertions:
+          can_view_metadata:
+            - workflow:guest-explicit
+            - workflow:org-visible
+            - workflow:shared
+          can_view: []

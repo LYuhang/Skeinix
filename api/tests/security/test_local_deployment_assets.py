@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+
+import yaml
+
+from scripts.security.migrate_strict_content_encryption import _resolve_api_root
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _dotenv(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def test_local_server_init_is_secure_and_idempotent(tmp_path: Path) -> None:
+    env_file = tmp_path / "local.env"
+    env = {**os.environ, "VIBECANVAS_ENV_FILE": str(env_file)}
+    command = [str(REPO_ROOT / "scripts/deploy/local_server.sh"), "init"]
+
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True, capture_output=True)
+    first = env_file.read_bytes()
+    values = _dotenv(env_file)
+
+    assert env_file.stat().st_mode & 0o777 == 0o600
+    assert values["VIBECANVAS_BIND_ADDRESS"] == "127.0.0.1"
+    assert values["VIBECANVAS_PUBLIC_URL"] == "http://localhost:9001"
+    assert values["ENABLE_TEST_USER"] == "false"
+    assert values["ENTERPRISE_SSO_ENABLED"] == "false"
+    assert values["SANDBOX_TYPE"] == "rootful-snapshot"
+
+    independent_secrets = {
+        values[key]
+        for key in (
+            "POSTGRES_PASSWORD",
+            "VIBECANVAS_APP_PASSWORD",
+            "VIBECANVAS_MIGRATOR_PASSWORD",
+            "VIBECANVAS_MAINTENANCE_PASSWORD",
+            "OPENFGA_POSTGRES_PASSWORD",
+            "OPENFGA_API_TOKEN",
+            "KMS_LOCAL_MASTER_KEY",
+            "CONTENT_LOOKUP_HMAC_KEY",
+            "BROWSER_TOKEN_SECRET",
+            "VIBECANVAS_SIGNING_SECRET",
+            "OAUTH_ENCRYPTION_KEY",
+        )
+    }
+    assert len(independent_secrets) == 11
+    assert all(len(value) >= 32 for value in independent_secrets)
+
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True, capture_output=True)
+    assert env_file.read_bytes() == first
+
+
+def test_compose_published_ports_default_to_loopback() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    for service_name in ("postgres", "redis", "openfga", "api", "celery_worker", "web"):
+        for port in compose["services"][service_name].get("ports", []):
+            assert "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:" in port
+
+
+def test_only_sandboxd_is_privileged_and_owns_snapshot_storage() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    services = compose["services"]
+    privileged = {
+        name for name, service in services.items() if service.get("privileged") is True
+    }
+
+    assert privileged == {"sandboxd"}
+    sandboxd = services["sandboxd"]
+    assert sandboxd["user"] == "0:10001"
+    assert sandboxd["environment"]["SANDBOX_SERVICE_SOCKET_MODE"] == "0660"
+    assert sandboxd["environment"]["SANDBOX_SERVICE_SOCKET_DIR_MODE"] == "0770"
+    assert sandboxd["environment"]["SANDBOX_SERVICE_SOCKET_GID"] == "10001"
+    assert sandboxd["environment"]["SANDBOX_NETWORK"].endswith(":-none}")
+    assert sandboxd["environment"]["SANDBOX_TYPE"].endswith(
+        ":-rootful-snapshot}"
+    )
+    snapshot_mount = "sandbox_snapshot_data:/var/lib/vibecanvas/snapshots"
+    assert snapshot_mount in sandboxd["volumes"]
+    for name, service in services.items():
+        if name != "sandboxd":
+            assert snapshot_mount not in service.get("volumes", [])
+    for name in (
+        "openfga_bootstrap", "migrate", "sandbox_prewarm", "api",
+        "celery_worker", "celery_beat",
+    ):
+        assert services[name]["user"] == "10001:10001"
+        assert (
+            services[name]["environment"]["VIBECANVAS_STORAGE_ROOT"]
+            == "/var/lib/vibecanvas/local-data"
+        )
+    assert services["web"]["user"] == "101:101"
+    assert services["web"]["ports"] == [
+        "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_HTTP_PORT:-9001}:8080"
+    ]
+
+
+def test_compose_networks_separate_edge_control_data_and_authorization() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    services = compose["services"]
+    networks = compose["networks"]
+
+    assert services["web"]["networks"] == ["edge"]
+    assert set(services["api"]["networks"]) == {
+        "edge", "control", "data", "authorization",
+    }
+    assert set(services["sandboxd"]["networks"]) == {
+        "control", "data", "runtime_egress",
+    }
+    assert services["postgres"]["networks"] == ["data"]
+    assert services["redis"]["networks"] == ["data"]
+    assert services["openfga_postgres"]["networks"] == ["authorization_data"]
+    assert networks["control"]["internal"] is True
+    assert networks["data"]["internal"] is True
+    assert networks["authorization"]["internal"] is True
+    assert networks["authorization_data"]["internal"] is True
+
+
+def test_nginx_refreshes_compose_service_dns() -> None:
+    nginx = (REPO_ROOT / "web/nginx.conf").read_text(encoding="utf-8")
+
+    assert "resolver 127.0.0.11" in nginx
+    assert "server api:8000 resolve;" in nginx
+    assert nginx.count("proxy_pass http://skeinix_api;") == 2
+
+
+def test_nginx_serves_module_workers_with_javascript_mime() -> None:
+    nginx = (REPO_ROOT / "web/nginx.conf").read_text(encoding="utf-8")
+    pdf_renderer = (
+        REPO_ROOT / "web/src/pages/chat/preview/PdfPreviewRenderer.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "location ~* \\.mjs$" in nginx
+    assert "types { application/javascript mjs; }" in nginx
+    assert "try_files $uri =404;" in nginx
+    assert "PDF_WORKER_CACHE_REVISION = 'module-mime-v1'" in pdf_renderer
+    assert "pdfWorkerUrl}?v=${PDF_WORKER_CACHE_REVISION}" in pdf_renderer
+
+
+def test_runtime_state_schema_precedes_strict_content_backfill() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    migrate_command = compose["services"]["migrate"]["command"][-1]
+    setup = "setup_runtime_checkpointer.py"
+    strict = "migrate_strict_content_encryption.py"
+    assert migrate_command.index(setup) < migrate_command.index(strict)
+
+    native = (REPO_ROOT / "scripts/native_dev_up.sh").read_text()
+    migrate_function = native.split("migrate() {", 1)[1].split(
+        "start_services() {", 1
+    )[0]
+    assert migrate_function.index(setup) < migrate_function.index(strict)
+
+
+def test_local_verifier_bypasses_host_proxy_for_loopback_health() -> None:
+    verifier = (REPO_ROOT / "scripts/deploy/verify_local.sh").read_text()
+    assert verifier.count("curl --noproxy '*'") == 2
+
+
+def test_postgres_role_passwords_are_environment_bound() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    postgres_env = compose["services"]["postgres"]["environment"]
+    init_sql = (REPO_ROOT / "scripts/postgres-init/01-create-app-role.sql").read_text()
+
+    for key in (
+        "VIBECANVAS_APP_PASSWORD",
+        "VIBECANVAS_MIGRATOR_PASSWORD",
+        "VIBECANVAS_MAINTENANCE_PASSWORD",
+    ):
+        assert key in postgres_env
+        assert "\\getenv" in init_sql
+        assert key in init_sql
+    assert "PASSWORD 'vc_app'" not in init_sql
+
+
+def test_strict_migrator_supports_source_and_image_layouts(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    (source_root / "api/alembic").mkdir(parents=True)
+    (source_root / "api/alembic.ini").touch()
+    assert _resolve_api_root(source_root) == source_root / "api"
+
+    image_root = tmp_path / "image"
+    (image_root / "alembic").mkdir(parents=True)
+    (image_root / "alembic.ini").touch()
+    assert _resolve_api_root(image_root) == image_root

@@ -1,0 +1,4 @@
+# Runtime dependency roots. Regenerate requirements-runtime.txt with:
+# uv pip compile requirements-runtime.in --python-version 3.11 --output-file requirements-runtime.txt
+-e ./engine
+-e ./api

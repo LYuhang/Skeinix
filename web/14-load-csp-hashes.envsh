@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+hash_file=/etc/skeinix/csp-script-hashes.txt
+if [ ! -r "$hash_file" ]; then
+  echo "ERROR: generated CSP script hashes are missing" >&2
+  return 1
+fi
+
+CSP_SCRIPT_HASHES=$(tr -d '\r\n' < "$hash_file")
+case "$CSP_SCRIPT_HASHES" in
+  *"'sha256-"*) ;;
+  *)
+    echo "ERROR: generated CSP script hashes are invalid" >&2
+    return 1
+    ;;
+esac
+export CSP_SCRIPT_HASHES

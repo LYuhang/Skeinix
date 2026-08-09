@@ -1,0 +1,34 @@
+# Production-like malware-scanning overlay.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.security.yml up
+#
+# The application only sees clamd's local Unix socket; TCP/3310 is not exposed.
+# The official image includes a signature database and updates it in place.
+
+services:
+  clamav:
+    image: clamav/clamav:1.5.3-debian13-slim@sha256:741e6c447241220e0792a901befcaec1d55a755c5097fc9cd88d7fd8be251a5c
+    volumes:
+      - clamav_socket:/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /tmp/clamd.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    environment:
+      UPLOAD_SCANNER_PROVIDER: clamd
+      UPLOAD_SCANNER_CLAMD_UNIX_SOCKET: /run/clamav/clamd.sock
+      UPLOAD_SCANNER_TIMEOUT_SECONDS: "10"
+    volumes:
+      - clamav_socket:/run/clamav:ro
+    depends_on:
+      clamav:
+        condition: service_healthy
+
+volumes:
+  clamav_socket:

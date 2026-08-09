@@ -1,0 +1,30 @@
+{
+  "architecture/system-container": {
+    "bounds": {"x": 36.0, "y": -12.0, "width": 852.8, "height": 258.0},
+    "nodes": [
+      {"id": "user", "bounds": {"x": 84.0, "y": 92.0, "width": 168.0, "height": 54.0}, "labelLines": ["Customer 用户"], "descriptionLines": []},
+      {"id": "service", "bounds": {"x": 344.0, "y": 84.0, "width": 208.8, "height": 86.0}, "labelLines": ["Application Service"], "descriptionLines": ["Validates and processes", "requests"]},
+      {"id": "data", "bounds": {"x": 644.8, "y": 92.0, "width": 168.0, "height": 54.0}, "labelLines": ["Durable Store"], "descriptionLines": []}
+    ],
+    "edges": [
+      {"id": "e1", "points": [{"x": 252.0, "y": 105.5}, {"x": 344.0, "y": 105.5}]},
+      {"id": "e2", "points": [{"x": 552.8, "y": 105.5}, {"x": 644.8, "y": 105.5}]}
+    ],
+    "groups": [
+      {"id": "boundary", "bounds": {"x": 316.0, "y": 36.0, "width": 524.8, "height": 162.0}}
+    ]
+  },
+  "flow/basic": {
+    "bounds": {"x": 36.0, "y": 36.0, "width": 824.8, "height": 182.0},
+    "nodes": [
+      {"id": "start", "bounds": {"x": 84.0, "y": 92.0, "width": 168.0, "height": 54.0}, "labelLines": ["Customer 用户"], "descriptionLines": []},
+      {"id": "process", "bounds": {"x": 344.0, "y": 84.0, "width": 208.8, "height": 86.0}, "labelLines": ["Application Service"], "descriptionLines": ["Validates and processes", "requests"]},
+      {"id": "done", "bounds": {"x": 644.8, "y": 92.0, "width": 168.0, "height": 54.0}, "labelLines": ["Durable Store"], "descriptionLines": []}
+    ],
+    "edges": [
+      {"id": "e1", "points": [{"x": 252.0, "y": 105.5}, {"x": 344.0, "y": 105.5}]},
+      {"id": "e2", "points": [{"x": 552.8, "y": 105.5}, {"x": 644.8, "y": 105.5}]}
+    ],
+    "groups": []
+  }
+}

@@ -1,0 +1,3 @@
+# Regenerate with:
+# uv pip compile engine/requirements-runtime.in --constraint requirements-dev.txt --python-version 3.11 --no-emit-package vibecanvas-engine --generate-hashes --output-file engine/requirements-runtime.txt
+-e ./engine

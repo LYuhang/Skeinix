@@ -1,0 +1,11 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+# Start with correctness and import hygiene. Broader style rules can be enabled
+# incrementally without turning legacy formatting into a release blocker.
+select = ["E9", "F"]
+
+[lint.per-file-ignores]
+# Generated gRPC bindings are replaced by protoc and should not be hand-edited.
+"api/src/vibecanvas_api/services/sandbox/proto/*_pb2*.py" = ["F401"]

@@ -1,0 +1,421 @@
+# -*- coding: utf-8 -*-
+"""PromptNode — formats inputs into a prompt and calls an LLM."""
+
+import os
+import re
+import json
+import jsonschema
+from copy import deepcopy
+from json_repair import repair_json, loads
+
+from ..utils import safe_call_with_args
+from ..register import llm_registry, node_registry
+from .base import BaseNode
+
+
+@node_registry.register()
+class PromptNode(BaseNode):
+    """PromptNode — formats inputs into a prompt, calls an LLM, and parses its JSON response into output_fields. Supports text + multimodal (image/video/audio) inputs.
+
+    Authoring constraints (template/model/inference_config, the multimodal + interpolation syntax) live in ``AGENT_SPEC``.
+    """
+    # Sync body calls the LLM via ``asyncio.run`` internally → run off the
+    # engine's event loop through the thread bridge (nodes/exec.py).
+    REQUIRES_THREAD_BRIDGE = True
+
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": [
+            "prompt_template",
+            "model_name",
+            "inference_config"
+        ],
+        "properties": {
+            "prompt_template": {
+                "type": "string",
+                "description": "The prompt template string, supporting multimodality slots (e.g., [<<image>>](url)) and variable interpolation (e.g., {{field_name}})."
+            },
+            "model_name": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "The exact public model_id key returned by "
+                    "get_config(scope='global'). Before authoring this node, call "
+                    "that tool in the current build turn and copy one enabled key "
+                    "verbatim. Never use the chat Agent's own model id, a provider "
+                    "model id, or a guessed model name. If no model is returned, do "
+                    "not create a PromptNode; ask the user to configure an API model."
+                )
+            },
+            "inference_config": {
+                "type": "object",
+                "required": [
+                    "temperature",
+                    "max_tokens",
+                    "top_k",
+                    "top_p"
+                ],
+                "properties": {
+                    "temperature": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Sampling temperature."
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "The maximum number of tokens to generate."
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "minimum": -1,
+                        "description": "Top-k sampling parameter."
+                    },
+                    "top_p": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Nucleus sampling probability (top-p)."
+                    },
+                    "extra_body": {
+                        "type": ["object", "string"],
+                        "description": (
+                            "(Optional) Provider-specific request-body extras "
+                            "forwarded to the OpenAI-SDK client as extra_body "
+                            "(e.g. {\"reasoning_effort\": \"high\"}). Accepts a JSON "
+                            "object or a JSON-object string; a blank/unparseable "
+                            "value is ignored at runtime."
+                        )
+                    }
+                },
+                "additionalProperties": False
+            },
+            "custom_model_config": {
+                "type": "object",
+                "description": (
+                    "(Optional) Provider credential/model override. Do not invent "
+                    "provider names, model ids, API URLs, or keys; fetch the "
+                    "available model configuration from the config tool and use "
+                    "those values when an override is required."
+                ),
+                "properties": {
+                    "model_name": {
+                        "type": "string",
+                        "description": "Configured provider model id obtained from the config tool."
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "description": "Configured API key value obtained from the config tool when exposed for execution."
+                    },
+                    "api_url": {
+                        "type": "string",
+                        "description": "Configured API base URL obtained from the config tool."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Configured request timeout in seconds, if provided by the config tool."
+                    }
+                }
+            }
+        },
+        "additionalProperties": False
+    }
+
+    AGENT_SPEC = {
+        "summary": "Format inputs into a prompt, call an LLM, and parse the JSON response into output fields.",
+        "when_to_use": (
+            "Use for LLM inference: classification, extraction, generation, "
+            "summarization, semantic analysis, and multimodal understanding. "
+            "For complex case inputs, pair it with a preceding CodeNode: CodeNode "
+            "composes the case into a prompt-ready text field, then PromptNode "
+            "uses instructions plus that field for reasoning."
+        ),
+        "when_not_to_use": "Use CodeNode for deterministic transformation or for composing complex case inputs before a PromptNode. Use ConditionNode for branch routing.",
+        "constraints": [
+            "input_fields must be primitive types (string, number, integer, or boolean); use CodeNode first to compose array/object data into a prompt-ready string.",
+            "Mandatory model-discovery gate: in the current build turn, call get_config(scope='global') before writing any PromptNode, then copy one enabled models key exactly into model_name.",
+            "Never use the chat Agent's runtime model id, a provider model id, or a guessed/familiar model name. If global config returns no model, do not create this node; ask the user to configure an API model first.",
+            "prompt_template must include a JSON output format block with quoted keys matching every output_fields key.",
+            "For nested dictionaries/lists, many case fields, or multimodal references, use a preceding CodeNode to compose one readable prompt-ready text field such as `prompt_case`; reference it in prompt_template with {{prompt_case}}."
+        ],
+        "config_guide": {
+            "prompt_template": (
+                "Markdown prompt sent to the LLM. Prefer readable sections: # Task, # Input, # Instructions or Rubric, optional # Examples, and mandatory # Output Format. "
+                "Keep business rules close to the relevant instruction section so users can inspect and edit the prompt easily. "
+                "# Output Format must require a JSON object/dict whose quoted keys match output_fields. "
+                "{{field_name}} is replaced at runtime; use primitive input fields only. If the source case is nested, has many fields, or includes multimodal references, first use CodeNode to build a prompt-ready string field (for example `prompt_case`), then place {{prompt_case}} in the # Input section. Unknown names remain literal. "
+                "Embed media with [<<image>>](url_or_path), [<<video>>](url_or_path), or [<<audio>>](url_or_path); the URL/path may also use {{field}} interpolation."
+            ),
+            "model_name": "Exact enabled key from get_config(scope='global'). Fetch it in this build turn and copy it verbatim; never guess or substitute the Agent runtime model.",
+            "inference_config": "Object with temperature (float), max_tokens (int), top_k (int), top_p (float) controlling generation."
+        },
+        "examples": [
+            {
+                "scenario": "Multimodal image description",
+                "node_dict": {
+                    "node_id": "node_3",
+                    "node_name": "image_describer",
+                    "node_type": "PromptNode",
+                    "node_description": "Describe an image using multimodal LLM",
+                    "input_fields": {
+                        "image_url": {"type": "string", "value": "", "reference": "__start__.image_url"},
+                        "question": {"type": "string", "value": "", "reference": "__start__.question"}
+                    },
+                    "output_fields": {
+                        "description": {"type": "string", "description": "Image description"},
+                        "answer": {"type": "string", "description": "Answer to the question"}
+                    },
+                    "node_config": {
+                        "prompt_template": "# Task\nLook at this image: [<<image>>]({{image_url}})\n\nAnswer the following question about it:\n{{question}}\n\n# Output Format\n```json\n{\"description\": \"[brief image description]\", \"answer\": \"[your answer]\"}\n```",
+                        "model_name": "<model-name-from-get_config>",
+                        "inference_config": {"temperature": 0.3, "max_tokens": 512, "top_k": -1, "top_p": 0.95}
+                    },
+                    "children": ["node_4"],
+                    "__attributes__": {"x": 200, "y": 0}
+                }
+            }
+        ],
+        "display": {
+            "name": {"en": "PromptNode", "zh": "提示词节点"},
+            "description": {"en": "Call LLM with formatted prompt and parse JSON response", "zh": "使用格式化提示词调用大模型并解析 JSON 响应"},
+            "icon": "prompt",
+            "category": {"en": "AI Inference", "zh": "AI 推理"},
+        }
+    }
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    @staticmethod
+    @safe_call_with_args(prefix="[PromptNode Check]: ")
+    def check(node_dict: dict) -> bool:
+        jsonschema.validate(
+            instance=node_dict,
+            schema=BaseNode.GENERAL_NODE_SCHEMA
+        )
+
+        specific_schema = deepcopy(BaseNode.GENERAL_NODE_SCHEMA)
+        specific_schema["properties"]["node_config"] = PromptNode.CONFIG_SCHEMA
+        jsonschema.validate(
+            instance=node_dict,
+            schema=specific_schema
+        )
+
+        jsonschema.validate(
+            instance=node_dict,
+            schema={
+                "type": "object",
+                "properties": {
+                    "node_type": {
+                        "const": "PromptNode"
+                    },
+                    "children": {
+                        "type": "array",
+                        "maxItems": 1
+                    }
+                }
+            }
+        )
+
+        for field_name, field_info in node_dict["input_fields"].items():
+            field_type = field_info.get("type")
+            assert field_type not in {"array", "object"}, (
+                f"PromptNode input field '{field_name}' has nested type "
+                f"'{field_type}'. PromptNode does not support list/array or "
+                f"object input fields for prompt interpolation. Use a preceding "
+                f"CodeNode to convert complex nested structures into a "
+                f"prompt-ready string field, then pass that string field to "
+                f"PromptNode."
+            )
+
+        # Every output field must appear as a quoted JSON key in the prompt
+        # template's output-format section, so the LLM is actually told to
+        # produce it (and json_repair can map it back to the field). We match
+        # the field name wrapped in double or single quotes, e.g. "score" or
+        # 'score'.
+        prompt_template = node_dict["node_config"]["prompt_template"]
+        for field_name in node_dict["output_fields"]:
+            assert (
+                f'"{field_name}"' in prompt_template
+                or f"'{field_name}'" in prompt_template
+            ), (
+                f"For PromptNode, every output field must be referenced in the "
+                f"prompt_template's output-format section as a quoted key, but "
+                f"output field '{field_name}' was not found (expected "
+                f"\"{field_name}\" or '{field_name}' in the template)."
+            )
+
+    @staticmethod
+    def format_prompt_template(prompt_template: str, inputs: dict, unpack_multimodal: bool = True):
+        """Parses the prompt template, interpolates variables, and extracts multimodal elements."""
+        IMAGE_PLACEHOLDER = os.environ.get("IMAGE_PLACEHOLDER", "<<image>>")
+        VIDEO_PLACEHOLDER = os.environ.get("VIDEO_PLACEHOLDER", "<<video>>")
+        AUDIO_PLACEHOLDER = os.environ.get("AUDIO_PLACEHOLDER", "<<audio>>")
+
+        def replace_var(match):
+            var_name = match.group(1).strip()
+            if var_name in inputs:
+                val = inputs[var_name]
+                return json.dumps(val, ensure_ascii=False) if isinstance(val, (dict, list)) else str(val)
+            return match.group(0)
+
+        interpolated_prompt = re.sub(r"\{\{(.*?)\}\}", replace_var, prompt_template)
+
+        image_list, video_list, audio_list = [], [], []
+
+        pattern = rf"\[({IMAGE_PLACEHOLDER}|{VIDEO_PLACEHOLDER}|{AUDIO_PLACEHOLDER})\]\((.*?)\)"
+
+        def process_multimodal(match):
+            placeholder = match.group(1)
+            url_or_path = match.group(2).strip()
+
+            if unpack_multimodal:
+                if placeholder == IMAGE_PLACEHOLDER:
+                    image_list.append(url_or_path)
+                elif placeholder == VIDEO_PLACEHOLDER:
+                    video_list.append(url_or_path)
+                elif placeholder == AUDIO_PLACEHOLDER:
+                    audio_list.append(url_or_path)
+                # Leave the BARE placeholder inline (ShareGPT convention) so the
+                # provider's convert_input splits the text on it and interleaves
+                # the media at the right position (model_utils.convert_input).
+                return placeholder
+            else:
+                return url_or_path
+
+        final_prompt = re.sub(pattern, process_multimodal, interpolated_prompt)
+
+        return final_prompt, image_list, video_list, audio_list
+
+    @staticmethod
+    def _build_injected_model(entry: dict):
+        """Build a provider client from an injected tenant-credential ``entry``.
+
+        ``entry`` is one value of ``extra['llm_credentials']`` — a dict the api
+        assembled server-side from a saved ``llm_credentials`` row:
+        ``{provider, model_name, api_url, api_key, timeout?}``. ``provider`` is
+        mapped to the matching ``BaseLLM`` subclass in ``custom_llms``. Routing
+        precedence:
+          1. One of the 4 CANONICAL provider ids (case-insensitive):
+             ``openai`` → OpenAIModel, ``azure_openai`` → AzureOpenAIModel,
+             ``anthropic`` → AnthropicModel, ``google_genai`` → GoogleGenaiModel.
+          2. An exact CUSTOM_PROVIDERS match (legacy inline 'OpenAI'/'Gemini').
+          3. Family fallback: 'gemini'/'google' → GeminiModel.
+          4. OpenAI-compatible default (DeepSeek/Moonshot/Qwen/etc.).
+        The api_key is read here and never echoed back out.
+        """
+        from .. import custom_llms
+        from ..custom_llms import (
+            CANONICAL_PROVIDERS, CUSTOM_PROVIDERS, OpenAIModel, GeminiModel,
+        )
+
+        provider_name = (entry.get("provider") or "").strip()
+        canonical = CANONICAL_PROVIDERS.get(provider_name.lower())
+        if canonical is not None:
+            # Resolve the class by name off the live module so monkeypatched
+            # classes (in tests) are honored, not the load-time snapshot.
+            klass = getattr(custom_llms, canonical["class_name"], canonical["class"])
+            default_url = canonical["default_url"]
+            default_model = canonical["default_model"]
+        elif provider_name in CUSTOM_PROVIDERS:
+            klass = CUSTOM_PROVIDERS[provider_name]["class"]
+            default_url = CUSTOM_PROVIDERS[provider_name]["default_url"]
+            default_model = CUSTOM_PROVIDERS[provider_name]["default_model"]
+        elif provider_name.lower() in ("gemini", "google"):
+            klass = GeminiModel
+            default_url = CUSTOM_PROVIDERS["Gemini"]["default_url"]
+            default_model = CUSTOM_PROVIDERS["Gemini"]["default_model"]
+        else:
+            # OpenAI-compatible default (OpenAI, DeepSeek, Moonshot, Qwen, …).
+            klass = OpenAIModel
+            default_url = CUSTOM_PROVIDERS["OpenAI"]["default_url"]
+            default_model = CUSTOM_PROVIDERS["OpenAI"]["default_model"]
+
+        kwargs = dict(
+            model_name=entry.get("model_name") or default_model,
+            api_key=entry.get("api_key", ""),
+            api_url=entry.get("api_url") or default_url,
+            timeout=int(entry.get("timeout") or 60),
+        )
+        # Optional outbound proxy — only the OpenAI-compatible / Azure clients
+        # accept it (httpx http_client). Anthropic / Gemini ctors don't, so omit
+        # it there (pass it only when the target class declares a ``proxy`` param).
+        proxy = entry.get("proxy")
+        if proxy:
+            import inspect
+            try:
+                if "proxy" in inspect.signature(klass.__init__).parameters:
+                    kwargs["proxy"] = proxy
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                pass
+        return klass(**kwargs)
+
+    @safe_call_with_args(prefix="[PromptNode Call]: ")
+    def __call__(self, inputs: dict, previous_outputs: dict, extra: dict = None) -> dict:
+        stop_event = (extra or {}).get("stop_event")
+        if stop_event is not None and stop_event.is_set():
+            raise RuntimeError("PromptNode cancelled before model call.")
+
+        prompt_template = self.node_config["prompt_template"]
+
+        formatted_text, images, videos, audios = self.format_prompt_template(
+            prompt_template=prompt_template,
+            inputs=inputs,
+            unpack_multimodal=True
+        )
+
+        # Media paths are already real inside the sandbox (`/run` is temporary;
+        # `/mount` is durable); http(s) URLs and other strings
+        # pass through unchanged. The provider opens them directly.
+        conversation_dict = {
+            "conversations": [
+                {"from": "human", "value": formatted_text}
+            ],
+            "image": images,
+            "video": videos,
+            "audio": audios
+        }
+
+        model_name = self.node_config["model_name"]
+        inference_config = self.node_config.get("inference_config", {})
+        # Resolution precedence:
+        #   (1) An injected mapping rides ambiently on ``extra`` under
+        #       ``llm_credentials``. Its api_key is a short-lived host-broker
+        #       capability and api_url is the internal broker, never a provider
+        #       credential or user endpoint.
+        #   (2) A credential-free model registered in llm_registry.
+        # Legacy inline OpenAI/Gemini credentials are rejected on the host
+        # before sandbox launch and defensively rejected here as well.
+        # When no mapping is injected, behavior is byte-identical to before.
+        injected = (extra or {}).get("llm_credentials") or {}
+        try:
+            from ..custom_llms import CUSTOM_PROVIDERS
+            if model_name in injected:
+                model = self._build_injected_model(injected[model_name])
+            elif model_name in CUSTOM_PROVIDERS:
+                raise RuntimeError(
+                    "Inline model credentials are disabled; select a saved "
+                    "API credential instead."
+                )
+            else:
+                model = llm_registry.get(model_name)()
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize model '{model_name}': {str(e)}")
+
+        try:
+            raw_output = model(
+                conversation_dict,
+                inference_config,
+                stop_event=stop_event,
+            )
+        except Exception as e:
+            raise RuntimeError(f"LLM generation failed: {str(e)}")
+
+        if stop_event is not None and stop_event.is_set():
+            raise RuntimeError("PromptNode cancelled after model call; output discarded.")
+
+        try:
+            parsed_output = loads(repair_json(raw_output))
+            return parsed_output
+        except Exception as e:
+            raise ValueError(f"Failed to parse LLM output into a JSON dictionary. Error: {str(e)}\nRaw Model Output:\n{raw_output}")

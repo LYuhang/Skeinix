@@ -1,0 +1,238 @@
+name: Release attested production artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, scan, publish, and attest ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: api
+            dockerfile: api/Dockerfile
+            context: .
+          - label: web
+            dockerfile: web/Dockerfile
+            context: .
+          - label: engine
+            dockerfile: engine/Dockerfile
+            context: engine
+    steps:
+      - name: Check out the complete release ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the release commit to be on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test -n "$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
+
+      - name: Install pinned Syft and Grype
+        run: scripts/security/install_sbom_tools.sh "$RUNNER_TEMP/skeinix-tools"
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build the exact production image
+        id: metadata
+        env:
+          IMAGE_LABEL: ${{ matrix.label }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          BUILD_CONTEXT: ${{ matrix.context }}
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          subject_name="ghcr.io/${repository}-${IMAGE_LABEL}"
+          image_ref="${subject_name}:${GITHUB_SHA}"
+          docker build --pull --file "$DOCKERFILE" --tag "$image_ref" "$BUILD_CONTEXT"
+          {
+            printf 'subject-name=%s\n' "$subject_name"
+            printf 'image-ref=%s\n' "$image_ref"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate SBOM and reject High or Critical vulnerabilities
+        env:
+          GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db
+          IMAGE_REF: ${{ steps.metadata.outputs.image-ref }}
+          IMAGE_LABEL: ${{ matrix.label }}
+        run: |
+          output="$RUNNER_TEMP/release-security/$IMAGE_LABEL"
+          mkdir -p "$output"
+          "$RUNNER_TEMP/skeinix-tools/syft" "docker:$IMAGE_REF" \
+            --output "syft-json=$output/sbom.syft.json" \
+            --output "spdx-json=$output/sbom.spdx.json"
+          set +e
+          "$RUNNER_TEMP/skeinix-tools/grype" "sbom:$output/sbom.syft.json" \
+            --fail-on high \
+            --output "table=$output/vulnerabilities.txt" \
+            --output "json=$output/vulnerabilities.json"
+          grype_status=$?
+          set -e
+          if [[ "$grype_status" -ne 0 && "$grype_status" -ne 2 ]]; then
+            printf 'Grype scan failed with status %s.\n' "$grype_status" >&2
+            exit "$grype_status"
+          fi
+          python3 scripts/security/evaluate_container_vulnerabilities.py \
+            --label "$IMAGE_LABEL" \
+            --report "$output/vulnerabilities.json"
+          sha256sum "$output"/*.json > "$output/checksums.sha256"
+
+      - name: Push the immutable commit-tagged image
+        id: push
+        env:
+          IMAGE_REF: ${{ steps.metadata.outputs.image-ref }}
+          SUBJECT_NAME: ${{ steps.metadata.outputs.subject-name }}
+        run: |
+          docker push "$IMAGE_REF"
+          repo_digest="$({ docker image inspect \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REF"; } |
+            awk -v prefix="$SUBJECT_NAME@" 'index($0, prefix) == 1 { print; exit }')"
+          digest="${repo_digest#*@}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf 'Registry did not return an immutable digest for %s.\n' "$IMAGE_REF" >&2
+            exit 2
+          fi
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub OIDC build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ${{ steps.metadata.outputs.subject-name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate GitHub OIDC SPDX SBOM attestation
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ${{ steps.metadata.outputs.subject-name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/release-security/${{ matrix.label }}/sbom.spdx.json
+          push-to-registry: true
+
+      - name: Enforce the release admission policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          scripts/security/verify_release_attestations.sh
+          "${{ steps.metadata.outputs.subject-name }}@${{ steps.push.outputs.digest }}"
+          "$GITHUB_REPOSITORY"
+          "$GITHUB_REPOSITORY/.github/workflows/release-images.yml"
+          "$GITHUB_SHA"
+          "$GITHUB_REF"
+
+      - name: Upload immutable-checksummed release reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-security-${{ matrix.label }}-${{ github.sha }}
+          path: ${{ runner.temp }}/release-security/${{ matrix.label }}
+          if-no-files-found: error
+          retention-days: 90
+
+  extension-package:
+    name: Test, package, and attest the MV3 release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the complete release ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the release commit to be on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test -n "$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Build and test the locked extension payload
+        working-directory: extension
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.4 --activate
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+
+      - name: Create a source-bound extension ZIP
+        id: package
+        run: |
+          archive="$RUNNER_TEMP/skeinix-extension-${GITHUB_SHA}.zip"
+          source_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          find extension/dist -exec touch -h -d "@$source_epoch" {} +
+          (
+            cd extension/dist
+            find . -type f -print0 | LC_ALL=C sort -z |
+              xargs -0 zip -X "$archive"
+          )
+          (
+            cd "$(dirname "$archive")"
+            sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256"
+          )
+          printf 'archive=%s\n' "$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub OIDC extension provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Verify extension provenance before handoff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: >-
+          gh attestation verify "$ARCHIVE"
+          --repo "$GITHUB_REPOSITORY"
+          --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-images.yml"
+          --cert-oidc-issuer "https://token.actions.githubusercontent.com"
+          --source-digest "$GITHUB_SHA"
+          --source-ref "$GITHUB_REF"
+          --deny-self-hosted-runners
+
+      - name: Upload the attested extension handoff package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extension-release-${{ github.sha }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 90

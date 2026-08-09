@@ -1,0 +1,29 @@
+{
+  "name": "skeinix-extension",
+  "private": true,
+  "packageManager": "pnpm@10.34.4",
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "test": "vitest run --minWorkers=1 --maxWorkers=1 --no-file-parallelism"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.268",
+    "@types/node": "20.19.43",
+    "jsdom": "29.1.1",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "vitest": "2.1.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "dependencies": {
+    "@medv/finder": "4.0.2",
+    "turndown": "7.2.4"
+  }
+}

@@ -1,0 +1,4 @@
+# Keep synchronized with ../requirements-build.in.
+pip==26.2.1
+hatchling==1.31.0
+editables==0.5

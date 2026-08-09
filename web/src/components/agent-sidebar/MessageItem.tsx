@@ -1,0 +1,261 @@
+/**
+ * One merged chat-message row.
+ *
+ * The prop is a `MergedMessage` produced by `mergeChunks` over either the
+ * persisted history list or the in-flight stream buffer — the caller
+ * (`ChatMessageList`) runs both through the same reducer so this component
+ * never sees raw `'tool'` chunks. Tool invocations are rendered by
+ * `ChatMessageList` as separate activity groups, not nested inside message
+ * bubbles.
+ *
+ */
+import { memo } from 'react';
+import { CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
+import { Markdown } from './Markdown';
+import type { MergedMessage } from './types';
+import { useAuthStore } from '@/stores/auth';
+import {
+  attachmentEmoji,
+  emphasizeUserText,
+  isFileAttachment,
+} from './chat-attachments';
+
+export interface MessageItemProps {
+  message: MergedMessage;
+  showAvatar?: boolean;
+  compact?: boolean;
+  /** Whether this is the actively growing assistant segment. Markdown is still
+   * parsed while it grows so headings/lists/code never flash as plain text. */
+  streaming?: boolean;
+  onOpenBackgroundJobs?: (options: {
+    jobId?: string;
+    deliveryBatchId?: string;
+  }) => void;
+  onOpenFilePreview?: (path: string) => void;
+}
+
+export function MessageAvatar({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: 'agent' | 'user';
+}) {
+  return (
+    <div
+      className={cn(
+        'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1',
+        tone === 'user'
+          ? 'bg-focus/5 text-focus ring-focus/15'
+          : 'bg-state-success/5 text-state-success ring-state-success/15',
+      )}
+      aria-hidden="true"
+    >
+      {label}
+    </div>
+  );
+}
+
+function getUserInitial(): string {
+  const user = useAuthStore.getState().user;
+  const name = (user?.displayName || user?.email || 'U').trim();
+  return (name.charAt(0) || 'U').toUpperCase();
+}
+
+function MessageItemComponent({
+  message,
+  showAvatar = true,
+  compact = false,
+  streaming = false,
+  onOpenBackgroundJobs,
+  onOpenFilePreview,
+}: MessageItemProps) {
+  const { t } = useTranslation();
+  const isUser = message.role === 'user';
+  const isSystemNotice = message.role === 'system';
+  const hasContent = message.content.length > 0;
+  const userInitial = getUserInitial();
+  const fileAttachments = (message.attachments ?? []).filter(isFileAttachment);
+  const userTextParts = isUser
+    ? emphasizeUserText(message.content, message.attachments ?? [])
+    : [];
+
+  if (isSystemNotice) {
+    const activity = message.activity;
+    const jobIds = activity?.job_ids ?? [];
+    const canOpen = (
+      activity?.type === 'background_jobs_delivered'
+      && !!onOpenBackgroundJobs
+    );
+    const content = (
+      <>
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-state-success" />
+        <span className="min-w-0 flex-1 truncate">{message.content}</span>
+        {canOpen ? (
+          <span className="inline-flex shrink-0 items-center text-foreground/70">
+            {t('chat.background.viewAll', 'View all')}
+            <ChevronRight className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+      </>
+    );
+    return (
+      <div
+        className={cn(
+          'flex justify-start',
+          compact ? 'pl-1' : 'pl-12',
+        )}
+        data-source-message-id={message.id || undefined}
+      >
+        {canOpen ? (
+          <button
+            type="button"
+            className="flex h-9 max-w-[92%] items-center gap-2 rounded-full bg-surface-sunken px-3 text-left text-xs text-muted-foreground ring-1 ring-edge-subtle transition-colors hover:bg-surface-hover"
+            onClick={() => onOpenBackgroundJobs({
+              jobId: jobIds.length === 1 ? jobIds[0] : undefined,
+              deliveryBatchId: activity?.delivery_batch_id,
+            })}
+            data-message-role="system"
+            data-role="background-job-activity"
+            data-delivery-batch-id={activity?.delivery_batch_id}
+            data-action="open-background-jobs-preview"
+          >
+            {content}
+          </button>
+        ) : (
+        <div
+          className="flex h-9 max-w-[92%] items-center gap-2 rounded-full bg-surface-sunken px-3 text-xs text-muted-foreground ring-1 ring-edge-subtle"
+          data-message-role="system"
+        >
+          {content}
+        </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-3',
+        isUser ? 'justify-end' : 'justify-start',
+      )}
+      data-source-message-id={message.id || undefined}
+    >
+      {!compact && !isUser && (showAvatar ? <MessageAvatar label="A" tone="agent" /> : <div className="h-9 w-9 shrink-0" />)}
+      <div
+        className={cn(
+          'px-3.5 py-2.5',
+          compact
+            ? cn(
+                'rounded-xl px-3 py-2',
+                isUser ? 'max-w-[88%]' : 'max-w-[94%]',
+              )
+            : isUser ? 'max-w-[82%]' : 'max-w-[92%]',
+          isUser
+            ? 'rounded-2xl rounded-br-sm border border-focus/15 bg-focus/10 text-foreground'
+            : 'rounded-2xl rounded-bl-sm border border-edge-subtle bg-surface-sunken/70 text-foreground',
+        )}
+        data-message-role={message.role}
+        data-message-content-rail={!isUser ? 'assistant' : undefined}
+      >
+        {isUser && fileAttachments.length > 0 ? (
+          <div className="mb-2 flex max-w-full flex-wrap gap-1.5" data-role="message-attachments">
+            {fileAttachments.map((attachment) => (
+              <span
+                key={attachment.path}
+                className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md border border-focus/10 bg-background/65 px-2 text-xs"
+                title={`${attachment.name}\n${attachment.path}`}
+              >
+                <span aria-hidden="true">{attachmentEmoji(attachment.type)}</span>
+                <span className="truncate font-medium">{attachment.name}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {hasContent &&
+          (isUser ? (
+            <div className={cn('chat-message-copy whitespace-pre-wrap', compact && 'chat-message-copy-compact')}>
+              {userTextParts.map((part, index) =>
+                part.emphasized ? (
+                  <strong
+                    key={`${part.kind}:${index}`}
+                    className="font-semibold text-foreground"
+                    data-token-kind={part.kind}
+                  >
+                    {part.text}
+                  </strong>
+                ) : (
+                  <span key={`text:${index}`}>{part.text}</span>
+                ),
+              )}
+            </div>
+          ) : (
+            <Markdown
+              className={compact ? 'chat-message-copy-compact' : undefined}
+              streaming={streaming}
+              onOpenFilePreview={onOpenFilePreview}
+            >
+              {message.content}
+            </Markdown>
+          ))}
+        {!isUser && streaming ? (
+          <span
+            className={cn(
+              'mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground',
+              !hasContent && 'mt-0',
+            )}
+            data-role="agent-streaming-indicator"
+            role="status"
+            aria-label={t('agent.still_working', 'Agent is still working')}
+            title={t('agent.still_working', 'Agent is still working')}
+          >
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin text-state-running motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            <span className="sr-only">
+              {t('agent.still_working', 'Agent is still working')}
+            </span>
+          </span>
+        ) : null}
+      </div>
+      {!compact && isUser && <MessageAvatar label={userInitial} tone="user" />}
+    </div>
+  );
+}
+
+function sameVisibleMessage(previous: MessageItemProps, next: MessageItemProps): boolean {
+  if (
+    previous.showAvatar !== next.showAvatar ||
+    previous.compact !== next.compact ||
+    previous.streaming !== next.streaming
+    || previous.onOpenBackgroundJobs !== next.onOpenBackgroundJobs
+    || previous.onOpenFilePreview !== next.onOpenFilePreview
+  ) return false;
+  const a = previous.message;
+  const b = next.message;
+  if (
+    a.id !== b.id
+    || a.role !== b.role
+    || a.content !== b.content
+    || a.activity?.delivery_batch_id !== b.activity?.delivery_batch_id
+  ) return false;
+  const aAttachments = a.attachments ?? [];
+  const bAttachments = b.attachments ?? [];
+  if (aAttachments.length !== bAttachments.length) return false;
+  return aAttachments.every((attachment, index) => {
+    const other = bAttachments[index];
+    return other != null &&
+      attachment.path === other.path &&
+      attachment.name === other.name &&
+      attachment.type === other.type;
+  });
+}
+
+// Streaming updates replace only the active assistant message. The transcript
+// renderer still walks the list to maintain tool grouping, while memoization
+// keeps completed Markdown bubbles from re-rendering on every token frame.
+export const MessageItem = memo(MessageItemComponent, sameVisibleMessage);

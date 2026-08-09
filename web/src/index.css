@@ -1,0 +1,769 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Transcript Diagram cards are deliberately read-only. Their one actionable
+   affordance is the card-level "Open in preview" button, so do not render the
+   full canvas toolbar or interactive minimap inside the compact snapshot. */
+.diagram-inline-preview [role='toolbar'],
+.diagram-inline-preview .react-flow__minimap {
+  display: none;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /* Canonical workbench surfaces. Values are OKLCH components so Tailwind
+       can apply opacity modifiers without maintaining a second palette. */
+    /* Four perceptible workbench layers: canvas -> chrome -> work -> panel.
+       Legacy surface names remain as compatibility aliases, but no longer
+       introduce unrelated blue/green greys between adjacent panes. */
+    --surface-app: 95.8% 0.012 255;
+    --surface-nav: 97.3% 0.012 255;
+    --surface-work: 99% 0.004 255;
+    --surface-canvas: 95.8% 0.012 255;
+    --surface-view: 100% 0 0;
+    --surface-sandbox: 97.3% 0.01 255;
+    --surface-sunken: 96.7% 0.01 255;
+    --surface-raised: 100% 0 0;
+    --surface-hover: 95.8% 0.022 275;
+
+    --text-primary: 24% 0.018 255;
+    --text-secondary: 47% 0.018 255;
+    --text-tertiary: 52% 0.014 255;
+    --edge-structural: 89.5% 0.009 255;
+    --edge-subtle: 93.2% 0.006 255;
+    /* Dark enough that near-white 14 px button text clears WCAG AA. */
+    --focus: 52% 0.18 275;
+    --state-info: 57% 0.15 248;
+    --state-running: 57% 0.19 258;
+    --state-success: 47% 0.14 160;
+    --state-warning: 50% 0.15 75;
+    --state-danger: 49% 0.19 24;
+
+    /* Resource identity is deliberately separate from execution state. A
+       green Skill icon never means success, and a red PDF icon never means
+       failure. Pages consume these values through the shared registry. */
+    --resource-chat: 57% 0.16 248;
+    --resource-workflow: 55% 0.18 292;
+    --resource-task: 49% 0.12 188;
+    --resource-deployment: 57% 0.15 55;
+    --resource-credential: 55% 0.14 78;
+    --resource-mcp: 54% 0.17 274;
+    --resource-skill: 49% 0.12 150;
+    --resource-knowledge: 52% 0.12 220;
+    --resource-storage: 56% 0.12 82;
+    --resource-organization: 54% 0.15 270;
+    --resource-management: 45% 0.05 255;
+
+    /* Compatibility aliases consumed by the existing shadcn-style API. */
+    --background: var(--surface-work);
+    --foreground: var(--text-primary);
+    --card: var(--surface-raised);
+    --card-foreground: var(--text-primary);
+    --popover: var(--surface-raised);
+    --popover-foreground: var(--text-primary);
+    --primary: var(--focus);
+    --primary-foreground: 98.5% 0.004 250;
+    --secondary: var(--surface-sunken);
+    --secondary-foreground: var(--text-primary);
+    --muted: var(--surface-sunken);
+    --muted-foreground: var(--text-secondary);
+    --accent: var(--surface-hover);
+    --accent-foreground: var(--text-primary);
+    --destructive: var(--state-danger);
+    --destructive-foreground: 98.5% 0.004 250;
+    --border: var(--edge-subtle);
+    --input: var(--edge-structural);
+    --ring: var(--focus);
+
+    --radius-card: 0.5rem;
+    --radius-control: 0.375rem;
+    --radius-floating: 0.75rem;
+    --radius: var(--radius-card);
+    --shadow-raised: 0 10px 28px oklch(24% 0.018 255 / 0.08),
+      0 2px 6px oklch(24% 0.018 255 / 0.04);
+    --shadow-popover: 0 12px 30px oklch(24% 0.018 255 / 0.12);
+    --shadow-modal: 0 22px 60px oklch(16% 0.018 255 / 0.22);
+    --motion-fast: 120ms;
+    --motion-base: 180ms;
+    --motion-panel: 220ms;
+    --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --motion-feedback: var(--motion-fast);
+    --motion-popover: var(--motion-base);
+    --motion-dialog: var(--motion-panel);
+    --motion-pane: var(--motion-panel);
+  }
+
+  .dark {
+    color-scheme: dark;
+    --surface-app: 17% 0.01 255;
+    --surface-nav: 19.5% 0.01 255;
+    --surface-work: 21.5% 0.008 255;
+    --surface-canvas: 17% 0.01 255;
+    --surface-view: 23.5% 0.01 255;
+    --surface-sandbox: 19.5% 0.01 255;
+    --surface-sunken: 18.5% 0.009 255;
+    --surface-raised: 23.5% 0.012 250;
+    --surface-hover: 27% 0.025 275;
+    --text-primary: 93% 0.008 250;
+    --text-secondary: 73% 0.014 250;
+    --text-tertiary: 61% 0.012 250;
+    --edge-structural: 32% 0.012 255;
+    --edge-subtle: 27% 0.009 255;
+    --focus: 72% 0.15 275;
+    --state-info: 72% 0.12 248;
+    --state-running: 72% 0.15 258;
+    --state-success: 72% 0.12 160;
+    --state-warning: 76% 0.13 75;
+    --state-danger: 70% 0.17 24;
+    --resource-chat: 72% 0.13 248;
+    --resource-workflow: 72% 0.15 292;
+    --resource-task: 70% 0.11 188;
+    --resource-deployment: 75% 0.13 55;
+    --resource-credential: 76% 0.12 78;
+    --resource-mcp: 73% 0.14 274;
+    --resource-skill: 72% 0.11 150;
+    --resource-knowledge: 72% 0.1 220;
+    --resource-storage: 76% 0.11 82;
+    --resource-organization: 73% 0.13 270;
+    --resource-management: 70% 0.045 255;
+
+    --primary-foreground: 18% 0.012 255;
+    --destructive-foreground: 98% 0.004 250;
+    --shadow-raised: 0 12px 30px oklch(6% 0.01 255 / 0.28),
+      0 2px 8px oklch(6% 0.01 255 / 0.2);
+    --shadow-popover: 0 14px 34px oklch(6% 0.01 255 / 0.42);
+    --shadow-modal: 0 24px 64px oklch(4% 0.01 255 / 0.55);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    background: oklch(var(--surface-app));
+  }
+  body {
+    @apply bg-background text-[14px] leading-5 text-foreground antialiased;
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+      sans-serif;
+    text-rendering: optimizeLegibility;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
+      monospace;
+  }
+  ::selection {
+    background: oklch(var(--focus) / 0.2);
+  }
+  :focus-visible {
+    scroll-margin: 0.5rem;
+  }
+}
+
+@layer components {
+  /*
+   * Chat copy has its own bilingual reading typography. Using the platform UI
+   * family first keeps Latin and CJK glyph metrics visually compatible on each
+   * OS, while avoiding a blocking web-font request during initial load.
+   */
+  .chat-message-copy {
+    color: oklch(var(--text-primary));
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    font-variant-ligatures: contextual common-ligatures;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
+  }
+
+  .chat-message-copy-compact {
+    font-size: 13px;
+    line-height: 1.54;
+  }
+
+  .chat-message-copy-compact h1 {
+    font-size: 16px;
+  }
+
+  .chat-message-copy-compact h2 {
+    font-size: 14px;
+  }
+
+  .chat-message-copy-compact h3 {
+    font-size: 13px;
+  }
+
+  .chat-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .chat-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .chat-markdown p {
+    margin-block: 0.5em;
+  }
+
+  .chat-markdown h1,
+  .chat-markdown h2,
+  .chat-markdown h3 {
+    color: oklch(var(--text-primary));
+    font-weight: 650;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+  }
+
+  .chat-markdown h1 {
+    font-size: 17px;
+    line-height: 1.4;
+    margin-block: 0.9em 0.36em;
+  }
+
+  .chat-markdown h2 {
+    font-size: 15px;
+    line-height: 1.45;
+    margin-block: 0.85em 0.34em;
+  }
+
+  .chat-markdown h3 {
+    font-size: 14px;
+    line-height: 1.5;
+    margin-block: 0.78em 0.3em;
+  }
+
+  .chat-markdown strong {
+    font-weight: 650;
+  }
+
+  .chat-markdown a {
+    color: oklch(var(--focus));
+    font-weight: 520;
+    text-decoration-line: underline;
+    text-decoration-color: oklch(var(--focus) / 0.42);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  .chat-markdown a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  .chat-markdown ul,
+  .chat-markdown ol {
+    margin-block: 0.5em;
+    padding-inline-start: 1.45em;
+  }
+
+  .chat-markdown ul {
+    list-style-type: disc;
+  }
+
+  .chat-markdown ol {
+    list-style-type: decimal;
+  }
+
+  .chat-markdown li {
+    padding-inline-start: 0.18em;
+  }
+
+  .chat-markdown li + li {
+    margin-top: 0.2em;
+  }
+
+  .chat-markdown li > p {
+    margin-block: 0.2em;
+  }
+
+  .chat-markdown li::marker {
+    color: oklch(var(--text-tertiary));
+  }
+
+  .chat-markdown blockquote {
+    margin-block: 0.6em;
+    border-inline-start: 3px solid oklch(var(--edge-structural));
+    border-radius: 0 6px 6px 0;
+    background: oklch(var(--surface-sunken) / 0.58);
+    color: oklch(var(--text-secondary));
+    padding: 0.42em 0.8em;
+  }
+
+  .chat-markdown blockquote > :first-child {
+    margin-top: 0;
+  }
+
+  .chat-markdown blockquote > :last-child {
+    margin-bottom: 0;
+  }
+
+  .chat-markdown hr {
+    margin-block: 1em;
+    border: 0;
+    border-top: 1px solid oklch(var(--edge-subtle));
+  }
+
+  .chat-markdown-code-inline,
+  .chat-markdown-code-block {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.88em;
+  }
+
+  .chat-markdown-code-inline {
+    border: 1px solid oklch(var(--edge-subtle));
+    border-radius: 5px;
+    background: oklch(var(--surface-sunken) / 0.8);
+    padding: 0.08em 0.34em;
+  }
+
+  .chat-markdown pre {
+    margin-block: 0.65em;
+    overflow-x: auto;
+    border: 1px solid oklch(var(--edge-subtle));
+    border-radius: 8px;
+    background: oklch(var(--surface-sunken) / 0.86);
+    padding: 0.72em 0.85em;
+    line-height: 1.55;
+    text-wrap: nowrap;
+  }
+
+  /* Fenced code without a language tag is emitted with the inline-code class
+     by react-markdown. Once nested in <pre>, it must still use block chrome. */
+  .chat-markdown pre .chat-markdown-code-inline {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .chat-markdown-table-wrap {
+    margin-block: 0.65em;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid oklch(var(--edge-subtle));
+    border-radius: 8px;
+  }
+
+  .chat-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    line-height: 1.5;
+    text-wrap: wrap;
+  }
+
+  .chat-message-copy-compact table {
+    font-size: 12.5px;
+  }
+
+  .chat-markdown th,
+  .chat-markdown td {
+    border-bottom: 1px solid oklch(var(--edge-subtle));
+    padding: 0.5em 0.72em;
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .chat-markdown th {
+    background: oklch(var(--surface-sunken) / 0.72);
+    font-weight: 650;
+  }
+
+  .chat-markdown tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+@layer utilities {
+  .chat-content-width {
+    width: 100%;
+    max-width: 1080px;
+    margin-inline: auto;
+  }
+
+  .chat-composer-width {
+    width: min(92%, 900px);
+    max-width: 900px;
+    margin-inline: auto;
+  }
+
+  .surface-shell {
+    background: oklch(var(--surface-app));
+  }
+
+  .route-transition {
+    animation: route-enter var(--motion-base) var(--motion-ease) both;
+  }
+
+  .chat-context-transition {
+    animation: context-enter var(--motion-fast) var(--motion-ease) both;
+  }
+
+  @keyframes route-enter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes context-enter {
+    from { opacity: 0.45; transform: translateY(1px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pane-enter-from-left {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes pane-enter-from-right {
+    from { opacity: 0; transform: translateX(8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes tab-content-enter {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .pane-enter-from-left {
+    animation: pane-enter-from-left var(--motion-panel) var(--motion-ease) both;
+  }
+
+  .pane-enter-from-right {
+    animation: pane-enter-from-right var(--motion-panel) var(--motion-ease) both;
+  }
+
+  .ui-tab-content[data-state='active'] {
+    animation: tab-content-enter var(--motion-base) var(--motion-ease) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .route-transition {
+      animation: none;
+    }
+    .chat-context-transition {
+      animation: none;
+    }
+    .pane-enter-from-left,
+    .pane-enter-from-right,
+    .ui-tab-content[data-state='active'] {
+      animation: none;
+    }
+  }
+
+  .surface-sidebar {
+    background: oklch(var(--surface-nav));
+  }
+
+  .surface-topbar {
+    @apply border-b border-edge-structural backdrop-blur;
+    background: oklch(var(--surface-raised) / 0.92);
+  }
+
+  .surface-panel {
+    @apply border border-edge-subtle bg-surface-raised;
+  }
+
+  .surface-sidepanel {
+    @apply bg-surface-view;
+  }
+
+  .chat-composer-shell {
+    @apply rounded-xl border border-edge-structural bg-surface-raised;
+    box-shadow: var(--shadow-raised);
+  }
+
+  .chat-pane-header {
+    @apply border-b border-edge-subtle;
+    background: oklch(var(--surface-raised) / 0.78);
+  }
+
+  .chat-pane-subheader {
+    @apply border-b border-edge-subtle;
+    background: oklch(var(--surface-sunken) / 0.3);
+  }
+
+  .page-shell {
+    @apply flex-1 overflow-auto bg-surface-work p-6;
+  }
+
+  .page-shell.page-shell-contained {
+    @apply min-h-0 overflow-hidden;
+  }
+
+  .page-shell-contained > .page-content {
+    @apply h-full min-h-0;
+  }
+
+  .page-scroll-region {
+    @apply min-h-0 overflow-y-auto overflow-x-hidden;
+    scrollbar-color: oklch(var(--muted-foreground) / 0.32) transparent;
+    scrollbar-width: thin;
+  }
+
+  .page-scroll-region::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .page-scroll-region::-webkit-scrollbar-thumb {
+    background: oklch(var(--muted-foreground) / 0.28);
+    border-radius: 9999px;
+  }
+
+  .page-content {
+    @apply mx-auto flex min-w-0 flex-col gap-6;
+  }
+
+  .management-page-content {
+    @apply w-full max-w-7xl;
+  }
+
+  .table-panel {
+    @apply overflow-hidden rounded-lg border border-edge-subtle bg-surface-work;
+  }
+
+  .text-ui {
+    @apply text-sm leading-5;
+  }
+
+  .text-readable {
+    @apply text-[15px] leading-6;
+  }
+
+  .text-meta {
+    @apply text-xs leading-4 text-muted-foreground;
+  }
+
+  .text-title {
+    @apply text-2xl font-semibold leading-8;
+  }
+
+  .text-section {
+    @apply text-base font-semibold;
+  }
+
+  .text-code {
+    @apply font-mono text-[13px] leading-5;
+  }
+
+  .text-line-number {
+    @apply font-mono text-xs leading-5 text-muted-foreground;
+  }
+
+  .interactive-row {
+    @apply transition-colors duration-feedback hover:bg-surface-hover;
+  }
+
+  .interactive-selected {
+    @apply bg-surface-hover text-foreground;
+  }
+
+  .toolbar-icon-button {
+    @apply h-9 w-9 text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground;
+  }
+
+  .empty-state {
+    @apply rounded-lg border border-transparent bg-surface-sunken/45 p-8 text-center text-sm text-muted-foreground;
+  }
+
+  .empty-state > svg {
+    @apply mx-auto mb-3 text-muted-foreground;
+  }
+
+  .empty-state-title {
+    @apply text-sm font-medium text-foreground;
+  }
+
+  .empty-state-copy {
+    @apply mt-1 text-sm text-muted-foreground;
+  }
+
+  .app-scrollbar {
+    scrollbar-color: oklch(var(--muted-foreground) / 0.32) transparent;
+    scrollbar-width: thin;
+  }
+
+  .app-scrollbar::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb {
+    background: oklch(var(--muted-foreground) / 0.28);
+    border-radius: 9999px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: oklch(var(--muted-foreground) / 0.42);
+  }
+
+  .chat-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .chat-scrollbar::-webkit-scrollbar {
+    height: 0;
+    width: 0;
+  }
+
+  /* Chat workbench panes respond to their own width, not the viewport width.
+     This keeps preview toolbars useful when the user drags a neighboring sash. */
+  .chat-preview-pane {
+    container-name: chat-preview-pane;
+    container-type: inline-size;
+  }
+
+  .chat-workflow-toolbar {
+    container-name: chat-workflow-toolbar;
+    container-type: inline-size;
+  }
+
+  .chat-workflow-action-label {
+    display: none;
+  }
+
+  @container chat-workflow-toolbar (min-width: 720px) {
+    .chat-workflow-action-label {
+      display: inline;
+    }
+  }
+
+  @container chat-preview-pane (max-width: 439px) {
+    .chat-preview-active-type {
+      display: none;
+    }
+
+    .chat-preview-header {
+      gap: 0.375rem;
+      padding-inline: 0.5rem;
+    }
+  }
+}
+
+/* React Flow's stylesheet is unlayered and loads with the lazy canvas, after
+   Tailwind's layers. Keep this override unlayered too so it participates in
+   the same cascade and the visible credit meets our text/target minimums. */
+.react-flow .react-flow__attribution {
+  font-size: 0.75rem;
+  color: oklch(var(--content-secondary));
+  background: oklch(var(--surface-raised) / 0.92);
+  border: 1px solid oklch(var(--edge-subtle));
+  border-radius: 0.375rem 0 0 0;
+}
+
+.react-flow .react-flow__attribution a {
+  display: inline-flex;
+  min-height: 1.5rem;
+  align-items: center;
+  padding-inline: 0.25rem;
+  color: inherit;
+}
+
+/* The editable workflow canvas is a neutral working sheet. Explicitly set
+   xyflow's own background variable so the lazy-loaded xyflow stylesheet
+   cannot reveal the blue-tinted application shell underneath it. */
+.react-flow.workflow-canvas {
+  --xy-background-color: oklch(var(--surface-canvas));
+}
+
+/* Chat file View owns its width through the workbench pane. Container queries
+   keep the title bar readable as the user drags the pane boundary. */
+.chat-file-viewer {
+  container-type: inline-size;
+}
+
+@container (max-width: 680px) {
+  .chat-file-viewer-mode-label,
+  .chat-file-viewer-meta {
+    display: none;
+  }
+}
+
+@container (max-width: 500px) {
+  .chat-file-viewer-save-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes auth-capability-node {
+  0%, 58%, 100% {
+    box-shadow: 0 1px 2px oklch(16% 0.018 255 / 0.05);
+    transform: translateY(0);
+  }
+  12%, 28% {
+    box-shadow: 0 0 0 5px oklch(var(--focus) / 0.08);
+    transform: translateY(-2px);
+  }
+}
+
+.auth-capability-node {
+  animation: auth-capability-node 3.2s var(--motion-ease) infinite both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-capability-node {
+    animation: none;
+  }
+}
+@keyframes chat-thinking-dot {
+  0%,
+  20%,
+  100% {
+    opacity: 0.34;
+    transform: translateY(0) scale(0.92);
+  }
+  10% {
+    opacity: 0.9;
+    transform: translateY(-3px) scale(1);
+  }
+}
+
+.chat-thinking-dot {
+  transform-origin: center;
+  animation: chat-thinking-dot 800ms cubic-bezier(0.34, 0, 0.2, 1) infinite both;
+  will-change: transform, opacity;
+}
+
+.chat-thinking-dot:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.chat-thinking-dot:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking-dot {
+    animation: none;
+    opacity: 0.55;
+    transform: none;
+    will-change: auto;
+  }
+
+}

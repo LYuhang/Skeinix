@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" href="icons/icon.png" />
+    <title>Skeinix</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --surface: oklch(95.5% 0.01 255);
+        --raised: oklch(99.8% 0.002 250);
+        --text: oklch(24% 0.018 255);
+        --muted: oklch(47% 0.018 255);
+        --edge: oklch(86% 0.014 250);
+        --brand: oklch(24% 0.018 255);
+        --brand-text: oklch(98.5% 0.004 250);
+      }
+      :root[data-theme="dark"] {
+          color-scheme: dark;
+          --surface: oklch(16.5% 0.012 255);
+          --raised: oklch(23.5% 0.012 250);
+          --text: oklch(93% 0.008 250);
+          --muted: oklch(73% 0.014 250);
+          --edge: oklch(34% 0.016 250);
+          --brand: oklch(93% 0.008 250);
+          --brand-text: oklch(18% 0.012 255);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          color-scheme: dark;
+          --surface: oklch(16.5% 0.012 255);
+          --raised: oklch(23.5% 0.012 250);
+          --text: oklch(93% 0.008 250);
+          --muted: oklch(73% 0.014 250);
+          --edge: oklch(34% 0.016 250);
+          --brand: oklch(93% 0.008 250);
+          --brand-text: oklch(18% 0.012 255);
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body {
+        background: var(--surface);
+        color: var(--text);
+        font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #embed { width: 100%; height: 100%; display: block; border: 0; background: var(--surface); }
+      #shell-status {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--surface);
+      }
+      #shell-status[hidden] { display: none; }
+      .status-card { max-width: 280px; text-align: center; }
+      .brand {
+        display: inline-block;
+        width: 36px;
+        height: 36px;
+        margin-bottom: 12px;
+        border-radius: 10px;
+        object-fit: cover;
+      }
+      .brand-dark { display: none; }
+      :root[data-theme="dark"] .brand-light { display: none; }
+      :root[data-theme="dark"] .brand-dark { display: inline-block; }
+      #status-title { margin: 0; font-size: 13px; font-weight: 650; }
+      #status-detail { margin: 5px 0 0; color: var(--muted); }
+      #retry {
+        min-height: 32px;
+        margin-top: 14px;
+        padding: 0 13px;
+        border: 1px solid var(--edge);
+        border-radius: 8px;
+        background: var(--raised);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        font-weight: 650;
+      }
+      #retry:focus-visible { outline: 2px solid oklch(57% 0.19 258); outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <div id="shell-status" role="status" aria-live="polite">
+      <div class="status-card">
+        <span aria-hidden="true">
+          <img class="brand brand-light" src="icons/icon-light.png" alt="" />
+          <img class="brand brand-dark" src="icons/icon-dark.png" alt="" />
+        </span>
+        <p id="status-title">Connecting…</p>
+        <p id="status-detail">Opening browser chat</p>
+        <button id="retry" type="button" hidden>Retry</button>
+      </div>
+    </div>
+    <iframe id="embed" title="Skeinix Chat" allow="clipboard-read; clipboard-write" referrerpolicy="no-referrer"></iframe>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

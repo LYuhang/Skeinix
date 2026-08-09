@@ -1,0 +1,1467 @@
+import { lazy, Suspense, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
+import {
+  CalendarClock,
+  ChevronDown,
+  Download,
+  MoreHorizontal,
+  Play,
+  RefreshCw,
+  Search,
+  Share2,
+} from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import type { SearchSelectOption } from '@/components/ui/search-select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  cancelTask,
+  createScheduledRun,
+  getTaskSummary,
+  listTasks,
+  pauseScheduledRun,
+  resumeTask,
+  resumeScheduledRun,
+  runScheduledNow,
+  type Task,
+  type TaskSandboxStatus,
+  type TaskStatus,
+  type TaskType,
+} from '@/lib/api/tasks';
+import { useWorkspaceList } from '@/lib/api/queries/workflows';
+import { useWorkflow } from '@/lib/api/queries/workflow';
+import { getStartNodeFields } from '@/lib/workflow/start-node';
+import { useFormatDateTime } from '@/lib/timezone';
+import { TIMEZONE_GROUPS } from '@/lib/timezone-list';
+import { ManagementPageShell } from '@/components/layout/management-page-shell';
+import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
+import { ProgressState, StatusBadge, StatusDot, type SemanticStatus } from '@/components/ui/status';
+import { ActionableError } from '@/components/presentation/ActionableError';
+import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { ResourceIcon } from '@/components/presentation/ResourceIcon';
+
+const PAGE_SIZE = 25;
+const TASK_LIST_REFETCH_ACTIVE_MS = 2_000;
+const TASK_LIST_REFETCH_IDLE_MS = 5_000;
+const BATCH_STATUS_OPTIONS: TaskStatus[] = [
+  'queued',
+  'running',
+  'resuming',
+  'cancelling',
+  'failed',
+  'interrupted',
+  'finished',
+  'finished_with_errors',
+  'cancelled',
+];
+const SCHEDULED_STATUS_OPTIONS: TaskStatus[] = [
+  'enabled',
+  'paused',
+  'running',
+  'failed',
+  'cancelled',
+];
+const CANCELLABLE: TaskStatus[] = ['queued', 'running', 'resuming'];
+const RESUMABLE: TaskStatus[] = ['cancelled', 'failed', 'interrupted', 'finished_with_errors'];
+const ACTIVE_TASK_STATUSES: TaskStatus[] = ['queued', 'running', 'resuming', 'cancelling'];
+
+// These controls are only visible after the user opens a task-creation
+// surface. Keep their search/canvas/file tooling out of the task-list
+// navigation path; behind a high-latency proxy those transitive chunks were
+// adding a large request waterfall before the list could become interactive.
+const SearchSelect = lazy(() =>
+  import('@/components/ui/search-select').then((module) => ({
+    default: module.SearchSelect,
+  })),
+);
+const BatchTab = lazy(() =>
+  import('@/pages/canvas/inspector/BatchTab').then((module) => ({
+    default: module.BatchTab,
+  })),
+);
+
+function DeferredControlFallback({ className = 'h-10 w-full' }: { className?: string }) {
+  return <Skeleton className={className} />;
+}
+const ACTIVE_RANK: Record<TaskStatus, number> = {
+  running: 0,
+  resuming: 0,
+  cancelling: 0,
+  queued: 0,
+  failed: 1,
+  interrupted: 1,
+  finished_with_errors: 1,
+  finished: 2,
+  cancelled: 3,
+  enabled: 2,
+  paused: 3,
+};
+
+function taskSemanticStatus(status: TaskStatus): SemanticStatus {
+  switch (status) {
+    case 'queued':
+      return 'info';
+    case 'running':
+    case 'resuming':
+      return 'running';
+    case 'cancelling':
+      return 'warning';
+    case 'finished':
+    case 'enabled':
+      return 'success';
+    case 'finished_with_errors':
+    case 'interrupted':
+      return 'warning';
+    case 'failed':
+      return 'danger';
+    case 'cancelled':
+    case 'paused':
+      return 'neutral';
+  }
+}
+
+/** Render cancellation/cleanup as one simple user-facing state. */
+function visibleTaskStatus(status: TaskStatus): TaskStatus {
+  return status === 'cancelling' || status === 'interrupted'
+    ? 'cancelled'
+    : status;
+}
+
+function formatScheduleProgress(task: Task, formatTime: (value?: string | null) => string): string {
+  const payload = task.payload && typeof task.payload === 'object'
+    ? task.payload as Record<string, unknown>
+    : {};
+  const next = typeof payload.next_run_at === 'string' ? payload.next_run_at : null;
+  const last = typeof payload.last_status === 'string' ? payload.last_status : null;
+  if (task.status === 'paused') return 'Paused';
+  if (task.status === 'running') return last ? `Running · last ${last}` : 'Running';
+  if (next) return `Next: ${formatTime(next)}`;
+  return 'No next run';
+}
+
+function tabStatusOptions(type: TaskType): TaskStatus[] {
+  return type === 'scheduled_run' ? SCHEDULED_STATUS_OPTIONS : BATCH_STATUS_OPTIONS;
+}
+
+function sandboxSemanticStatus(status?: TaskSandboxStatus | null): SemanticStatus {
+  switch (status) {
+    case 'running':
+      return 'success';
+    case 'starting':
+    case 'pending':
+      return 'running';
+    case 'releasing':
+      return 'warning';
+    case 'lost':
+    case 'failed_to_start':
+      return 'danger';
+    case 'released':
+    default:
+      return 'neutral';
+  }
+}
+
+function taskName(task: Task): string {
+  const payload = task.payload && typeof task.payload === 'object'
+    ? (task.payload as Record<string, unknown>)
+    : {};
+  return (
+    (typeof payload.name === 'string' && payload.name) ||
+    (task.task_type === 'scheduled_run' ? 'Scheduled run' : 'Batch execution')
+  );
+}
+
+function workflowOptions(
+  workflows: Array<{ wf_id: string; workflow_name?: string | null; description?: string | null }>,
+): SearchSelectOption[] {
+  return workflows.map((wf) => ({
+    value: wf.wf_id,
+    label: wf.workflow_name || wf.wf_id,
+    meta: wf.wf_id,
+    description: wf.description ?? '',
+    keywords: [wf.workflow_name ?? '', wf.wf_id, wf.description ?? ''],
+  }));
+}
+
+function duration(task: Task): string {
+  if (!task.started_at) return '—';
+  const end = task.finished_at ? Date.parse(task.finished_at) : Date.now();
+  const start = Date.parse(task.started_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '—';
+  const seconds = Math.round((end - start) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${rest}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function SummaryCard({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: number;
+  tone: string;
+  hint: string;
+}) {
+  return (
+    <div className="border-l border-edge-structural px-4 py-2 first:border-l-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>
+        {value}
+      </div>
+      <div className="mt-1 text-xs leading-4 text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
+function BatchTaskCreatePanel({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (taskId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const workflowsQuery = useWorkspaceList(200, 0);
+  const workflows = useMemo(() => workflowsQuery.data?.items ?? [], [workflowsQuery.data?.items]);
+  const workflowSelectOptions = useMemo(() => workflowOptions(workflows), [workflows]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const effectiveWorkflowId = selectedWorkflowId || workflows[0]?.wf_id || '';
+
+  const selectedWorkflow = workflows.find((wf) => wf.wf_id === effectiveWorkflowId);
+  const snapshotQuery = useWorkflow(effectiveWorkflowId);
+  const workflowSnapshot = snapshotQuery.data?.workflow ?? null;
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden border border-edge-structural bg-surface-work" data-testid="task-batch-create-panel">
+      <div className="shrink-0 border-b bg-surface-sunken/70 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-base font-semibold">
+              {t('tasks.new.batchTitle', 'Batch execution setup')}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t(
+                'tasks.new.batchDesc',
+                'Configure a workflow, input file, column mapping, and output columns before starting a batch task.',
+              )}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            {t('common.cancel', 'Cancel')}
+          </Button>
+        </div>
+      </div>
+
+      <div className="page-scroll-region grid flex-1 content-start gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]" data-role="task-create-scroll-region">
+        <aside className="space-y-3">
+          <div className="rounded-lg border bg-background p-3">
+            <label className="text-sm font-medium" htmlFor="task-batch-workflow">
+              {t('tasks.new.workflow', 'Workflow')}
+            </label>
+            <Suspense fallback={<DeferredControlFallback className="mt-2 h-10 w-full" />}>
+              <SearchSelect
+                value={effectiveWorkflowId}
+                options={workflowSelectOptions}
+                onValueChange={setSelectedWorkflowId}
+                placeholder={t('tasks.new.selectWorkflow', 'Select a workflow to configure the batch task.')}
+                searchPlaceholder={t('tasks.new.searchWorkflow', 'Search workflow name, ID, or description')}
+                emptyText={t('tasks.new.noWorkflowMatches', 'No workflows match your search.')}
+                disabled={workflowsQuery.isLoading || workflows.length === 0}
+                className="mt-2"
+                triggerClassName="w-full"
+              />
+            </Suspense>
+            {workflowsQuery.isLoading ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('workspace_loading', 'Loading workflows...')}
+              </p>
+            ) : workflows.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('tasks.new.noWorkflows', 'Create a workflow before starting a batch task.')}
+              </p>
+            ) : selectedWorkflow ? (
+              <div className="mt-3 space-y-1 rounded-md bg-surface-sunken p-2 text-xs text-muted-foreground">
+                <div className="truncate font-medium text-foreground">
+                  {selectedWorkflow.workflow_name}
+                </div>
+                <div className="truncate font-mono">{selectedWorkflow.wf_id}</div>
+                {selectedWorkflow.description && (
+                  <div className="line-clamp-3">{selectedWorkflow.description}</div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+            <div className="font-medium text-foreground">
+              {t('tasks.new.batchFlowTitle', 'What happens next')}
+            </div>
+            <ol className="mt-2 space-y-1.5">
+              <li>{t('tasks.new.batchFlow1', 'Choose a workflow and load a tabular input file.')}</li>
+              <li>{t('tasks.new.batchFlow2', 'Map input columns to the workflow StartNode fields.')}</li>
+              <li>{t('tasks.new.batchFlow3', 'Start the task and open the live task detail page.')}</li>
+            </ol>
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          {snapshotQuery.isLoading && effectiveWorkflowId ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+              {t('tasks.new.loadingWorkflow', 'Loading workflow...')}
+            </div>
+          ) : snapshotQuery.isError ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+              {t('tasks.new.workflowLoadError', 'Failed to load workflow.')}
+            </div>
+          ) : effectiveWorkflowId && workflowSnapshot ? (
+            <Suspense fallback={<DeferredControlFallback className="h-72 w-full" />}>
+              <BatchTab
+                wfId={effectiveWorkflowId}
+                workflow={workflowSnapshot}
+                showTaskList={false}
+                onSubmitted={onCreated}
+              />
+            </Suspense>
+          ) : (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+              {t('tasks.new.selectWorkflow', 'Select a workflow to configure the batch task.')}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function parsePresetValue(raw: string, type: string): unknown {
+  const value = raw.trim();
+  if (value === '') return '';
+  const lower = type.toLowerCase();
+  if (lower.includes('int') || lower.includes('float') || lower.includes('number')) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  }
+  if (lower.includes('bool')) {
+    if (/^(true|yes|1)$/i.test(value)) return true;
+    if (/^(false|no|0)$/i.test(value)) return false;
+    return value;
+  }
+  if (lower.includes('list') || lower.includes('array') || lower.includes('object') || lower.includes('dict')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return raw;
+}
+
+type ScheduleFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
+
+function splitTime(value: string): { hour: number; minute: number } {
+  const [rawHour, rawMinute] = value.split(':');
+  return {
+    hour: Math.min(23, Math.max(0, Number(rawHour) || 0)),
+    minute: Math.min(59, Math.max(0, Number(rawMinute) || 0)),
+  };
+}
+
+function scheduleCron({
+  frequency,
+  time,
+  hourlyMinute,
+  weekday,
+  monthday,
+  customCron,
+}: {
+  frequency: ScheduleFrequency;
+  time: string;
+  hourlyMinute: number;
+  weekday: number;
+  monthday: number;
+  customCron: string;
+}): string {
+  const { hour, minute } = splitTime(time);
+  if (frequency === 'hourly') return `${hourlyMinute} * * * *`;
+  if (frequency === 'daily') return `${minute} ${hour} * * *`;
+  if (frequency === 'weekly') return `${minute} ${hour} * * ${weekday}`;
+  if (frequency === 'monthly') return `${minute} ${hour} ${monthday} * *`;
+  return customCron.trim();
+}
+
+/** Convert an IANA-zone wall clock to an ISO instant without assuming that
+ * the selected schedule timezone equals the browser timezone. */
+function zonedWallClockToIso(value: string, timezone: string): string | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const target = match.slice(1).map(Number);
+  const targetUtc = Date.UTC(target[0], target[1] - 1, target[2], target[3], target[4]);
+  let instant = targetUtc;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(instant))
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, Number(part.value)]),
+    );
+    const observedUtc = Date.UTC(
+      parts.year, parts.month - 1, parts.day, parts.hour, parts.minute,
+    );
+    instant += targetUtc - observedUtc;
+  }
+  return new Date(instant).toISOString();
+}
+
+function ScheduledRunCreatePanel({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (taskId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const workflowsQuery = useWorkspaceList(200, 0);
+  const workflows = useMemo(() => workflowsQuery.data?.items ?? [], [workflowsQuery.data?.items]);
+  const workflowSelectOptions = useMemo(() => workflowOptions(workflows), [workflows]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const effectiveWorkflowId = selectedWorkflowId || workflows[0]?.wf_id || '';
+  const [customName, setCustomName] = useState<string | null>(null);
+  const [scheduleMode, setScheduleMode] = useState<'calendar' | 'interval'>('calendar');
+  const [frequency, setFrequency] = useState<ScheduleFrequency>('daily');
+  const [time, setTime] = useState('09:00');
+  const [hourlyMinute, setHourlyMinute] = useState(0);
+  const [weekday, setWeekday] = useState(1);
+  const [monthday, setMonthday] = useState(1);
+  const [customCron, setCustomCron] = useState('0 9 * * *');
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [intervalUnit, setIntervalUnit] = useState<'minutes' | 'hours' | 'days'>('hours');
+  const [timezone, setScheduleTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  );
+  const [startAt, setStartAt] = useState('');
+  const [endAt, setEndAt] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [mountEnabled, setMountEnabled] = useState(false);
+  const [notifySuccess, setNotifySuccess] = useState(false);
+  const [notifyFailure, setNotifyFailure] = useState(true);
+  const [inputValues, setInputValues] = useState<Record<string, string>>({});
+  const cronExpr = scheduleCron({
+    frequency, time, hourlyMinute, weekday, monthday, customCron,
+  });
+  const intervalSeconds = intervalValue * (
+    intervalUnit === 'minutes' ? 60 : intervalUnit === 'hours' ? 3_600 : 86_400
+  );
+
+  const selectedWorkflow = workflows.find((wf) => wf.wf_id === effectiveWorkflowId);
+  const name = customName ?? (
+    selectedWorkflow
+      ? `${selectedWorkflow.workflow_name || selectedWorkflow.wf_id} schedule`
+      : 'Scheduled run'
+  );
+  const snapshotQuery = useWorkflow(effectiveWorkflowId);
+  const workflowSnapshot = snapshotQuery.data?.workflow as Record<string, unknown> | null | undefined;
+  const fields = useMemo(() => getStartNodeFields(workflowSnapshot), [workflowSnapshot]);
+
+  const createMutation = useMutation({
+    mutationFn: () => {
+      const input_preset: Record<string, unknown> = {};
+      for (const field of fields) {
+        input_preset[field.name] = parsePresetValue(inputValues[field.name] ?? '', field.type);
+      }
+      return createScheduledRun({
+        name,
+        workflow_id: effectiveWorkflowId,
+        enabled,
+        schedule_type: scheduleMode === 'calendar' ? 'cron' : 'interval',
+        interval_seconds: scheduleMode === 'interval' ? intervalSeconds : null,
+        cron_expr: scheduleMode === 'calendar' ? cronExpr : null,
+        timezone,
+        start_at: zonedWallClockToIso(startAt, timezone),
+        end_at: zonedWallClockToIso(endAt, timezone),
+        input_preset,
+        mount_enabled: mountEnabled,
+        notification_policy: {
+          enabled: notifySuccess || notifyFailure,
+          on: [
+            ...(notifySuccess ? ['succeeded'] : []),
+            ...(notifyFailure ? ['failed'] : []),
+          ],
+          channels: ['in_app'],
+          include_detail_link: true,
+        },
+      });
+    },
+    onSuccess: (data) => {
+      toast.success(t('tasks.scheduled.created', 'Scheduled run created'));
+      onCreated(data.task.id);
+    },
+    onError: (e) => {
+      toast.error(
+        `${t('tasks.scheduled.createFailed', 'Create scheduled run failed')}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    },
+  });
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden border border-edge-structural bg-surface-work" data-testid="task-scheduled-create-panel">
+      <div className="shrink-0 border-b bg-surface-sunken/70 px-4 py-3">
+        <div>
+          <div className="text-base font-semibold">
+            {t('tasks.new.scheduledTitle', 'Scheduled run setup')}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('tasks.new.scheduledDesc', 'Run one workflow on a simple schedule with fixed preset input.')}
+          </p>
+        </div>
+      </div>
+
+      <div className="page-scroll-region grid flex-1 content-start gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]" data-role="task-create-scroll-region">
+        <aside className="space-y-3">
+          <div className="rounded-lg border bg-background p-3">
+            <label className="text-sm font-medium" htmlFor="task-scheduled-name">
+              {t('tasks.scheduled.name', 'Name')}
+            </label>
+            <Input
+              id="task-scheduled-name"
+              className="mt-2"
+              value={name}
+              onChange={(event) => setCustomName(event.target.value)}
+            />
+          </div>
+
+          <div className="rounded-lg border bg-background p-3">
+            <label className="text-sm font-medium" htmlFor="task-scheduled-workflow">
+              {t('tasks.new.workflow', 'Workflow')}
+            </label>
+            <Suspense fallback={<DeferredControlFallback className="mt-2 h-10 w-full" />}>
+              <SearchSelect
+                value={effectiveWorkflowId}
+                options={workflowSelectOptions}
+                onValueChange={setSelectedWorkflowId}
+                placeholder={t('tasks.new.selectWorkflow', 'Select a workflow to configure the batch task.')}
+                searchPlaceholder={t('tasks.new.searchWorkflow', 'Search workflow name, ID, or description')}
+                emptyText={t('tasks.new.noWorkflowMatches', 'No workflows match your search.')}
+                disabled={workflowsQuery.isLoading || workflows.length === 0}
+                className="mt-2"
+                triggerClassName="w-full"
+              />
+            </Suspense>
+            {selectedWorkflow && (
+              <div className="mt-3 rounded-md bg-surface-sunken p-2 text-xs text-muted-foreground">
+                <div className="truncate font-medium text-foreground">
+                  {selectedWorkflow.workflow_name}
+                </div>
+                <div className="truncate font-mono">{selectedWorkflow.wf_id}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border bg-background p-3">
+            <div className="text-sm font-medium">{t('tasks.scheduled.timing', 'Timing')}</div>
+            <Select
+              value={scheduleMode}
+              onValueChange={(value) => setScheduleMode(value as 'calendar' | 'interval')}
+            >
+              <SelectTrigger className="mt-3 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="calendar">{t('tasks.scheduled.calendarSchedule', 'At a specific time')}</SelectItem>
+                <SelectItem value="interval">{t('tasks.scheduled.intervalSchedule', 'At a fixed interval')}</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {scheduleMode === 'calendar' ? (
+              <div className="mt-3 grid gap-3">
+                <Select value={frequency} onValueChange={(value) => setFrequency(value as ScheduleFrequency)}>
+                  <SelectTrigger className="w-full" aria-label={t('tasks.scheduled.frequency', 'Frequency')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hourly">{t('tasks.scheduled.hourly', 'Hourly')}</SelectItem>
+                    <SelectItem value="daily">{t('tasks.scheduled.daily', 'Daily')}</SelectItem>
+                    <SelectItem value="weekly">{t('tasks.scheduled.weekly', 'Weekly')}</SelectItem>
+                    <SelectItem value="monthly">{t('tasks.scheduled.monthly', 'Monthly')}</SelectItem>
+                    <SelectItem value="custom">{t('tasks.scheduled.customCron', 'Custom cron')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                {frequency === 'hourly' ? (
+                  <label className="grid gap-1.5 text-xs text-muted-foreground">
+                    {t('tasks.scheduled.minuteOfHour', 'Minute of the hour')}
+                    <Input type="number" min={0} max={59} value={hourlyMinute} onChange={(event) => setHourlyMinute(Math.min(59, Math.max(0, Number(event.target.value))))} />
+                  </label>
+                ) : frequency === 'custom' ? (
+                  <label className="grid gap-1.5 text-xs text-muted-foreground">
+                    {t('tasks.scheduled.cronExpression', 'Cron expression')}
+                    <Input className="font-mono" value={customCron} onChange={(event) => setCustomCron(event.target.value)} placeholder="0 9 * * *" />
+                  </label>
+                ) : (
+                  <>
+                    {frequency === 'weekly' ? (
+                      <Select value={String(weekday)} onValueChange={(value) => setWeekday(Number(value))}>
+                        <SelectTrigger aria-label={t('tasks.scheduled.dayOfWeek', 'Day of week')}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[
+                            { value: 1, label: 'Monday' }, { value: 2, label: 'Tuesday' },
+                            { value: 3, label: 'Wednesday' }, { value: 4, label: 'Thursday' },
+                            { value: 5, label: 'Friday' }, { value: 6, label: 'Saturday' },
+                            { value: 0, label: 'Sunday' },
+                          ].map(({ value, label }) => (
+                            <SelectItem key={value} value={String(value)}>
+                              {t(`tasks.scheduled.weekday.${value}`, label)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+                    {frequency === 'monthly' ? (
+                      <label className="grid gap-1.5 text-xs text-muted-foreground">
+                        {t('tasks.scheduled.dayOfMonth', 'Day of month')}
+                        <Input type="number" min={1} max={31} value={monthday} onChange={(event) => setMonthday(Math.min(31, Math.max(1, Number(event.target.value))))} />
+                      </label>
+                    ) : null}
+                    <label className="grid gap-1.5 text-xs text-muted-foreground">
+                      {t('tasks.scheduled.runTime', 'Run time')}
+                      <Input type="time" step={60} value={time} onChange={(event) => setTime(event.target.value)} />
+                    </label>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(8rem,0.8fr)] gap-2">
+                <Input type="number" min={1} value={intervalValue} onChange={(event) => setIntervalValue(Math.max(1, Number(event.target.value)))} aria-label={t('tasks.scheduled.intervalValue', 'Interval value')} />
+                <Select value={intervalUnit} onValueChange={(value) => setIntervalUnit(value as typeof intervalUnit)}>
+                  <SelectTrigger aria-label={t('tasks.scheduled.intervalUnit', 'Interval unit')}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="minutes">{t('tasks.scheduled.minutes', 'Minutes')}</SelectItem>
+                    <SelectItem value="hours">{t('tasks.scheduled.hours', 'Hours')}</SelectItem>
+                    <SelectItem value="days">{t('tasks.scheduled.days', 'Days')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <label className="mt-3 grid gap-1.5 text-xs text-muted-foreground">
+              {t('tasks.scheduled.timezone', 'Timezone')}
+              <Select value={timezone} onValueChange={setScheduleTimezone}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TIMEZONE_GROUPS.map((group) => (
+                    <SelectGroup key={group.region}>
+                      <SelectLabel>{group.region}</SelectLabel>
+                      {group.zones.map((zone) => <SelectItem key={zone.value} value={zone.value}>{zone.label}</SelectItem>)}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <details className="group mt-3 rounded-md border border-edge-subtle bg-surface-sunken/45">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-medium text-content-secondary">
+                {t('tasks.scheduled.timeframe', 'Start and end')}
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="grid gap-3 border-t border-edge-subtle px-3 py-3">
+                <label className="grid gap-1.5 text-xs text-muted-foreground">
+                  {t('tasks.scheduled.startAt', 'Start at (optional)')}
+                  <Input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+                </label>
+                <label className="grid gap-1.5 text-xs text-muted-foreground">
+                  {t('tasks.scheduled.endAt', 'End at (optional)')}
+                  <Input type="datetime-local" value={endAt} min={startAt || undefined} onChange={(event) => setEndAt(event.target.value)} />
+                </label>
+              </div>
+            </details>
+
+            <div className="mt-3 rounded-md border border-edge-subtle bg-surface-sunken/45 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              {t('tasks.scheduled.overlapHint', 'If the previous run is still active, the next occurrence is skipped. Automatic reruns are not created.')}
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(event) => setEnabled(event.target.checked)}
+              />
+              {t('tasks.scheduled.enabled', 'Enable after creation')}
+            </label>
+            <label className="mt-2 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={mountEnabled}
+                onChange={(event) => setMountEnabled(event.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block">{t('tasks.scheduled.mountUserStorage', 'Mount user storage')}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {t('tasks.scheduled.mountUserStorageHint', 'Allow each run to access files under /mount.')}
+                </span>
+              </span>
+            </label>
+          </div>
+        </aside>
+
+        <div className="space-y-4">
+          <div className="rounded-lg border bg-background p-3">
+            <div className="text-sm font-medium">
+              {t('tasks.scheduled.inputPreset', 'Workflow input preset')}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t('tasks.scheduled.inputHint', 'Dynamic values should be computed inside the workflow. These values are reused for every scheduled run.')}
+            </p>
+            {snapshotQuery.isLoading && effectiveWorkflowId ? (
+              <div className="mt-4 text-sm text-muted-foreground">
+                {t('tasks.new.loadingWorkflow', 'Loading workflow...')}
+              </div>
+            ) : fields.length === 0 ? (
+              <div className="mt-4 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                {t('tasks.scheduled.noFields', 'No StartNode input fields found.')}
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3">
+                {fields.map((field) => (
+                  <label key={field.name} className="grid gap-1 text-sm">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{field.name}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{field.type}</span>
+                    </span>
+                    <textarea
+                      value={inputValues[field.name] ?? ''}
+                      onChange={(event) =>
+                        setInputValues((prev) => ({ ...prev, [field.name]: event.target.value }))
+                      }
+                      className="min-h-20 rounded-md border bg-background px-3 py-2 font-mono text-xs"
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border bg-background p-3">
+            <div className="text-sm font-medium">
+              {t('tasks.scheduled.notifications', 'Notifications')}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={notifyFailure}
+                  onChange={(event) => setNotifyFailure(event.target.checked)}
+                />
+                {t('tasks.scheduled.notifyFailure', 'Failure')}
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={notifySuccess}
+                  onChange={(event) => setNotifySuccess(event.target.checked)}
+                />
+                {t('tasks.scheduled.notifySuccess', 'Success')}
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t('tasks.scheduled.notificationHint', 'Notifications will include a link back to the execution detail.')}
+            </p>
+          </div>
+
+        </div>
+      </div>
+      <div className="flex shrink-0 justify-end gap-2 border-t bg-surface-raised px-4 py-3">
+        <Button variant="outline" onClick={onCancel}>
+          {t('common.cancel', 'Cancel')}
+        </Button>
+        <Button
+          onClick={() => createMutation.mutate()}
+          disabled={!effectiveWorkflowId || createMutation.isPending}
+        >
+          {t('common.finish', 'Finish')}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+export function TasksListPage() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const formatTime = useFormatDateTime();
+  const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeType: TaskType = searchParams.get('type') === 'scheduled_run'
+    ? 'scheduled_run'
+    : 'batch_exec';
+  const allowedStatuses = activeType === 'scheduled_run' ? SCHEDULED_STATUS_OPTIONS : BATCH_STATUS_OPTIONS;
+  const statusFilter = (searchParams.get('status') ?? '')
+    .split(',')
+    .filter((value): value is TaskStatus => allowedStatuses.includes(value as TaskStatus));
+  const queryText = searchParams.get('q') ?? '';
+  const rawOffset = Number.parseInt(searchParams.get('offset') ?? '0', 10);
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+  const [cancelTarget, setCancelTarget] = useState<Task | null>(null);
+  const [shareTarget, setShareTarget] = useState<Task | null>(null);
+  const [createMode, setCreateMode] = useState<TaskType | null>(null);
+
+  const updateListParams = (updates: Record<string, string | null>) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    setSearchParams(next, { replace: true });
+  };
+  const setOffset = (next: number) => updateListParams({ offset: next > 0 ? String(next) : null });
+  const setQueryText = (next: string) => updateListParams({ q: next || null, offset: null });
+  const setStatusFilter = (
+    next: TaskStatus[] | ((current: TaskStatus[]) => TaskStatus[]),
+  ) => {
+    const value = typeof next === 'function' ? next(statusFilter) : next;
+    updateListParams({ status: value.length ? value.join(',') : null, offset: null });
+  };
+  const setActiveType = (next: TaskType) => updateListParams({
+    type: next === 'batch_exec' ? null : next,
+    status: null,
+    offset: null,
+  });
+
+  const listQuery = useQuery({
+    queryKey: ['tasks', { activeType, statusFilter, queryText, offset }],
+    queryFn: () =>
+      listTasks({
+        status: statusFilter.length ? statusFilter : undefined,
+        task_type: [activeType],
+        q: queryText || undefined,
+        limit: PAGE_SIZE,
+        offset,
+    }),
+    placeholderData: (previous) => previous,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasActiveTask = data?.items?.some((task) =>
+        ACTIVE_TASK_STATUSES.includes(task.status),
+      );
+      return hasActiveTask ? TASK_LIST_REFETCH_ACTIVE_MS : TASK_LIST_REFETCH_IDLE_MS;
+    },
+    refetchOnWindowFocus: false,
+  });
+
+  const summaryQuery = useQuery({
+    queryKey: ['tasks', 'summary', activeType],
+    queryFn: () => getTaskSummary({ task_type: [activeType] }),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return (data?.active ?? 0) > 0 ? TASK_LIST_REFETCH_ACTIVE_MS : TASK_LIST_REFETCH_IDLE_MS;
+    },
+    refetchOnWindowFocus: false,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => cancelTask(id, 'soft'),
+    onSuccess: () => {
+      setCancelTarget(null);
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      toast.success(t('tasks.cancel_requested', 'Cancel requested'));
+    },
+    onError: (e) => {
+      toast.error(
+        `${t('tasks.cancel_failed', 'Cancel failed')}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    },
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: (id: string) => resumeTask(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      toast.success(t('taskDetail.resumeRequested', 'Resume requested'));
+    },
+    onError: (e) => {
+      toast.error(
+        `${t('taskDetail.resumeFailed', 'Resume failed')}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    },
+  });
+
+  const items = useMemo(
+    () =>
+      [...(listQuery.data?.items ?? [])].sort((a, b) => {
+        const rank = ACTIVE_RANK[a.status] - ACTIVE_RANK[b.status];
+        if (rank !== 0) return rank;
+        return (b.submitted_at ?? '').localeCompare(a.submitted_at ?? '');
+      }),
+    [listQuery.data?.items],
+  );
+  const total = listQuery.data?.total ?? 0;
+  const hasNext = offset + PAGE_SIZE < total;
+  const hasPrev = offset > 0;
+  const summary = summaryQuery.data;
+
+  const toggleStatus = (status: TaskStatus) => {
+    setStatusFilter((prev) =>
+      prev.includes(status) ? prev.filter((x) => x !== status) : [...prev, status],
+    );
+  };
+  const selectTaskType = (type: TaskType) => {
+    setActiveType(type);
+  };
+  const statusOptions = tabStatusOptions(activeType);
+
+  return (
+    <>
+      <ManagementPageShell
+        resourceKind="task"
+        className="gap-5"
+        title={<span className="flex items-center gap-3">
+          {t('tasks.title', 'Task')}
+          {(summary?.active ?? 0) > 0 && (
+            <StatusBadge status="running" data-testid="tasks-running-badge">
+              {t('tasks.runningCount', '{{count}} running', { count: summary?.active ?? 0 })}
+            </StatusBadge>
+          )}
+        </span>}
+        description={t('tasks.subtitle', 'Batch and scheduled workflow runs')}
+        actions={<>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void qc.invalidateQueries({ queryKey: ['tasks'] });
+              }}
+              disabled={listQuery.isFetching}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t('tasks.action.refresh', 'Refresh')}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" data-testid="tasks-new-task-trigger">
+                  {t('tasks.action.newTask', 'New Task')}
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem
+                  onClick={() => setCreateMode('batch_exec')}
+                  data-testid="tasks-new-batch"
+                >
+                  <Download className="h-4 w-4" />
+                  {t('tasks.new.batch', 'Batch execution')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setCreateMode('scheduled_run')}
+                  data-testid="tasks-new-scheduled"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  {t('tasks.new.scheduled', 'Scheduled run')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>}
+      >
+
+        {createMode === 'batch_exec' && (
+          <BatchTaskCreatePanel
+            onCancel={() => setCreateMode(null)}
+            onCreated={(taskId) => {
+              setCreateMode(null);
+              void qc.invalidateQueries({ queryKey: ['tasks'] });
+              navigate(`/tasks/${taskId}`);
+            }}
+          />
+        )}
+
+        {createMode === 'scheduled_run' && (
+          <ScheduledRunCreatePanel
+            onCancel={() => setCreateMode(null)}
+            onCreated={(taskId) => {
+              setCreateMode(null);
+              void qc.invalidateQueries({ queryKey: ['tasks'] });
+              navigate(`/tasks/${taskId}`);
+            }}
+          />
+        )}
+
+        {createMode === null && (
+          <>
+        <div className="border-b">
+          <Tabs value={activeType} onValueChange={(value) => selectTaskType(value as TaskType)}>
+            <TabsList variant="underline" className="h-10">
+              <TabsTrigger
+                value="batch_exec"
+                className="h-10 px-4"
+              >
+                {t('tasks.type.batch_exec', 'Batch run')}
+              </TabsTrigger>
+              <TabsTrigger
+                value="scheduled_run"
+                className="h-10 px-4"
+              >
+                {t('tasks.type.scheduled_run', 'Scheduled run')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent forceMount value="batch_exec" className="hidden" />
+            <TabsContent forceMount value="scheduled_run" className="hidden" />
+          </Tabs>
+        </div>
+
+        <div className="grid rounded-lg border border-edge-subtle bg-surface-sunken/30 py-2 md:grid-cols-4">
+          {activeType === 'scheduled_run' ? (
+            <>
+              <SummaryCard
+                label={t('tasks.summary.enabled', 'Enabled')}
+                value={summary?.enabled ?? 0}
+                tone="text-state-success"
+                hint={t('tasks.summaryHint.enabled', 'Schedules that will trigger future runs.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.paused', 'Paused')}
+                value={summary?.paused ?? 0}
+                tone="text-content-secondary"
+                hint={t('tasks.summaryHint.paused', 'Schedules stopped by the user.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.running', 'Running')}
+                value={(summary?.running ?? 0) + (summary?.resuming ?? 0)}
+                tone="text-state-running"
+                hint={t('tasks.summaryHint.scheduledRunning', 'Scheduled runs currently executing.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.failed', 'Failed')}
+                value={summary?.failed ?? 0}
+                tone="text-state-danger"
+                hint={t('tasks.summaryHint.scheduledFailed', 'Schedules whose latest state needs attention.')}
+              />
+            </>
+          ) : (
+            <>
+              <SummaryCard
+                label={t('tasks.summary.running', 'Running')}
+                value={(summary?.running ?? 0) + (summary?.resuming ?? 0)}
+                tone="text-state-running"
+                hint={t('tasks.summaryHint.batchRunning', 'Batch jobs actively processing rows.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.queued', 'Queued')}
+                value={summary?.queued ?? 0}
+                tone="text-content-secondary"
+                hint={t('tasks.summaryHint.queued', 'Batch jobs waiting for worker capacity.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.failed', 'Failed')}
+                value={summary?.failed ?? 0}
+                tone="text-state-danger"
+                hint={t('tasks.summaryHint.batchFailed', 'Batch jobs that stopped with errors.')}
+              />
+              <SummaryCard
+                label={t('tasks.summary.finished', 'Finished')}
+                value={summary?.finished ?? 0}
+                tone="text-state-success"
+                hint={t('tasks.summaryHint.finished', 'Batch jobs completed successfully.')}
+              />
+            </>
+          )}
+        </div>
+
+        <section className="rounded-lg border border-edge-structural bg-surface-work p-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <form
+              className="relative w-full lg:max-w-sm"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const value = new FormData(event.currentTarget).get('q');
+                setQueryText(typeof value === 'string' ? value.trim() : '');
+              }}
+            >
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                key={queryText}
+                name="q"
+                defaultValue={queryText}
+                placeholder={t('tasks.searchPlaceholder', 'Search task or workflow ID')}
+                className="pl-9"
+              />
+            </form>
+            <div className="flex flex-wrap items-center gap-2">
+              {statusOptions.map((status) => {
+                const active = statusFilter.includes(status);
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => toggleStatus(status)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      active
+                        ? 'border-focus bg-focus text-white'
+                        : 'border-edge-structural bg-surface-raised text-muted-foreground hover:bg-surface-hover'
+                    }`}
+                  >
+                    {t(`tasks.status.${status}`, status)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {listQuery.isLoading ? (
+          <div className="border border-edge-structural bg-surface-work p-10 text-center text-sm text-muted-foreground">
+            {t('tasks.loading', 'Loading…')}
+          </div>
+        ) : listQuery.isError ? (
+          <ActionableError
+            title={t('tasks.load_error', 'Failed to load tasks. Try again later.')}
+            description={t('tasks.load_error_hint', 'Check your connection, then reload the task list.')}
+            actionLabel={t('retry', 'Retry')}
+            onAction={() => void listQuery.refetch()}
+            technicalDetails={listQuery.error instanceof Error ? listQuery.error.message : String(listQuery.error)}
+            technicalDetailsLabel={t('common.technicalDetails', 'Technical details')}
+          />
+        ) : items.length === 0 ? (
+          <CompactEmptyState
+            title={t('tasks.empty', 'No tasks yet.')}
+            description={t('tasks.emptyHint', 'Batch runs and scheduled workflow activity will appear here.')}
+          />
+        ) : (
+          <div
+            className="app-scrollbar min-h-0 flex-1 overflow-auto border border-edge-structural bg-surface-work"
+            data-testid="tasks-table-scroll"
+          >
+            <table className="min-w-[1120px] w-full text-sm">
+              <thead className="sticky top-0 z-10 border-b bg-surface-sunken text-left text-xs font-medium text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.status', 'Status')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.sandbox', 'Sandbox')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.task', 'Task')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.type', 'Type')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.workflow', 'Workflow')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.progress', 'Progress')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.duration', 'Duration')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.created', 'Created')}</th>
+                  <th className="px-4 py-3 font-medium">{t('tasks.col.result', 'Result')}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t('tasks.col.actions', 'Actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((task) => {
+                  const pct = Math.round((task.progress ?? 0) * 100);
+                  const capabilities = new Set(task.access?.capabilities ?? []);
+                  const displayStatus = visibleTaskStatus(task.status);
+                  return (
+                    <tr
+                      key={task.id}
+                      className="border-b transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
+                    >
+                      <td className="px-4 py-3">
+                        <StatusBadge status={taskSemanticStatus(displayStatus)}>
+                          {t(`tasks.status.${displayStatus}`, displayStatus)}
+                        </StatusBadge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                          <StatusDot status={sandboxSemanticStatus(task.sandbox_status)} />
+                          {t(`tasks.sandbox.${task.sandbox_status ?? 'released'}`, task.sandbox_status ?? 'released')}
+                        </span>
+                      </td>
+                      <td className="max-w-[220px] px-4 py-3">
+                        <div className="flex min-w-0 items-start gap-2.5">
+                          <ResourceIcon kind="task" size="sm" />
+                          <div className="min-w-0">
+                            <Link
+                              to={`/tasks/${task.id}`}
+                              className="block truncate font-medium underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                              title={taskName(task)}
+                            >
+                              {taskName(task)}
+                            </Link>
+                            <div className="font-mono text-xs text-muted-foreground">
+                              {task.id.slice(0, 8)}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {t(`tasks.type.${task.task_type}`, task.task_type)}
+                      </td>
+                      <td className="max-w-[150px] truncate px-4 py-3 font-mono text-xs" title={task.workflow_id ?? ''}>
+                        {task.workflow_id ?? '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {task.task_type === 'scheduled_run' ? (
+                          <span className="text-xs text-muted-foreground">
+                            {formatScheduleProgress(task, formatTime)}
+                          </span>
+                        ) : (
+                          <ProgressState
+                            className="w-32"
+                            status={taskSemanticStatus(task.status)}
+                            label={<span className="sr-only">{t('tasks.col.progress', 'Progress')}</span>}
+                            detail={`${pct}%`}
+                            value={pct}
+                          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {duration(task)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {formatTime(task.submitted_at)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {task.results_uri && capabilities.has('export') ? (
+                          <a
+                            href={`/api/v1/tasks/${task.id}/download`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="text-xs text-primary underline-offset-4 hover:underline"
+                          >
+                            {t('taskDetail.downloadCsv', 'Download CSV')}
+                          </a>
+                        ) : task.error ? (
+                          <span className="max-w-[180px] truncate text-xs text-state-danger" title={task.error}>
+                            {task.error}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={t('tasks.action.openMenu', 'Open task actions')}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => navigate(`/tasks/${task.id}`)}>
+                              {t('tasks.action.details', 'Details')}
+                            </DropdownMenuItem>
+                            {task.task_type === 'scheduled_run' && (
+                              <>
+                                <DropdownMenuSeparator />
+                                {capabilities.has('execute') ? (
+                                  <DropdownMenuItem
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      runScheduledNow(task.id)
+                                        .then(() => {
+                                          toast.success(t('tasks.scheduled.runNowQueued', 'Run now queued'));
+                                          void qc.invalidateQueries({ queryKey: ['tasks'] });
+                                        })
+                                        .catch((e) => {
+                                          toast.error(e instanceof Error ? e.message : String(e));
+                                        });
+                                    }}
+                                  >
+                                    <Play className="h-4 w-4" />
+                                    {t('tasks.scheduled.runNow', 'Run now')}
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {task.status === 'paused' && capabilities.has('update') ? (
+                                  <DropdownMenuItem
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      resumeScheduledRun(task.id)
+                                        .then(() => {
+                                          toast.success(t('tasks.scheduled.resumed', 'Schedule resumed'));
+                                          void qc.invalidateQueries({ queryKey: ['tasks'] });
+                                        })
+                                        .catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+                                    }}
+                                  >
+                                    {t('tasks.scheduled.resume', 'Resume schedule')}
+                                  </DropdownMenuItem>
+                                ) : capabilities.has('update') ? (
+                                  <DropdownMenuItem
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      pauseScheduledRun(task.id)
+                                        .then(() => {
+                                          toast.success(t('tasks.scheduled.paused', 'Schedule paused'));
+                                          void qc.invalidateQueries({ queryKey: ['tasks'] });
+                                        })
+                                        .catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+                                    }}
+                                  >
+                                    {t('tasks.scheduled.pause', 'Pause schedule')}
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </>
+                            )}
+                            {task.results_uri && capabilities.has('export') && (
+                              <DropdownMenuItem asChild>
+                                <a href={`/api/v1/tasks/${task.id}/download`}>
+                                  {t('taskDetail.downloadCsv', 'Download CSV')}
+                                </a>
+                              </DropdownMenuItem>
+                            )}
+                            {CANCELLABLE.includes(task.status) && capabilities.has('cancel') && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCancelTarget(task);
+                                  }}
+                                  className="text-state-danger focus:text-state-danger"
+                                >
+                                  {t('tasks.action.cancel', 'Cancel')}
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {RESUMABLE.includes(task.status) && capabilities.has('resume') && !!(task.result as { artifact_uris?: { jsonl?: string } } | null)?.artifact_uris?.jsonl && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    resumeMutation.mutate(task.id);
+                                  }}
+                                  disabled={resumeMutation.isPending}
+                                >
+                                  {t('taskDetail.resume', 'Resume')}
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {capabilities.has('manage_access') ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => setShareTarget(task)}>
+                                  <Share2 className="h-4 w-4" />
+                                  {t('tasks.action.share', 'Share task')}
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <footer className="flex shrink-0 items-center justify-between text-sm text-muted-foreground">
+          <span>
+            {t('tasks.pagination', '{{start}}-{{end}} of {{total}}', {
+              start: total === 0 ? 0 : offset + 1,
+              end: Math.min(offset + PAGE_SIZE, total),
+              total,
+            })}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasPrev}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            >
+              {t('common.previous', 'Previous')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasNext}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              {t('common.next', 'Next')}
+            </Button>
+          </div>
+        </footer>
+          </>
+        )}
+      </ManagementPageShell>
+
+      <Dialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('tasks.cancelConfirmTitle', 'Cancel this task?')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'tasks.cancelConfirmDesc',
+                'The backend will stop scheduling new work, release the sandbox, and close the task when cleanup is complete.',
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCancelTarget(null)}
+              disabled={cancelMutation.isPending}
+            >
+              {t('taskDetail.dismiss', 'Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)}
+              disabled={cancelMutation.isPending}
+            >
+              {t('tasks.action.cancel', 'Cancel')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {shareTarget ? (
+        <ResourceShareDialog
+          open
+          onOpenChange={(open) => !open && setShareTarget(null)}
+          resourceKind="task"
+          resourceId={shareTarget.id}
+          resourceName={taskName(shareTarget)}
+          effectiveRole={shareTarget.access?.effective_role}
+          accessSource={shareTarget.access?.source}
+        />
+      ) : null}
+    </>
+  );
+}

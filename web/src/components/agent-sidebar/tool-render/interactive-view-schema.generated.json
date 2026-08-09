@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "FilePreviewView": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "mime": {
+          "default": "",
+          "title": "Mime",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute local file path returned by a file tool. HTML files are rendered in the same isolated dynamic HTML runtime; other formats use their native file preview.",
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "const": "file_preview",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "title": "FilePreviewView",
+      "type": "object"
+    },
+    "HtmlPreviewView": {
+      "additionalProperties": false,
+      "properties": {
+        "html": {
+          "description": "A complete HTML fragment or document. Self-contained inline JavaScript/CSS plus data:, blob:, and referenced local VFS files may be used. External scripts and network subresources are blocked; save a required remote asset into VFS first. Local files use the same absolute paths available to the Agent.",
+          "minLength": 1,
+          "title": "Html",
+          "type": "string"
+        },
+        "type": {
+          "const": "html_preview",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "html"
+      ],
+      "title": "HtmlPreviewView",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/HtmlPreviewView"
+    },
+    {
+      "$ref": "#/$defs/FilePreviewView"
+    }
+  ]
+}

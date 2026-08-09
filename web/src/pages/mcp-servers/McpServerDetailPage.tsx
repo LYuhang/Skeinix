@@ -1,0 +1,610 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { toast } from 'sonner';
+import {
+  ArrowLeft,
+  Link2,
+  Loader2,
+  Pencil,
+  PlugZap,
+  RefreshCw,
+  Save,
+  ShieldAlert,
+  Trash2,
+  Unplug,
+} from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { StatusBadge, type SemanticStatus } from '@/components/ui/status';
+import { CopyButton } from '@/components/ui/copy-button';
+import { EntityDetailShell } from '@/components/layout/entity-detail-shell';
+import { useFormatDateTime } from '@/lib/timezone';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  useDeleteMcpServer,
+  useDisconnectMcpOAuth,
+  useMcpServer,
+  useRefreshMcpServer,
+  useStartMcpOAuth,
+  useUpdateMcpServer,
+} from '@/lib/api/queries/mcp-servers';
+import { McpToolDirectory } from './McpToolDirectory';
+import { ActionableError } from '@/components/presentation/ActionableError';
+import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+
+function formatSource(source?: string | null): string {
+  if (!source) return 'Fallback';
+  return source
+    .split('_')
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ');
+}
+
+function statusPill(server: {
+  enabled: boolean;
+  last_handshake_status: string | null;
+  connection_status: string;
+}): { key: string; fallback: string; status: SemanticStatus } {
+  if (server.connection_status === 'connection_required') {
+    return {
+      key: 'mcp.status.connection_required',
+      fallback: 'Connection Required',
+      status: 'warning',
+    };
+  }
+  if (server.connection_status === 'connecting') {
+    return {
+      key: 'mcp.status.connecting',
+      fallback: 'Connecting',
+      status: 'running',
+    };
+  }
+  if (server.connection_status === 'reconnect_required') {
+    return {
+      key: 'mcp.status.reconnect_required',
+      fallback: 'Reconnect Required',
+      status: 'warning',
+    };
+  }
+  if (server.connection_status === 'connection_failed') {
+    return {
+      key: 'mcp.status.connection_failed',
+      fallback: 'Connection Failed',
+      status: 'danger',
+    };
+  }
+  if (!server.enabled) {
+    return {
+      key: 'mcp.status.disabled',
+      fallback: 'Disabled',
+      status: 'neutral',
+    };
+  }
+  if (server.last_handshake_status === 'ok') {
+    return {
+      key: 'mcp.status.active',
+      fallback: 'Active',
+      status: 'success',
+    };
+  }
+  if ((server.last_handshake_status ?? '').startsWith('error')) {
+    return {
+      key: 'mcp.status.probe_failed',
+      fallback: 'Probe Failed',
+      status: 'danger',
+    };
+  }
+  return {
+    key: 'mcp.status.needs_probe',
+    fallback: 'Needs Probe',
+    status: 'warning',
+  };
+}
+
+export function McpServerDetailPage() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const formatTime = useFormatDateTime();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { id } = useParams();
+  const query = useMcpServer(id);
+  const updateMutation = useUpdateMcpServer();
+  const refreshMutation = useRefreshMcpServer();
+  const oauthStartMutation = useStartMcpOAuth();
+  const oauthDisconnectMutation = useDisconnectMcpOAuth();
+  const deleteMutation = useDeleteMcpServer();
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [confirmation, setConfirmation] = useState<'disconnect' | 'uninstall' | null>(null);
+  const oauthCallbackOrigin = useRef<string | null>(null);
+
+  const backLink = (
+    <Link
+      to="/mcp-servers"
+      className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      {t('mcp.back', 'Back')}
+    </Link>
+  );
+
+  const server = query.data;
+
+  useEffect(() => {
+    if (server) queueMicrotask(() => setDescriptionDraft(server.description ?? ''));
+  }, [server]);
+
+  useEffect(() => {
+    if (!server || server.auth_mode !== 'oauth') return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin && event.origin !== oauthCallbackOrigin.current) return;
+      const payload = event.data as {
+        type?: string;
+        serverId?: string;
+        ok?: boolean;
+        message?: string;
+      };
+      if (payload.type !== 'vibecanvas:mcp-oauth-complete' || payload.serverId !== server.id) return;
+      void query.refetch();
+      if (payload.ok) toast.success(t('mcp.oauth.connected', 'Account Connected'));
+      else toast.error(payload.message || t('mcp.oauth.failed', 'Account Connection Failed'));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [query, server, t]);
+
+  useEffect(() => {
+    if (server?.connection_status !== 'connecting') return;
+    const timer = window.setInterval(() => void query.refetch(), 2000);
+    return () => window.clearInterval(timer);
+  }, [query, server?.connection_status]);
+
+  const defaultTab = useMemo(() => {
+    if (!server) return 'basic';
+    if (!server.enabled || (server.last_handshake_status ?? '').startsWith('error')) {
+      return 'connection';
+    }
+    return 'brief';
+  }, [server]);
+  const allowedTabs = ['basic', 'brief', 'connection', 'tools', 'security', 'config'];
+  const requestedTab = searchParams.get('tab');
+  const activeTab = requestedTab && allowedTabs.includes(requestedTab) ? requestedTab : defaultTab;
+
+  if (query.isLoading) {
+    return (
+      <div className="page-shell page-shell-contained">
+        <div className="mx-auto flex min-w-0 max-w-5xl flex-col gap-6">
+          {backLink}
+          <div className="rounded-md border p-10 text-center text-sm text-muted-foreground">
+            {t('mcp.loading', 'Loading…')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (query.isError) {
+    return (
+      <div className="page-shell page-shell-contained">
+        <div className="mx-auto flex min-w-0 max-w-5xl flex-col gap-6">
+          {backLink}
+          <ActionableError
+            title={t('mcp.load_error', 'Failed to load MCP servers.')}
+            description={t('mcp.load_error_hint', 'Check the connection, then load this server again.')}
+            actionLabel={t('retry', 'Retry')}
+            onAction={() => void query.refetch()}
+            technicalDetails={query.error instanceof Error ? query.error.message : String(query.error ?? '')}
+            technicalDetailsLabel={t('common.technicalDetails', 'Technical details')}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (!server) {
+    return (
+      <div className="page-shell page-shell-contained">
+        <div className="mx-auto flex min-w-0 max-w-5xl flex-col gap-6">
+          {backLink}
+          <CompactEmptyState title={t('mcp.not_found', 'This MCP server no longer exists.')} />
+        </div>
+      </div>
+    );
+  }
+
+  const status = statusPill(server);
+  const statusText = t(status.key, status.fallback);
+  const tools = server.last_tool_names ?? [];
+  const descriptionDirty = descriptionDraft !== (server.description ?? '');
+  const capabilities = new Set(server.access?.capabilities ?? []);
+
+  const handleSaveDescription = async () => {
+    try {
+      await updateMutation.mutateAsync({
+        id: server.id,
+        patch: {
+          description: descriptionDraft,
+          description_source: 'user_edited',
+        },
+      });
+      toast.success(t('mcp.detail.brief.saved', 'Brief description saved'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleRefresh = async () => {
+    try {
+      await refreshMutation.mutateAsync(server.id);
+      toast.success(t('mcp.refreshed', 'Connection test refreshed'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleToggle = async () => {
+    try {
+      await updateMutation.mutateAsync({
+        id: server.id,
+        patch: { enabled: !server.enabled },
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleOAuthConnect = async () => {
+    const popup = window.open('', 'vibecanvas-mcp-oauth', 'popup,width=560,height=720');
+    if (!popup) {
+      toast.error(t('mcp.oauth.popup_blocked', 'Allow pop-ups to connect this account.'));
+      return;
+    }
+    popup.document.title = t('mcp.oauth.connecting', 'Connecting Account');
+    try {
+      const { authorization_url, callback_origin } = await oauthStartMutation.mutateAsync(server.id);
+      oauthCallbackOrigin.current = callback_origin;
+      popup.location.replace(authorization_url);
+    } catch (e) {
+      popup.close();
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleOAuthDisconnect = async () => {
+    try {
+      await oauthDisconnectMutation.mutateAsync(server.id);
+      setConfirmation(null);
+      toast.success(t('mcp.oauth.disconnected', 'Account Disconnected'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await deleteMutation.mutateAsync(server.id);
+      toast.success(t('mcp.deleted', 'MCP server uninstalled'));
+      navigate('/mcp-servers');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <EntityDetailShell
+      resourceKind="mcp"
+      backTo="/mcp-servers"
+      backLabel={t('mcp.back', 'Back')}
+      title={server.name}
+      description={server.description || t('mcp.no_description', 'No description')}
+      icon={PlugZap}
+      status={<StatusBadge status={status.status}>{statusText}</StatusBadge>}
+      metadata={<><span className="font-mono">{server.tool_prefix}</span><span>{server.transport}</span><span>{formatSource(server.description_source)}</span></>}
+      actions={<>
+              {capabilities.has('update') ? <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleRefresh()}
+                disabled={refreshMutation.isPending || (server.auth_mode === 'oauth' && server.connection_status !== 'connected')}
+              >
+                <RefreshCw className={refreshMutation.isPending ? 'animate-spin' : ''} />
+                {t('mcp.refresh', 'Test connection')}
+              </Button> : null}
+              {capabilities.has('update') ? <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleToggle()}
+                disabled={updateMutation.isPending || (server.auth_mode === 'oauth' && server.connection_status !== 'connected')}
+              >
+                {server.enabled ? t('mcp.disable', 'Disable') : t('mcp.enable', 'Enable')}
+              </Button> : null}
+              {capabilities.has('delete') ? <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setConfirmation('uninstall')}
+                disabled={deleteMutation.isPending}
+              >
+                <Trash2 />
+                {t('mcp.delete', 'Uninstall')}
+              </Button> : null}
+            </>}
+    >
+
+        <Tabs
+          key={server.id}
+          value={activeTab}
+          onValueChange={(tab) => {
+            const next = new URLSearchParams(searchParams);
+            next.set('tab', tab);
+            setSearchParams(next, { replace: true });
+          }}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden border-y border-edge-subtle bg-surface-work"
+        >
+          <TabsList variant="underline" className="h-auto w-full justify-start px-4">
+            {[
+              ['basic', t('mcp.detail.tab.basic', 'Basic info')],
+              ['brief', t('mcp.detail.tab.brief', 'Brief description')],
+              ['connection', t('mcp.detail.tab.connection', 'Connection')],
+              ['tools', `${t('mcp.detail.tab.tools', 'Tools')} ${tools.length}`],
+              ['security', t('mcp.detail.tab.security', 'Security')],
+              ['config', t('mcp.detail.tab.config', 'Config')],
+            ].map(([value, label]) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="px-1 py-3"
+              >
+                {label}
+                {value === 'connection' && status.key === 'mcp.status.probe_failed' ? (
+                  <span className="ml-2 h-1.5 w-1.5 rounded-full bg-destructive" />
+                ) : null}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="basic" className="page-scroll-region mt-0 min-h-0 flex-1 p-5 data-[state=inactive]:hidden">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Info label={t('mcp.detail.name', 'Name')} value={server.name} />
+              <Info label={t('mcp.transport', 'Transport')} value={server.transport} />
+              <Info label={t('mcp.tool_prefix', 'Tool prefix')} value={server.tool_prefix} mono />
+              <Info label={t('mcp.detail.status', 'Status')} value={statusText} />
+              <div className="md:col-span-2">
+                <div className="mb-1 text-xs text-muted-foreground">{t('mcp.endpoint', 'Endpoint')}</div>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
+                  <code className="min-w-0 flex-1 break-all text-sm">{server.endpoint}</code>
+                  <CopyButton value={server.endpoint} />
+                </div>
+              </div>
+              <Info label={t('mcp.detail.created', 'Created')} value={formatTime(server.created_at)} />
+              <Info label={t('mcp.detail.updated', 'Updated')} value={formatTime(server.updated_at)} />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="brief" className="page-scroll-region mt-0 min-h-0 flex-1 p-5 data-[state=inactive]:hidden">
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-medium">{t('mcp.detail.brief.title', 'Brief description')}</h2>
+                    <p className="text-xs text-muted-foreground">
+                      {t('mcp.detail.brief.help', 'Agents use this short description to decide when this MCP server may be useful.')}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+                    {formatSource(server.description_source)}
+                  </span>
+                </div>
+                <Textarea
+                  aria-label={t('mcp.detail.brief.title', 'Brief description')}
+                  value={descriptionDraft}
+                  onChange={(e) => setDescriptionDraft(e.target.value)}
+                  rows={6}
+                  maxLength={2000}
+                  className="resize-y"
+                  readOnly={!capabilities.has('update')}
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  {t('mcp.detail.brief.generate_hint', 'AI generation will be wired to configured model APIs after the generation endpoint is available.')}
+                </p>
+                <div className="flex items-center gap-2">
+                  {capabilities.has('update') ? <Button variant="outline" disabled>
+                    <Pencil />
+                    {t('mcp.detail.brief.generate', 'Generate')}
+                  </Button> : null}
+                  {capabilities.has('update') ? <Button
+                    onClick={() => void handleSaveDescription()}
+                    disabled={!descriptionDirty || updateMutation.isPending}
+                  >
+                    <Save />
+                    {t('mcp.save', 'Save')}
+                  </Button> : null}
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="connection" className="page-scroll-region mt-0 min-h-0 flex-1 p-5 data-[state=inactive]:hidden">
+            {server.auth_mode === 'oauth' ? (
+              <div className="space-y-5">
+                <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground shadow-sm">
+                      {server.connection_status === 'connecting'
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Link2 className="h-4 w-4" />}
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-medium">{t('mcp.oauth.account_connection', 'Account Connection')}</h2>
+                      <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                        {server.connection_status === 'connected'
+                          ? t('mcp.oauth.connected_help', 'The account is connected and this server can be loaded by agents.')
+                          : t('mcp.oauth.required_help', 'Connect the external account required by this MCP server. Installing alone does not grant access.')}
+                      </p>
+                    </div>
+                  </div>
+                  {capabilities.has('manage_secret') && server.connection_status === 'connected' ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => setConfirmation('disconnect')}
+                      disabled={oauthDisconnectMutation.isPending}
+                    >
+                      <Unplug />
+                      {t('mcp.oauth.disconnect', 'Disconnect')}
+                    </Button>
+                  ) : capabilities.has('manage_secret') ? (
+                    <Button
+                      onClick={() => void handleOAuthConnect()}
+                      disabled={oauthStartMutation.isPending || server.connection_status === 'connecting'}
+                    >
+                      {oauthStartMutation.isPending || server.connection_status === 'connecting'
+                        ? <Loader2 className="animate-spin" />
+                        : <Link2 />}
+                      {server.connection_status === 'reconnect_required'
+                        ? t('mcp.oauth.reconnect', 'Reconnect Account')
+                        : t('mcp.oauth.connect', 'Connect Account')}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Info label={t('mcp.detail.connection_status', 'Connection status')} value={statusText} />
+                  <Info label={t('mcp.detail.last_probe', 'Last probe')} value={server.last_handshake_at ?? t('mcp.detail.never', 'Never')} />
+                  <div className="md:col-span-2">
+                    <Info label={t('mcp.detail.probe_status', 'Probe status')} value={server.last_handshake_status ?? t('mcp.detail.never_probed', 'Never probed')} />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Info label={t('mcp.detail.auth_type', 'Auth type')} value={server.auth_config?.type ?? 'none'} />
+                <Info
+                  label={t('mcp.detail.credential_status', 'Credential status')}
+                  value={server.auth_config?.token ? t('mcp.detail.token_saved', 'Token saved') : t('mcp.detail.no_credential', 'No credential required')}
+                />
+                <Info label={t('mcp.detail.last_probe', 'Last probe')} value={server.last_handshake_at ?? t('mcp.detail.never', 'Never')} />
+                <Info label={t('mcp.detail.probe_status', 'Probe status')} value={server.last_handshake_status ?? t('mcp.detail.never_probed', 'Never probed')} />
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="tools" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden p-0 data-[state=inactive]:hidden">
+            {tools.length === 0 ? (
+              <div className="m-5 flex flex-col items-center rounded-lg border border-dashed border-edge-subtle p-8 text-center">
+                <p className="text-sm text-muted-foreground">{t('mcp.no_tools', 'No tools probed yet.')}</p>
+                {capabilities.has('update') ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => void handleRefresh()}
+                    disabled={refreshMutation.isPending}
+                  >
+                    <RefreshCw className={refreshMutation.isPending ? 'animate-spin' : ''} />
+                    {t('mcp.detail.tools.discover', 'Discover tools')}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <McpToolDirectory tools={tools} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="security" className="page-scroll-region mt-0 min-h-0 flex-1 p-5 data-[state=inactive]:hidden">
+            <div className="flex items-start gap-3 rounded-lg border bg-muted/25 p-4">
+              <ShieldAlert className="mt-0.5 h-5 w-5 text-state-warning" />
+              <div>
+                <div className="font-medium">{t('mcp.detail.security.title', 'Review external access before use')}</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t(
+                    'mcp.detail.security.body',
+                    'MCP servers can expose tools that read, write, or call external services. This page shows the latest probed tools; audit logs should record install, probe, load, and tool-call events.',
+                  )}
+                </p>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="config" className="page-scroll-region mt-0 min-h-0 flex-1 p-5 data-[state=inactive]:hidden">
+            <pre className="max-h-[28rem] overflow-auto rounded-md bg-muted/40 p-4 text-xs leading-relaxed">
+              {JSON.stringify(
+                {
+                  name: server.name,
+                  tool_prefix: server.tool_prefix,
+                  transport: server.transport,
+                  endpoint: server.endpoint,
+                  connection_config: server.connection_config ?? {},
+                  enabled: server.enabled,
+                  auth_config: server.auth_config,
+                  description_source: server.description_source,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </TabsContent>
+        </Tabs>
+        <Dialog open={confirmation !== null} onOpenChange={(open) => !open && setConfirmation(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {confirmation === 'disconnect'
+                  ? t('mcp.oauth.disconnect', 'Disconnect account')
+                  : t('mcp.delete', 'Uninstall MCP server')}
+              </DialogTitle>
+              <DialogDescription>
+                {confirmation === 'disconnect'
+                  ? t('mcp.oauth.disconnect_confirm', 'Disconnect this external account? The MCP server will be disabled.')
+                  : t('mcp.uninstall_confirm', 'Uninstall this MCP server? Agents will no longer be able to load its tools.')}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmation(null)}>
+                {t('cancel', 'Cancel')}
+              </Button>
+              <Button
+                variant="danger"
+                disabled={deleteMutation.isPending || oauthDisconnectMutation.isPending}
+                onClick={() => {
+                  if (confirmation === 'disconnect') void handleOAuthDisconnect();
+                  if (confirmation === 'uninstall') void handleDelete();
+                }}
+              >
+                {confirmation === 'disconnect'
+                  ? t('mcp.oauth.disconnect', 'Disconnect')
+                  : t('mcp.delete', 'Uninstall')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+    </EntityDetailShell>
+  );
+}
+
+function Info({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
+      <div className={mono ? 'font-mono text-sm' : 'text-sm'}>
+        {value || '—'}
+      </div>
+    </div>
+  );
+}

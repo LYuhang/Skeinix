@@ -1,0 +1,54 @@
+import { queryClient } from '@/app/query-client';
+import { clearActiveTurn } from '@/lib/api/sse/active-turn';
+import { useAgentSettingsStore } from '@/stores/agent-settings';
+import { useChatStreamStore } from '@/stores/chat-stream';
+import { useExecStreamStore } from '@/stores/exec-stream';
+import { useUIStore } from '@/stores/ui';
+import { useWorkflowEditStore } from '@/stores/workflow-edit';
+
+/**
+ * Clear client-side state that is scoped to the currently authenticated user.
+ *
+ * This is intentionally broader than invalidating chat queries. The app is a
+ * single-page runtime: switching accounts without a hard refresh otherwise
+ * leaves TanStack Query data, active chat ids, optimistic sessions, active-turn
+ * cursors, and selected credential ids in memory.
+ */
+function resetRuntimeScopedClientState(): void {
+  queryClient.clear();
+  clearActiveTurn();
+  useChatStreamStore.getState().reset();
+  useExecStreamStore.getState().reset();
+  useWorkflowEditStore.getState().setDraft(null);
+  useAgentSettingsStore.getState().reset();
+  useUIStore.setState({
+    lastActiveWorkflowId: null,
+    activeChatIds: { chat: null, browser: null },
+    chatEntryIntent: null,
+    draftChatSessions: [],
+    optimisticChatSessions: [],
+    chatScrollPositions: {},
+    chatToolExpansion: {},
+    chatViewStates: {},
+    explorerOpen: false,
+    canvasReadOnly: false,
+    canvasInteracting: false,
+    inspectorScope: 'auto',
+    inspectorTab: 'node',
+  });
+}
+
+export function resetAuthScopedClientState(): void {
+  resetRuntimeScopedClientState();
+}
+
+/**
+ * Drop every cache/cursor whose authorization boundary is the active
+ * organization. This deliberately shares the same runtime cleanup as logout:
+ * keeping an old SSE cursor, optimistic chat, or workflow draft across an
+ * organization switch could momentarily expose stale data or attach a stream
+ * with the previous Session generation.
+ */
+export function resetOrganizationScopedClientState(): void {
+  resetRuntimeScopedClientState();
+}

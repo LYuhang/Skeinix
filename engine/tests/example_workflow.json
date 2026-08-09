@@ -1,0 +1,62 @@
+{
+    "__meta__": {
+        "workflow_id": "example_001",
+        "workflow_name": "text_processor",
+        "workflow_version": 1,
+        "workflow_subversion": 0
+    },
+    "node_1": {
+        "node_id": "node_1",
+        "node_name": "__start__",
+        "node_type": "StartNode",
+        "node_description": "接收文本和数字",
+        "input_fields": {
+            "text": {"type": "string", "value": "", "reference": ""},
+            "count": {"type": "integer", "value": 1, "reference": ""}
+        },
+        "output_fields": {
+            "text": {"type": "string", "description": "原始文本"},
+            "count": {"type": "integer", "description": "重复次数"}
+        },
+        "node_config": {},
+        "children": ["node_2"],
+        "__attributes__": {"x": 0, "y": 0}
+    },
+    "node_2": {
+        "node_id": "node_2",
+        "node_name": "repeat_text",
+        "node_type": "CodeNode",
+        "node_description": "将文本重复 count 次并统计字符数",
+        "input_fields": {
+            "text": {"type": "string", "value": "", "reference": "__start__.text"},
+            "count": {"type": "integer", "value": 1, "reference": "__start__.count"}
+        },
+        "output_fields": {
+            "repeated": {"type": "string", "description": "重复后的文本"},
+            "char_count": {"type": "integer", "description": "字符总数"}
+        },
+        "node_config": {
+            "programming_language": "python",
+            "process_fn": "def process_fn(inputs):\n    text = inputs['text']\n    count = inputs['count']\n    repeated = (text + ' ') * count\n    return {'repeated': repeated.strip(), 'char_count': len(repeated.strip())}"
+        },
+        "children": ["node_3"],
+        "__attributes__": {"x": 300, "y": 0}
+    },
+    "node_3": {
+        "node_id": "node_3",
+        "node_name": "__end__",
+        "node_type": "EndNode",
+        "node_description": "输出结果",
+        "input_fields": {
+            "repeated": {"type": "string", "value": "", "reference": "repeat_text.repeated"},
+            "char_count": {"type": "integer", "value": 0, "reference": "repeat_text.char_count"}
+        },
+        "output_fields": {
+            "repeated": {"type": "string", "description": "重复后的文本"},
+            "char_count": {"type": "integer", "description": "字符总数"}
+        },
+        "node_config": {},
+        "children": [],
+        "__attributes__": {"x": 600, "y": 0}
+    }
+}

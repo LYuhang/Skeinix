@@ -1,0 +1,41 @@
+module core
+
+type user
+
+type service_account
+  relations
+    define organization: [organization]
+    define manager: [user]
+    define can_view_metadata: manager or can_administer from organization or can_view_audit from organization
+    define can_update: manager or can_administer from organization
+    define can_manage_secret: manager or can_administer from organization
+    define can_delete: manager or can_administer from organization
+
+type organization
+  relations
+    define owner: [user]
+    define admin: [user]
+    define member: [user]
+    define guest: [user]
+    define auditor: [user]
+    define can_view_metadata: owner or admin or member or auditor
+    define can_administer: owner or admin
+    define can_create_resource: owner or admin or member
+    define can_manage_members: owner or admin
+    define can_manage_policy: owner or admin
+    define can_view_audit: owner or admin or auditor
+    define can_transfer: owner
+    define can_delete: owner
+
+type group
+  relations
+    define organization: [organization]
+    define direct_member: [user]
+    define descendant: [group#member]
+    define member: direct_member or descendant
+    define lead: [user]
+    define can_view_metadata: direct_member or member or lead or can_administer from organization or can_view_audit from organization
+    define can_view: direct_member or member or lead or can_administer from organization
+    define can_update: lead or can_administer from organization
+    define can_manage_members: lead or can_administer from organization
+    define can_delete: can_administer from organization

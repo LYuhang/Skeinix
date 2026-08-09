@@ -1,0 +1,268 @@
+"""Both Runtime adapters receive the same host-authorized Platform MCP policy."""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from sqlalchemy import text
+
+from vibecanvas_api.agents.tools.decorator import ToolError
+from vibecanvas_api.authorization.openfga_client import (
+    OpenFgaReadPage,
+    OpenFgaTuple,
+)
+from vibecanvas_api.config import config
+from vibecanvas_api.services.agent_runtime.protocol import (
+    RuntimeCapabilities,
+    RuntimeModelOption,
+    RuntimeType,
+)
+from vibecanvas_api.services.platform_mcp.authorization import (
+    prepare_platform_tool,
+)
+from vibecanvas_api.services.platform_mcp.capability import (
+    verify_platform_mcp_capability,
+)
+from vibecanvas_api.storage.db import session_scope
+from vibecanvas_api.storage.workflow_repo import WorkflowRepo
+
+
+class _RelationshipStore:
+    """Minimal OpenFGA wire-contract fake for this cross-runtime test."""
+
+    def __init__(self) -> None:
+        self.tuples: set[OpenFgaTuple] = set()
+
+    async def read(self, *, tuple_key, **_kwargs):
+        return OpenFgaReadPage(
+            (tuple_key,) if tuple_key in self.tuples else (),
+        )
+
+    async def write(self, *, writes=(), deletes=()):
+        self.tuples.update(writes)
+        self.tuples.difference_update(deletes)
+
+    async def batch_check(self, checks, **_kwargs):
+        return tuple(
+            self._allowed(user, relation, object_)
+            for user, relation, object_ in checks
+        )
+
+    async def list_objects(
+        self,
+        *,
+        user,
+        relation,
+        object_type,
+        **_kwargs,
+    ):
+        return tuple(
+            item.object.split(":", 1)[1]
+            for item in sorted(self.tuples, key=lambda item: item.object)
+            if item.object.startswith(f"{object_type}:")
+            and self._allowed(user, relation, item.object)
+        )
+
+    def _has(self, user: str, relation: str, object_: str) -> bool:
+        return OpenFgaTuple(user, relation, object_) in self.tuples
+
+    def _allowed(self, user: str, relation: str, object_: str) -> bool:
+        if object_.startswith("organization:"):
+            roles = {"owner", "admin", "member"}
+            return relation == "can_create_resource" and any(
+                self._has(user, role, object_) for role in roles
+            )
+        role_map = {
+            "can_view_metadata": {
+                "creator", "viewer", "editor", "operator", "manager",
+            },
+            "can_view": {"creator", "viewer", "editor", "operator", "manager"},
+            "can_update": {"creator", "editor", "manager"},
+            "can_use": {"creator", "viewer", "editor", "operator", "manager"},
+            "can_execute": {"creator", "operator", "manager"},
+            "can_mount": {"creator", "viewer", "editor", "operator", "manager"},
+        }
+        return any(
+            self._has(user, role, object_)
+            for role in role_map.get(relation, set())
+        )
+
+
+def _headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _register(client, label: str) -> tuple[dict[str, str], dict]:
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"{label}_{uuid.uuid4().hex[:12]}@example.com",
+            "username": label,
+            "password": "pw12345678",
+        },
+    )
+    assert response.status_code == 201, response.text
+    headers = _headers(response.json()["session_token"])
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    return headers, me
+
+
+@pytest.mark.asyncio
+async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
+    client,
+    pg_engine,
+    monkeypatch,
+) -> None:
+    from vibecanvas_api.routes import chats as chats_route
+    from vibecanvas_api.services.platform_mcp import server as platform_server
+
+    store = _RelationshipStore()
+    client._transport.app.state.openfga_client = store
+    monkeypatch.setattr(platform_server, "_OPENFGA_CLIENT", store)
+
+    dispatched = []
+
+    class FakeRuntimeOrchestrator:
+        async def stream_turn(self, **kwargs):
+            dispatched.append(kwargs["turn_request"])
+            yield ("NO_OP", {})
+
+    async def fake_codex_capabilities(_credential_rows, **_kwargs):
+        model = RuntimeModelOption(
+            id="codex:account:gpt-security-test",
+            label="Codex security test",
+            is_default=True,
+        )
+        return RuntimeCapabilities(
+            runtime_type=RuntimeType.CODEX,
+            runtime_available=True,
+            authenticated=True,
+            source="test",
+            models=[model],
+            default_model_id=model.id,
+        )
+
+    monkeypatch.setattr(
+        chats_route,
+        "AgentRuntimeOrchestrator",
+        FakeRuntimeOrchestrator,
+    )
+    monkeypatch.setattr(
+        chats_route,
+        "codex_capabilities",
+        fake_codex_capabilities,
+    )
+
+    owner_headers, owner = await _register(client, "runtime_parity_owner")
+    _outsider_headers, outsider = await _register(
+        client,
+        "runtime_parity_outsider",
+    )
+    workflow = await client.post(
+        "/api/v1/workflows",
+        headers=owner_headers,
+        json={"name": "Runtime parity allowed"},
+    )
+    assert workflow.status_code == 201, workflow.text
+    allowed_workflow_id = workflow.json()["wf_id"]
+    async with session_scope(tenant_id=owner["tenant_id"]) as session:
+        denied_workflow = await WorkflowRepo(
+            session,
+            outsider["user_id"],
+        ).create_workflow(name="Runtime parity denied")
+    denied_workflow_id = str(denied_workflow["wf_id"])
+
+    bootstrap = await client.get(
+        "/api/v1/chats/bootstrap",
+        headers=owner_headers,
+    )
+    assert bootstrap.status_code == 200, bootstrap.text
+    carrier_scope_id = bootstrap.json()["carrier_scope_id"]
+
+    for runtime_type, chat_id in (
+        ("langchain", "chat-platform-langchain"),
+        ("codex", "chat-platform-codex"),
+    ):
+        settings = await client.put(
+            "/api/v1/agent-runtime/settings",
+            headers=owner_headers,
+            json={"default_runtime_type": runtime_type},
+        )
+        assert settings.status_code == 200, settings.text
+        sent = await client.post(
+            f"/api/v1/chat-scopes/{carrier_scope_id}/chats/{chat_id}/messages",
+            headers=owner_headers,
+            json={"role": "user", "content": "/build inspect access"},
+        )
+        assert sent.status_code == 200, sent.text
+
+    assert [request.runtime_type.value for request in dispatched] == [
+        "langchain",
+        "codex",
+    ]
+    capabilities = []
+    for request in dispatched:
+        descriptor = next(
+            item
+            for item in request.mcp_servers
+            if item.source == "platform" and item.name == "build"
+        )
+        capability = verify_platform_mcp_capability(
+            descriptor.connection["headers"]["Authorization"].removeprefix(
+                "Bearer "
+            ),
+            secret=config.signing_secret,
+            server="build",
+        )
+        assert capability is not None
+        assert capability.runtime_session_id == request.runtime_session_id
+        capabilities.append(capability)
+
+    assert capabilities[0].actions == capabilities[1].actions
+    assert tuple(
+        resource
+        for resource in capabilities[0].resources
+        if resource.endswith(":*")
+    ) == tuple(
+        resource
+        for resource in capabilities[1].resources
+        if resource.endswith(":*")
+    )
+    async with pg_engine.begin() as connection:
+        await connection.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, false)"),
+            {"tenant_id": owner["tenant_id"]},
+        )
+        for capability in capabilities:
+            await connection.execute(
+                text(
+                    "UPDATE agent_runs SET status='running' "
+                    "WHERE run_id=:run_id"
+                ),
+                {"run_id": capability.turn_id},
+            )
+
+    results: list[tuple[bool, bool]] = []
+    for capability in capabilities:
+        context = await platform_server._context_for(capability)
+        await prepare_platform_tool(
+            context,
+            server="build",
+            tool_name="set_workflow",
+            arguments={"workflow_id": allowed_workflow_id},
+        )
+        denied = False
+        try:
+            await prepare_platform_tool(
+                context,
+                server="build",
+                tool_name="set_workflow",
+                arguments={"workflow_id": denied_workflow_id},
+            )
+        except ToolError as exc:
+            assert "permission_denied" in str(exc)
+            denied = True
+        results.append((True, denied))
+
+    assert results == [(True, True), (True, True)]

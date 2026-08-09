@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "release": {
+    "repository": "owner/repository",
+    "commit_sha": "0000000000000000000000000000000000000000",
+    "tag": "v0.0.0-example",
+    "environment": "production"
+  },
+  "gates": {
+    "tls_and_trusted_proxy": {"status": "pending", "owner": "Platform/SRE", "verified_by": null, "verified_at": null, "evidence": []},
+    "kms_workload_identity": {"status": "pending", "owner": "Cloud Security", "verified_by": null, "verified_at": null, "evidence": []},
+    "production_openfga": {"status": "pending", "owner": "Platform/SRE", "verified_by": null, "verified_at": null, "evidence": []},
+    "immutable_audit_sink": {"status": "pending", "owner": "Security", "verified_by": null, "verified_at": null, "evidence": []},
+    "backup_restore": {"status": "pending", "owner": "DBA", "verified_by": null, "verified_at": null, "evidence": []},
+    "key_rotation": {"status": "pending", "owner": "Cloud Security", "verified_by": null, "verified_at": null, "evidence": []},
+    "historical_credential_rotation": {"status": "pending", "owner": "Credential owners", "verified_by": null, "verified_at": null, "evidence": []},
+    "enterprise_idp_scim": {"status": "pending", "owner": "Identity", "verified_by": null, "verified_at": null, "evidence": []},
+    "break_glass_two_person": {"status": "pending", "owner": "Security", "verified_by": null, "verified_at": null, "evidence": []},
+    "clamav_capacity": {"status": "pending", "owner": "Platform/SRE", "verified_by": null, "verified_at": null, "evidence": []},
+    "release_attestations": {"status": "pending", "owner": "Release/Supply Chain", "verified_by": null, "verified_at": null, "evidence": []},
+    "extension_release": {"status": "pending", "owner": "Extension/Release", "verified_by": null, "verified_at": null, "evidence": []},
+    "authorization_canary_rollback": {"status": "pending", "owner": "Authorization owner", "verified_by": null, "verified_at": null, "evidence": []}
+  }
+}

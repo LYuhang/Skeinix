@@ -1,0 +1,73 @@
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { useCallback } from 'react';
+
+import { resolvePreview, writePreviewFile } from '@/lib/api/previews';
+import { usePreviewFileEvents } from '@/lib/api/sse/preview-file-events';
+import {
+  fileRefKey,
+  type FileRefV1,
+  type PreviewDescriptorV1,
+} from '@/lib/preview/protocol';
+
+export const previewDescriptorQueryKey = (fileRef: FileRefV1) =>
+  ['preview', 'descriptor', fileRefKey(fileRef)] as const;
+
+export function usePreviewDescriptor(fileRef: FileRefV1) {
+  const queryClient = useQueryClient();
+  const queryKey = previewDescriptorQueryKey(fileRef);
+  const queryKeyToken = fileRefKey(fileRef);
+  const reconcile = useCallback((event: { revision: string | null }) => {
+    const current = queryClient.getQueryData<PreviewDescriptorV1>(queryKey);
+    // A successful Save has already installed this exact revision and content
+    // locally. Ignore its eventual durable VFS event in this Preview instance;
+    // another browser instance still receives and applies the same event.
+    if (event.revision && current?.revision === event.revision) return;
+    void queryClient.invalidateQueries({ queryKey, exact: true });
+    // queryKeyToken is the stable identity represented by queryKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient, queryKeyToken]);
+  usePreviewFileEvents(fileRef, reconcile);
+
+  return useQuery({
+    queryKey,
+    queryFn: ({ signal }) => resolvePreview(fileRef, signal),
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  });
+}
+
+export function useWritePreviewFile(fileRef: FileRefV1) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: {
+      expectedRevision: string;
+      contentType: string;
+      content: string;
+    }) => writePreviewFile({ fileRef, ...args }),
+    onSuccess: (result, variables) => {
+      queryClient.setQueryData<PreviewDescriptorV1>(
+        previewDescriptorQueryKey(fileRef),
+        (current) => current
+          ? {
+              ...current,
+              revision: result.revision,
+              sizeBytes: result.sizeBytes,
+              contentType: result.contentType,
+              content: {
+                ...current.content,
+                inlineText: variables.content,
+                truncated: false,
+                rangeSupported: current.content?.rangeSupported ?? false,
+              },
+            }
+          : current,
+      );
+    },
+  });
+}

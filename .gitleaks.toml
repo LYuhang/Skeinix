@@ -1,0 +1,44 @@
+title = "Skeinix secret scanning"
+
+[extend]
+useDefault = true
+
+# Keep exclusions limited to generated dependency/build trees and local
+# secret-bearing environment files. The latter are permission-checked by
+# scripts/security/scan_secrets.sh and must never be tracked. Documentation,
+# fixtures, migrations, and examples remain scanned: a credential pasted into
+# any of those files is still an incident.
+[allowlist]
+description = "Generated/vendor paths and exact non-secret fixtures"
+regexTarget = "match"
+paths = [
+  '''(^|/)\.git/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)\.tools/''',
+  '''(^|/)\.env$''',
+  '''(^|/)\.env\.local$''',
+  '''(^|/)\.env\.[^/]+\.local$''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)\.pytest_cache/''',
+  '''(^|/)\.ruff_cache/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)\.playwright/''',
+  '''(^|/)\.playwright-cli/''',
+]
+regexes = [
+  # Documentation placeholders and deterministic test-only values. Keep these
+  # structural and exact; do not allowlist whole docs/tests directories.
+  '''Authorization:\s*Bearer\s*dev-token''',
+  '''token_estimator"\s*:\s*"approx_chars_div_4"''',
+  '''new_password"\s*:\s*"(?:newpw12345678|another12345)"''',
+  '''api_key\s*==\s*"sk-secret-12345"''',
+  '''password"\s*:\s*"fixturepw123"''',
+  # Public deterministic SHA-1 TOTP test vector from RFC 6238, not a deployed
+  # MFA seed. Keep the exception exact so other base32 secrets are still found.
+  '''RFC_6238_SHA1_SECRET\s*=\s*"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"''',
+  # Chrome extension manifests contain a public RSA identity key, not a
+  # private key or credential. Pin its standard SPKI prefix.
+  '''key"\s*:\s*"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A''',
+]

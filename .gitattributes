@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Binary fixtures and public branding assets must never be rewritten or shown
+# as text diffs. This also keeps PDF cross-reference whitespace byte-exact.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
