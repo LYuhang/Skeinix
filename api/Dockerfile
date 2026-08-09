@@ -16,10 +16,11 @@
 ARG CODEX_CLI_VERSION=0.147.0
 ARG NPM_VERSION=11.19.0
 
-# Codex App Server is an external runtime dependency, not a Python package.
-# Extract the reviewed platform-native bundle in a disposable Node stage so
-# the final API image contains neither Node.js nor npm.
-FROM node:22.23.2-alpine3.23@sha256:46825fbbd4e996a78b7a2cdc08d75e38a5a505bdab95dcda55605359bf124bc6 AS codex-cli
+# Codex App Server and the pinned ELK worker are external runtime dependencies,
+# not Python packages. Build both in one disposable, digest-pinned stage. The
+# final image receives the Codex native bundle, the Node executable, and only
+# elkjs (not npm or the frontend dependency tree).
+FROM node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime-assets
 ARG CODEX_CLI_VERSION
 ARG NPM_VERSION
 ARG TARGETARCH
@@ -28,7 +29,7 @@ RUN set -eux; \
     test "$(npm --version)" = "${NPM_VERSION}"; \
     npm install --global --ignore-scripts --no-audit --no-fund \
         "@openai/codex@${CODEX_CLI_VERSION}"; \
-    case "${TARGETARCH:-$(apk --print-arch)}" in \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
         amd64|x86_64) package_arch="x64"; target="x86_64-unknown-linux-musl" ;; \
         arm64|aarch64) package_arch="arm64"; target="aarch64-unknown-linux-musl" ;; \
         *) echo "Unsupported Codex CLI architecture: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
@@ -39,14 +40,31 @@ RUN set -eux; \
     cp -a "${vendor}/." /opt/codex/; \
     test "$(/opt/codex/bin/codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"
 
+COPY api/elk-runtime/package.json api/elk-runtime/package-lock.json /opt/elk/
+RUN npm ci --prefix /opt/elk --ignore-scripts --no-audit --no-fund \
+        --omit=dev && \
+    test "$(node -p 'require("/opt/elk/node_modules/elkjs/package.json").version')" = "0.12.0"
+COPY web/scripts/elk-layout.mjs /opt/elk/elk-layout.mjs
+RUN printf '%s' \
+      '{"graph":{"id":"image-probe","children":[{"id":"a","width":80,"height":40}]}}' \
+      | node /opt/elk/elk-layout.mjs \
+      | grep -q '"engineVersion":"elkjs-0.12.0"'
+
 FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 ARG CODEX_CLI_VERSION
 
 WORKDIR /app
 
-COPY --from=codex-cli /opt/codex /opt/codex
+COPY --from=runtime-assets /opt/codex /opt/codex
+COPY --from=runtime-assets /usr/local/bin/node /usr/local/bin/node
+COPY --from=runtime-assets /opt/elk /opt/elk
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex && \
-    test "$(codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"
+    test "$(codex --version)" = "codex-cli ${CODEX_CLI_VERSION}" && \
+    test "$(node --version)" = "v22.23.2" && \
+    printf '%s' \
+      '{"graph":{"id":"image-probe","children":[{"id":"a","width":80,"height":40}]}}' \
+      | node /opt/elk/elk-layout.mjs \
+      | grep -q '"engineVersion":"elkjs-0.12.0"'
 
 # gVisor (runsc) — workflow execution is sandbox-ONLY since P2 (no in-process
 # fallback), so the runtime image MUST carry the runsc binary. Fetch the SAME
@@ -121,7 +139,8 @@ RUN groupadd --gid 10001 vibecanvas && \
       /run/vibecanvas-sandbox
 
 EXPOSE 8000
-ENV VIBECANVAS_API_CORS_ORIGINS=http://localhost:3000
+ENV VIBECANVAS_API_CORS_ORIGINS=http://localhost:3000 \
+    VIBECANVAS_ELK_LAYOUT_SCRIPT=/opt/elk/elk-layout.mjs
 USER 10001:10001
 
 # Production-ready default. Override VIBECANVAS_API_DEV_TOKEN at run time.

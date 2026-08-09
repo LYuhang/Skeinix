@@ -89,6 +89,7 @@ build_image engine engine/Dockerfile engine
 # deployment image cannot silently bypass SBOM/vulnerability scanning.
 readonly pinned_images=(
   'python-base|python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff'
+  'node-runtime|node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436'
   'node-build|node:22.23.2-alpine3.23@sha256:46825fbbd4e996a78b7a2cdc08d75e38a5a505bdab95dcda55605359bf124bc6'
   'nginx-runtime|nginx:1.30.4-alpine3.24@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46'
   'pgvector|pgvector/pgvector:0.8.5-pg15-bookworm@sha256:18d16372b8406bb38a9f94cbff15d125c463d71fde2770aa8b5c64bfcc1578ee'
@@ -121,7 +122,7 @@ done
 sha256sum "$output_dir"/sbom/*.json "$output_dir"/vulnerabilities/*.json \
   > "$output_dir/report-checksums.sha256"
 if [[ "$gate_failed" -ne 0 ]]; then
-  printf 'container_supply_chain_gate=fail images=11 output=%s\n' "$output_dir" >&2
+  printf 'container_supply_chain_gate=fail images=12 output=%s\n' "$output_dir" >&2
   exit 2
 fi
-printf 'container_supply_chain_gate=pass images=11 output=%s\n' "$output_dir"
+printf 'container_supply_chain_gate=pass images=12 output=%s\n' "$output_dir"
