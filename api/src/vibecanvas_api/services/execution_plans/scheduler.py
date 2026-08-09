@@ -24,6 +24,7 @@ from vibecanvas_api.services.agent_runtime.model_capability import (
     authorization_model_generation,
     model_config_revision,
 )
+from vibecanvas_api.services.agent_runtime.capabilities import langchain_credential_id
 from vibecanvas_api.services.agent_runtime.orchestrator import private_runtime_root
 from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeBackgroundJobRequest,
@@ -33,9 +34,11 @@ from vibecanvas_api.services.agent_runtime.workflow_model_capability import (
     mint_runtime_workflow_model_capability,
 )
 from vibecanvas_api.services.chat_workspace import chat_workspace_scope_id
+from vibecanvas_api.services.llm_credentials_inject import merge_agent_settings_override
 from vibecanvas_api.services.object_store import get_object_store
 from vibecanvas_api.services.sandbox.manager import get_sandbox_manager
 from vibecanvas_api.storage.db import session_scope
+from vibecanvas_api.storage.agent_runs_repo import AgentRunsRepo
 from vibecanvas_api.storage.models_execution_plans import (
     ExecutionNodeAttempt,
     ExecutionNodeOutput,
@@ -47,6 +50,7 @@ from vibecanvas_api.storage.models_execution_plans import (
 )
 from vibecanvas_api.storage.models_agent_runs import HitlRequest
 from vibecanvas_api.storage.hitl_repo import HitlRepo
+from vibecanvas_api.storage.repo_llm_credentials import LlmCredentialsRepo
 from vibecanvas_api.storage.vfs_store import VfsRepo
 
 
@@ -594,7 +598,9 @@ class ExecutionPlanScheduler:
                     )
                 )).scalar_one_or_none() or 0)
                 await self._event(session, run, "node_started", {"status": "running", "node_path": node.node_path, "attempt": attempt_number}, node, attempt_number)
-                runtime_request = self._runtime_request(run, node, definition)
+                runtime_request = await self._runtime_request(
+                    session, run, node, definition,
+                )
 
             final: dict[str, Any] | None = None
             try:
@@ -796,22 +802,57 @@ class ExecutionPlanScheduler:
                     await self._event(session, run, "node_failed", {"status": "failed", "code": error_code, "node_path": node.node_path}, node, attempt_number)
 
     @staticmethod
-    def _runtime_request(run, node, definition) -> dict[str, Any]:
-        model_value = str(config.agent.model or "")
+    async def _runtime_request(session, run, node, definition) -> dict[str, Any]:
+        # A detached Plan node is still part of the Chat Turn that authored
+        # the immutable Plan. Inherit that Turn's explicit model binding rather
+        # than silently falling back to the process-wide platform default. The
+        # durable AgentRun snapshot contains only the public model selector;
+        # provider credentials remain host-side and are represented in the
+        # sandbox by a short-lived broker capability below.
+        parent_run = await AgentRunsRepo(session).get(run.create_turn_id)
+        parent_input = parent_run.input_snapshot if parent_run is not None else {}
+        selected_model_id = str(parent_input.get("model_id") or "").strip() or None
+        credential_id = langchain_credential_id(selected_model_id)
+        credential_row = (
+            await LlmCredentialsRepo(session).get_for_user(
+                credential_id, run.creator_user_id,
+            )
+            if credential_id is not None
+            else None
+        )
+        if credential_id is not None and credential_row is None:
+            raise RuntimeError("The Plan's selected model credential is no longer available.")
+
+        model_config = merge_agent_settings_override(
+            config.agent.to_agent_cfg(), credential_row=credential_row,
+        )
+        reasoning_effort = str(parent_input.get("reasoning_effort") or "").strip()
+        if reasoning_effort:
+            model_config["reasoning"] = {"effort": reasoning_effort}
+
+        model_value = str(model_config.get("model") or "")
         provider, separator, model = model_value.partition(":")
         provider = provider.strip().lower().replace("-", "_") if separator else ""
         model = model.strip() if separator else model_value.strip()
         capability = mint_runtime_workflow_model_capability(
             organization_id=str(run.tenant_id), user_id=str(run.creator_user_id),
             workflow_id=run.chat_id, execution_id=run.plan_run_id,
-            execution_resource_type="agent_plan", credential_id=None,
+            execution_resource_type="agent_plan",
+            credential_id=str(credential_id) if credential_id is not None else None,
             provider=provider, model=model,
-            config_revision=model_config_revision(provider=provider, model=model, updated_at="platform-process-config"),
+            config_revision=model_config_revision(
+                provider=provider,
+                model=model,
+                updated_at=(
+                    credential_row.get("updated_at")
+                    if credential_row is not None
+                    else "platform-process-config"
+                ),
+            ),
             authorization_generation=authorization_model_generation(model_id=config.openfga_authorization_model_id),
             secret=config.signing_secret,
             ttl_s=max(int((run.budget_json or {}).get("max_wall_time_seconds") or 1800) + 300, 1200),
         )
-        model_config = config.agent.to_agent_cfg()
         model_config = {key: value for key, value in model_config.items() if key not in {"api_key", "base_url", "proxy"}}
         model_config.update({
             "id": model,

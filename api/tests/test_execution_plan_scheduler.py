@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select, text
@@ -13,6 +15,7 @@ from vibecanvas_api.services.execution_plans.validator import validate_plan_byte
 from vibecanvas_api.storage.chat_repo import ChatRepo
 from vibecanvas_api.storage.execution_plan_repo import ExecutionPlanRepo
 from vibecanvas_api.storage.hitl_repo import HitlRepo
+from vibecanvas_api.storage.agent_runs_repo import AgentRunsRepo
 from vibecanvas_api.storage.models_agent_runs import HitlRequest
 from vibecanvas_api.storage.models_execution_plans import (
     ExecutionNodeAttempt,
@@ -22,6 +25,7 @@ from vibecanvas_api.storage.models_execution_plans import (
     ExecutionPlanRunEvent,
 )
 from vibecanvas_api.storage.workflow_repo import WorkflowRepo
+from vibecanvas_api.storage.repo_llm_credentials import LlmCredentialsRepo
 
 
 class FakeExecutor:
@@ -157,6 +161,50 @@ async def _drain(scheduler: ExecutionPlanScheduler):
     while scheduler._tasks:
         await asyncio.gather(*list(scheduler._tasks.values()), return_exceptions=False)
         await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_plan_node_inherits_the_authoring_turn_model_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential_id = uuid.uuid4()
+    monkeypatch.setattr(
+        AgentRunsRepo,
+        "get",
+        AsyncMock(return_value=SimpleNamespace(input_snapshot={
+            "model_id": f"langchain:credential:{credential_id}",
+            "reasoning_effort": "low",
+        })),
+    )
+    monkeypatch.setattr(
+        LlmCredentialsRepo,
+        "get_for_user",
+        AsyncMock(return_value={
+            "id": credential_id,
+            "provider": "openai",
+            "model_name": "gpt-5-mini",
+            "updated_at": "2026-08-10T00:00:00Z",
+        }),
+    )
+    run = SimpleNamespace(
+        tenant_id=uuid.uuid4(),
+        creator_user_id=uuid.uuid4(),
+        chat_id="chat-model-binding",
+        plan_run_id="planrun-model-binding",
+        create_turn_id="turn-model-binding",
+        budget_json={"max_wall_time_seconds": 300},
+        approval_mode_snapshot="always_allow",
+    )
+    node = SimpleNamespace(node_run_id="node-model-binding", node_path="work")
+
+    request = await ExecutionPlanScheduler._runtime_request(
+        object(), run, node, {"title": "Work", "task": "Return OK."},
+    )
+
+    assert request["model"]["id"] == "gpt-5-mini"
+    assert request["model"]["reasoning"] == {"effort": "low"}
+    assert request["model"]["base_url"].endswith("/api/internal/runtime-model/v1")
+    assert request["model"]["api_key"]
 
 
 @pytest.mark.asyncio
