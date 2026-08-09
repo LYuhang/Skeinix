@@ -39,11 +39,40 @@ ENV VITE_EXTENSION_ID=$VIBECANVAS_BROWSER_EXTENSION_ID
 # and produce the production bundle.
 RUN pnpm codegen:api:offline && pnpm build
 
+# Build the companion browser extension from its independent frozen graph.
+# The public Web origin is compiled into the MV3 allowlist, so deployments
+# reached through a non-local origin must pass the same canonical URL here.
+FROM node:22.23.2-alpine3.23@sha256:46825fbbd4e996a78b7a2cdc08d75e38a5a505bdab95dcda55605359bf124bc6 AS extension-build
+
+WORKDIR /app/extension
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
+COPY extension/package.json extension/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY extension/ ./
+COPY web/public/branding/ /app/web/public/branding/
+
+ARG VITE_WEB_BASE="http://localhost:9001"
+ARG VITE_EXTENSION_ALLOWED_ORIGINS="http://localhost:9001"
+ENV VITE_WEB_BASE=$VITE_WEB_BASE \
+    VITE_EXTENSION_ALLOWED_ORIGINS=$VITE_EXTENSION_ALLOWED_ORIGINS
+RUN pnpm build && test -f dist/manifest.json && test -f dist/sidepanel.html
+
+# Python's standard library creates the deployment-local ZIP without adding a
+# package manager or archive utility to the final nginx runtime image.
+FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS extension-package
+COPY --from=extension-build /app/extension/dist /extension
+RUN mkdir -p /out && \
+    cd /extension && \
+    python -m zipfile -c /out/vibecanvas-extension.zip * && \
+    python -m zipfile -t /out/vibecanvas-extension.zip
+
 # ---------- Stage 2: serve via nginx ----------
 FROM nginx:1.30.4-alpine3.24@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
 
 # Vite emits the bundle to /app/dist in the build stage.
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=extension-package /out/vibecanvas-extension.zip \
+  /usr/share/nginx/html/downloads/vibecanvas-extension.zip
 RUN mkdir -p /etc/skeinix && \
     mv /usr/share/nginx/html/csp-script-hashes.txt \
       /etc/skeinix/csp-script-hashes.txt && \

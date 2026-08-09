@@ -305,6 +305,19 @@ def test_web_image_fails_closed_on_extension_frame_ancestor_configuration() -> N
     subprocess.run(["sh", "-n", str(validator)], check=True)
 
 
+def test_web_image_packages_the_locked_extension_for_download() -> None:
+    dockerfile = (_ROOT / "web/Dockerfile").read_text(encoding="utf-8")
+    compose = (_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "COPY extension/package.json extension/pnpm-lock.yaml ./" in dockerfile
+    assert "pnpm install --frozen-lockfile" in dockerfile
+    assert "python -m zipfile -t /out/vibecanvas-extension.zip" in dockerfile
+    assert (
+        "/usr/share/nginx/html/downloads/vibecanvas-extension.zip" in dockerfile
+    )
+    assert "VITE_WEB_BASE: ${VIBECANVAS_EXTENSION_WEB_BASE" in compose
+    assert "VITE_EXTENSION_ALLOWED_ORIGINS:" in compose
+
+
 def test_clamav_compose_overlay_exposes_only_a_read_only_unix_socket() -> None:
     overlay = yaml.safe_load(
         (_ROOT / "docker-compose.security.yml").read_text(encoding="utf-8")
