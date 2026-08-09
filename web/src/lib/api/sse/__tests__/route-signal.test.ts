@@ -483,12 +483,12 @@ describe('routeAgentSignalWith', () => {
     expect(useChatStreamStore.getState().state).toBe('failed');
   });
 
-  it('cancelled terminal is a natural completion, not a disconnected stream', () => {
+  it('cancelled terminal is explicit and not a disconnected stream', () => {
     const client = makeClient();
     useChatStreamStore.getState().beginTurn('chat_y', 'turn_42');
     routeAgentSignalWith(client, 'error', { code: 'cancelled' }, ctx);
 
-    expect(useChatStreamStore.getState().state).toBe('complete');
+    expect(useChatStreamStore.getState().state).toBe('cancelled');
     expect(client.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ['chat-history', 'wf_x', 'chat_y'],
     });

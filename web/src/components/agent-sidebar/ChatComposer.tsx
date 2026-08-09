@@ -9,7 +9,7 @@
  * Lifecycle UX (T11):
  *   - `idle` / `complete`               → Send button (disabled until input)
  *   - `streaming`                       → Stop button (asks backend to cancel)
- *   - `failed`                          → Retry button (resends last input)
+ *   - `cancelled` / `failed`            → Retry button (resends last input)
  *
  * Stop is a backend semantic operation, not a local transport abort. The button
  * calls the turn cancel endpoint and keeps the SSE connection open so the
@@ -535,7 +535,7 @@ export function ChatComposer({
   const externallyDisabled = !!effectiveDisabledReason;
   const canRetry =
     streamBelongsToThisChat &&
-    (streamState === 'failed' || streamState === 'interrupted') &&
+    (streamState === 'cancelled' || streamState === 'failed' || streamState === 'interrupted') &&
     (!!lastInput?.content || !!lastInput?.attachments?.length || !!lastInput?.control) &&
     !readOnly &&
     !externallyDisabled;
@@ -688,7 +688,7 @@ export function ChatComposer({
     // failure path keeps the chips visible so the user can hit Retry
     // without re-attaching context.
     const finalState = useChatStreamStore.getState().runtimes[chatId as string]?.state;
-    if (finalState !== 'failed' && finalState !== 'interrupted') {
+    if (finalState !== 'cancelled' && finalState !== 'failed' && finalState !== 'interrupted') {
       if (composerStateKey) useChatStreamStore.getState().clearAttachments(composerStateKey);
     }
   };

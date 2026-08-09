@@ -7,7 +7,7 @@
  * (Extracted from the former ChatSessionList right column.)
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Eye, Loader2 } from 'lucide-react';
+import { ArrowDown, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, CircleStop, Eye, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MessageAvatar, MessageItem } from '@/components/agent-sidebar/MessageItem';
@@ -470,11 +470,13 @@ export function ChatMessageList({
     }
     if (!previous.streaming && isStreaming) {
       setStreamAnnouncement(t('agent.response_started', 'Agent response started'));
+    } else if (previous.streaming && streamState === 'cancelled') {
+      setStreamAnnouncement(t('agent.turn_cancelled', 'Turn cancelled'));
     } else if (previous.streaming && !isStreaming) {
       setStreamAnnouncement(t('agent.response_complete', 'Agent response complete'));
     }
     previousStreamAnnouncementRef.current = { chatId: activeChatId, streaming: isStreaming };
-  }, [activeChatId, isStreaming, t]);
+  }, [activeChatId, isStreaming, streamState, t]);
   const isPersisted =
     !!activeChatId &&
     (persistedChatIds ??
@@ -824,6 +826,26 @@ export function ChatMessageList({
                       aria-hidden="true"
                       data-role="agent-thinking-spinner"
                     />
+                  </div>
+                </div>
+              )}
+              {streamState === 'cancelled' && (
+                <div
+                  className="flex items-start gap-2.5 rounded-lg border border-state-warning/30 bg-state-warning/5 px-3 py-2.5 text-sm"
+                  data-role="agent-turn-cancelled"
+                  role="status"
+                >
+                  <CircleStop className="mt-0.5 h-4 w-4 shrink-0 text-state-warning" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">
+                      {t('agent.turn_cancelled', 'Turn cancelled')}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t(
+                        'agent.turn_cancelled_hint',
+                        'The active operation was stopped. Retry to run the same request again.',
+                      )}
+                    </p>
                   </div>
                 </div>
               )}

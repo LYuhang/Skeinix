@@ -1081,6 +1081,7 @@ class SandboxSession:
         broker: BusBroker | None = None
         turn_registered = False
         invalidate_runtime = False
+        received_result = False
         try:
             if self.skills_dir and self.user_id:
                 from vibecanvas_api.services.runtime_skills import (
@@ -1139,7 +1140,6 @@ class SandboxSession:
                 )
                 await broker.send({"type": MSG_RUNTIME_REQUEST, "request": request})
                 first_bus_message = True
-                received_result = False
                 async for message in broker.messages():
                     if first_bus_message:
                         first_bus_message = False
@@ -1228,6 +1228,16 @@ class SandboxSession:
             invalidate_runtime = True
             raise
         finally:
+            # A consumer cancellation (the normal host-side Stop path) closes
+            # this async generator at its current yield. In that case the
+            # resident process may still publish the cancelled Turn's trailing
+            # events and runtime_result onto the shared bus. Reusing that bus
+            # lets the next Turn consume the stale result and appear to finish
+            # immediately with NO_OP. Only a Runtime whose own result boundary
+            # was observed is safe to retain across Turns; the sandbox and VFS
+            # remain resident while this process-local transport is replaced.
+            if turn_registered and not received_result:
+                invalidate_runtime = True
             if turn_registered:
                 async with self._runtime_broker_lock:
                     if self._runtime_brokers.get(runtime_turn_id) is broker:

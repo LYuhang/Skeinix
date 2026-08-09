@@ -2,8 +2,9 @@
  * SSE reconnect banner for the agent chat sidebar.
  *
  * Rendered inline at the top of {@link AgentChatSidebar} and visible
- * when the chat-stream store is in `'interrupted'` (post-Stop or
- * retries-exhausted) or `'failed'` (transport / parser error).
+ * when the chat-stream store is in `'interrupted'` (retries-exhausted) or
+ * `'failed'` (transport / parser error). User-requested Stop has its own
+ * explicit `'cancelled'` state and composer Retry action.
  *
  * Three affordances appear when a stream disconnects:
  *   - **Retry** — re-fires the same turn via `runAgentTurn` using the

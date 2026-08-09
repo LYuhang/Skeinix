@@ -42,6 +42,7 @@ export type StreamState =
   | 'idle'
   | 'streaming'
   | 'complete'
+  | 'cancelled'
   | 'interrupted'
   | 'failed';
 

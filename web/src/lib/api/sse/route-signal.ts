@@ -647,7 +647,7 @@ export function routeAgentSignalWith(
       const code = isObject(payload) && typeof payload.code === 'string'
         ? payload.code
         : '';
-      store.setState(code === 'cancelled' ? 'complete' : 'failed', ctx.chatId);
+      store.setState(code === 'cancelled' ? 'cancelled' : 'failed', ctx.chatId);
       clearActiveTurn({ wfId: ctx.wfId, chatId: ctx.chatId }); // turn ended (cancelled/failed) → nothing to resume
       // Island (§14.1): a failed/cancelled turn must not leave the island stuck
       // mid-phase — drop back to ready (the island's visibility is gated by the

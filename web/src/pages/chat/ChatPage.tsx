@@ -1696,6 +1696,8 @@ export function ChatPage() {
       ? { label: t('chat.status.attention', 'Needs attention'), tone: 'warning' }
       : activeStreamState === 'streaming'
         ? { label: t('chat.status.running', 'Running'), tone: 'running', pulse: true }
+        : activeStreamState === 'cancelled'
+          ? { label: t('chat.status.cancelled', 'Cancelled'), tone: 'warning' }
         : activeStreamState === 'failed'
           ? { label: t('chat.status.failed', 'Failed'), tone: 'danger' }
           : activeStreamState === 'interrupted'

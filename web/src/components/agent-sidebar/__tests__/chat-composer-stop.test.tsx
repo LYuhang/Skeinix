@@ -278,6 +278,17 @@ describe('ChatComposer Stop', () => {
     expect(s.buffer).toHaveLength(2);
   });
 
+  it('offers Retry after the backend confirms a cancelled turn', () => {
+    useChatStreamStore.getState().beginTurn('chat_cancelled', 'turn_cancelled');
+    useChatStreamStore.getState().setLastInput({ content: 'run it again' }, 'chat_cancelled');
+    useChatStreamStore.getState().setState('cancelled', 'chat_cancelled');
+
+    renderComposer('chat_cancelled');
+
+    expect(screen.getByRole('button', { name: /retry|重试/i })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /stop|停止/i })).toBeNull();
+  });
+
   it('resolves the Run from the backend when the local projection has no Turn id', async () => {
     useChatStreamStore.setState({
       runtimes: {

@@ -84,6 +84,15 @@ class _FakeBroker:
         self.closed = True
 
 
+class _BlockingResultBroker(_FakeBroker):
+    async def messages(self):
+        yield {
+            "type": "runtime_event",
+            "event": {"type": "runtime.started", "turn_id": self.turn_id},
+        }
+        await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
 async def test_main_runtime_process_is_reused_across_turns(
     monkeypatch: pytest.MonkeyPatch,
@@ -120,6 +129,37 @@ async def test_main_runtime_process_is_reused_across_turns(
     assert "allow_hosts" not in provider.launch_kwargs[0]
     await session.close()
     assert provider.stops == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_invalidates_runtime_before_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    monkeypatch.setattr(manager_module, "BusBroker", _BlockingResultBroker)
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        expose_run=False,
+    )
+
+    stream = session.run_agent_runtime_stream(
+        {"turn_id": "turn-cancelled", "runtime_type": "langchain"}
+    )
+    assert (await anext(stream))["turn_id"] == "turn-cancelled"
+
+    await stream.aclose()
+
+    assert provider.launches == 1
+    assert provider.stops == 1
+    assert session._runtime_handle is None
+    assert session._runtime_broker is None
+
+    await session.close()
 
 
 @pytest.mark.asyncio
