@@ -39,6 +39,11 @@ _RECOVERY_HINTS = {
     "browser_command_result_unknown": (
         "Do not directly retry a write. First read the target page to verify whether it already took effect."
     ),
+    "browser_debugger_conflict": (
+        "Call browser_tab(action='list_open') and browser_session_status, then choose a fresh tab id. "
+        "If the selected live tab still reports an external debugger conflict, do not detach it "
+        "automatically; ask the user to close DevTools/other automation or choose another tab."
+    ),
     "tab_not_found": "Call browser_tab(action='list_open') or browser_tab(action='list') and use a returned tab id.",
     "tab_not_controlled": "Call browser_tab(action='list') to get controlled tab ids, or start control for an open tab.",
     "tab_out_of_scope": "Use a tab id returned for the extension's current browser window.",
@@ -67,7 +72,30 @@ def _normalize_browser_error_code(code: str, detail: str) -> str:
             return "wait_timeout"
         if "tab" in text and ("not found" in text or "no such target" in text):
             return "tab_not_found"
+    if raw in {
+        "browser_error",
+        "browser_command_not_executed",
+        "browser_start_session_failed",
+        "browser_command_failed",
+    } and ("another debugger" in text or "already attached" in text):
+        return "browser_debugger_conflict"
     return raw
+
+
+def _browser_health_lines(health: dict | None) -> list[str]:
+    """Render only the stable, privacy-preserving browser health contract."""
+    if not isinstance(health, dict) or not health:
+        return []
+    state = str(health.get("state") or "unknown")
+    stale = int(health.get("stale_attachment_count") or 0)
+    conflicts = int(health.get("conflict_count") or 0)
+    missing = int(health.get("missing_attachment_count") or 0)
+    action = str(health.get("recommended_action") or "inspect_browser_state")
+    return [
+        f"Browser health: {state} "
+        f"(stale_extension={stale}, external_conflicts={conflicts}, missing={missing})",
+        f"Recommended action: {action}",
+    ]
 
 
 def _browser_tool_error(
@@ -76,6 +104,7 @@ def _browser_tool_error(
     *,
     effect_status: str | None = None,
     not_executed: bool = False,
+    health: dict | None = None,
 ) -> ToolError:
     stable_code = _normalize_browser_error_code(code, detail)
     recovery = _RECOVERY_HINTS.get(
@@ -88,7 +117,10 @@ def _browser_tool_error(
     if not_executed:
         suffixes.append("not_executed=true")
     suffix = f" ({', '.join(suffixes)})" if suffixes else ""
-    message = f"[{stable_code}] {detail}{suffix}\nRecovery: {recovery}"
+    health_lines = _browser_health_lines(health)
+    health_text = "\n".join(health_lines)
+    extra = f"\n{health_text}" if health_text else ""
+    message = f"[{stable_code}] {detail}{suffix}{extra}\nRecovery: {recovery}"
     return ToolError(
         stable_code,
         message,
@@ -96,6 +128,7 @@ def _browser_tool_error(
             "recovery_hint": recovery,
             "effect_status": effect_status,
             "not_executed": bool(not_executed),
+            "health": health if isinstance(health, dict) else None,
         },
     )
 
@@ -227,10 +260,27 @@ async def _run(cmd: str, ctx, **call) -> dict:
         )
         effect_status = obs.get("effect_status") or data.get("effect_status")
         not_executed = obs.get("not_executed") or data.get("not_executed")
+        error_info = (
+            obs.get("error_info")
+            if isinstance(obs.get("error_info"), dict)
+            else data.get("error_info")
+            if isinstance(data.get("error_info"), dict)
+            else {}
+        )
+        health = (
+            obs.get("health")
+            if isinstance(obs.get("health"), dict)
+            else data.get("health")
+            if isinstance(data.get("health"), dict)
+            else error_info.get("health")
+            if isinstance(error_info.get("health"), dict)
+            else None
+        )
         raise _browser_tool_error(
             str(error_code),
             str(detail),
             effect_status=str(effect_status) if effect_status else None,
             not_executed=bool(not_executed),
+            health=health,
         )
     return obs

@@ -1,2 +1,37 @@
-<!doctype html><html><body><h1 id="detail-title">Detail for 42</h1>
-  <p id="detail-body">Extra evidence on the detail page.</p></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser Automation Guide</title>
+    <style>
+      :root { font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #f4f6fb; color: #192033; }
+      main { width: min(820px, calc(100% - 40px)); margin: 70px auto; padding: 42px; border: 1px solid #dfe4ef; border-radius: 22px; background: white; }
+      .badge { display: inline-flex; padding: 7px 11px; border-radius: 999px; background: #e9e6ff; color: #4f43bd; font-weight: 700; }
+      h1 { margin: 18px 0 8px; font-size: 38px; }
+      p { color: #59627a; line-height: 1.7; }
+      ul { padding-left: 22px; line-height: 1.9; }
+    </style>
+  </head>
+  <body>
+    <main id="detail-content">
+      <span class="badge">Verified destination</span>
+      <h1 id="detail-title">Skeinix browser automation guide</h1>
+      <p id="detail-body">The Agent opened this page from a search result.</p>
+      <ul id="acceptance-trail">
+        <li>Search term: <strong id="trail-query"></strong></li>
+        <li>Results page observed: <strong id="trail-results"></strong></li>
+        <li>Result clicked: <strong id="trail-clicked"></strong></li>
+      </ul>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const query = params.get("from") || sessionStorage.getItem("skeinix.acceptance.search") || "not recorded";
+      document.querySelector("#trail-query").textContent = query;
+      document.querySelector("#trail-results").textContent = sessionStorage.getItem("skeinix.acceptance.results") === query ? "yes" : "no";
+      document.querySelector("#trail-clicked").textContent = sessionStorage.getItem("skeinix.acceptance.resultClicked") === "true" ? "yes" : "no";
+    </script>
+  </body>
+</html>

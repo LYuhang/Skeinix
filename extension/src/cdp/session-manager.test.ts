@@ -33,14 +33,11 @@ describe("SessionManager", () => {
     expect(sm.tabIdFor(tid)).toBe(42);
   });
 
-  it("adopts an extension-owned debugger attachment after an MV3 worker restart", async () => {
+  it("adopts an extension-owned debugger attachment after proving command access", async () => {
     const dbg = fakeDebugger();
     (dbg.attach as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("Another debugger is already attached to the tab"),
     );
-    (dbg.getTargets as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: "T0", tabId: 42, type: "page", attached: true },
-    ]);
 
     const sm = new SessionManager(dbg);
     const tid = await sm.attachRoot(42);
@@ -58,13 +55,76 @@ describe("SessionManager", () => {
     const dbg = fakeDebugger();
     const conflict = new Error("Another debugger is already attached to the tab");
     (dbg.attach as ReturnType<typeof vi.fn>).mockRejectedValueOnce(conflict);
-    (dbg.getTargets as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: "T0", tabId: 42, type: "page", attached: false },
-    ]);
+    (dbg.sendCommand as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Cannot access an external debugger attachment"),
+    );
 
     const sm = new SessionManager(dbg);
     await expect(sm.attachRoot(42)).rejects.toBe(conflict);
     expect(sm.knownTargets()).toEqual([]);
+  });
+
+  it("reports a healthy current extension attachment", async () => {
+    const dbg = fakeDebugger();
+    const sm = new SessionManager(dbg);
+    await sm.attachRoot(42);
+    (dbg.getTargets as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "T0", tabId: 42, type: "page", attached: true },
+    ]);
+
+    const health = await sm.health();
+
+    expect(health).toMatchObject({
+      state: "healthy",
+      controlled_tab_count: 1,
+      stale_attachment_count: 0,
+      conflict_count: 0,
+      owner_match: true,
+      recommended_action: "continue",
+    });
+  });
+
+  it("reports a proven extension-owned ghost as safely recoverable", async () => {
+    const dbg = fakeDebugger();
+    (dbg.getTargets as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "T-stale", tabId: 42, type: "page", attached: true },
+    ]);
+    const sm = new SessionManager(dbg);
+
+    const health = await sm.health();
+
+    expect(health).toMatchObject({
+      state: "stale_extension_attachment",
+      controlled_tab_count: 0,
+      extension_owned_attachment_count: 1,
+      stale_attachment_count: 1,
+      conflict_count: 0,
+      safe_to_cleanup: true,
+      recommended_action: "rediscover_tabs_and_start_selected_session",
+    });
+  });
+
+  it("reports an unknown debugger owner without claiming cleanup is safe", async () => {
+    const dbg = fakeDebugger();
+    (dbg.getTargets as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "T-external", tabId: 42, type: "page", attached: true },
+    ]);
+    (dbg.sendCommand as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Cannot access target"),
+    );
+    const sm = new SessionManager(dbg);
+
+    const health = await sm.health();
+
+    expect(health).toMatchObject({
+      state: "external_debugger_conflict",
+      stale_attachment_count: 0,
+      conflict_count: 1,
+      connection_conflict: true,
+      conflict_kind: "external_debugger",
+      safe_to_cleanup: false,
+      recommended_action: "close_external_debugger_or_choose_another_tab",
+    });
   });
 
   it("auto-attaches a spawned target and resumes it (attach-race defense)", async () => {

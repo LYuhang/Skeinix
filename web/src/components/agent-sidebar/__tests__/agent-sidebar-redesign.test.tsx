@@ -19,7 +19,11 @@ import i18n from '@/lib/i18n';
 // for the whole file; later tasks reuse historyMock/sessionsMock).
 const historyMock = vi.fn();
 const sessionsMock = vi.fn();
+const fetchHistoryPageMock = vi.fn();
 vi.mock('@/lib/api/queries/chats', () => ({
+  CHAT_INITIAL_HISTORY_LIMIT: 30,
+  fetchChatHistory: vi.fn(),
+  fetchChatHistoryPage: (...a: unknown[]) => fetchHistoryPageMock(...a),
   useChatHistory: (...a: unknown[]) => historyMock(...a),
   useChatSessions: (...a: unknown[]) => sessionsMock(...a),
   useChatBootstrap: () => ({
@@ -40,6 +44,7 @@ vi.mock('@/lib/api/sse/resume-turn', () => ({
 }));
 
 beforeEach(async () => {
+  fetchHistoryPageMock.mockReset();
   await i18n.changeLanguage('en');
 });
 
@@ -1075,5 +1080,63 @@ describe('AgentChatSidebar redesign', () => {
     expect(screen.getByText('previous request')).toBeInTheDocument();
     expect(screen.getByText('previous answer')).toBeInTheDocument();
     expect(screen.getByText('follow-up request')).toBeInTheDocument();
+  });
+
+  it('loads browser messages older than a tool-heavy tail instead of hiding prior turns', async () => {
+    useUIStore.setState({
+      lastActiveWorkflowId: 'wf',
+      activeChatIds: { chat: null, browser: 'browser-long' },
+    });
+    sessionsMock.mockReturnValue({
+      data: { items: [{ chat_id: 'browser-long', chat_context: 'Long browser chat' }] },
+      isLoading: false,
+      isFetched: true,
+    });
+    historyMock.mockReturnValue({
+      data: {
+        items: Array.from({ length: 30 }, (_, index) => ({
+          id: `recent-tool-${index}`,
+          role: 'assistant',
+          content: `recent browser step ${index}`,
+        })),
+        total: 61,
+        limit: 30,
+        offset: 31,
+      },
+      isLoading: false,
+      isError: false,
+    });
+    fetchHistoryPageMock.mockImplementation(
+      (_scopeId: string, _chatId: string, options: { limit: number; offset: number }) =>
+        Promise.resolve({
+          items: options.offset === 0
+            ? [{ id: 'oldest-user', role: 'user', content: 'create this browser session' }]
+            : [
+                { id: 'first-user', role: 'user', content: 'open the browser acceptance page' },
+                { id: 'first-agent', role: 'assistant', content: 'starting browser control' },
+              ],
+          total: 61,
+          limit: options.limit,
+          offset: options.offset,
+        }),
+    );
+
+    render(
+      <AgentChatSidebar embedded chatSurface="browser" />,
+      { wrapper: SidebarWrapper },
+    );
+
+    await waitFor(() => expect(fetchHistoryPageMock).toHaveBeenCalledWith(
+      'wf',
+      'browser-long',
+      { limit: 30, offset: 1 },
+    ));
+    expect(await screen.findByText('open the browser acceptance page')).toBeInTheDocument();
+    await waitFor(() => expect(fetchHistoryPageMock).toHaveBeenCalledWith(
+      'wf',
+      'browser-long',
+      { limit: 1, offset: 0 },
+    ));
+    expect(await screen.findByText('create this browser session')).toBeInTheDocument();
   });
 });

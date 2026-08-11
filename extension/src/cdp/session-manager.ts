@@ -30,6 +30,34 @@ export type TabEvent = {
   url?: string;
 };
 
+export type BrowserControlHealth = {
+  state:
+    | "healthy"
+    | "stale_extension_attachment"
+    | "external_debugger_conflict"
+    | "desynchronized"
+    | "unavailable";
+  controlled_tab_count: number;
+  extension_owned_attachment_count: number;
+  stale_attachment_count: number;
+  conflict_count: number;
+  missing_attachment_count: number;
+  connection_conflict: boolean;
+  conflict_kind:
+    | "none"
+    | "stale_extension_attachment"
+    | "external_debugger"
+    | "mixed";
+  owner_match: boolean;
+  safe_to_cleanup: boolean;
+  recommended_action:
+    | "continue"
+    | "rediscover_tabs_and_start_selected_session"
+    | "close_external_debugger_or_choose_another_tab"
+    | "refresh_browser_session_state"
+    | "reconnect_extension";
+};
+
 type Target = {
   targetId: string;
   /** chrome.debugger SEND address. For an auto-attached child this stays the
@@ -70,13 +98,16 @@ export class SessionManager {
     } catch (error) {
       // chrome.debugger attachments can outlive an MV3 service worker. After
       // Chrome starts a fresh worker, its SessionManager is empty while the
-      // extension still owns the debugger target. Adopt that exact attachment;
-      // never swallow a genuine conflict with another debugger/client.
-      const targets = await this.dbg.getTargets().catch(() => []);
-      const stillOwnedByExtension = targets.some(
-        (target) => target.tabId === tabId && target.attached === true,
-      );
-      if (!stillOwnedByExtension) throw error;
+      // extension can still own the debugger target. `getTargets().attached`
+      // alone cannot identify the owner: DevTools and other automation clients
+      // also appear attached. Prove ownership by issuing a harmless command
+      // through THIS extension's chrome.debugger API. It succeeds only when the
+      // attachment belongs to this extension; otherwise preserve the conflict.
+      try {
+        await this.dbg.sendCommand({ tabId }, "Target.getTargetInfo");
+      } catch {
+        throw error;
+      }
     }
     // auto-attach to children, freezing them until we resume (attach-race, §9)
     await this.dbg.sendCommand({ tabId }, "Target.setAutoAttach", {
@@ -95,6 +126,118 @@ export class SessionManager {
       tab: tabId, // root: outward tab == tabId
     });
     return targetId;
+  }
+
+  /**
+   * Return a privacy-preserving control-plane health summary for the Agent.
+   *
+   * Unknown attached targets are never detached here. We only classify one as
+   * an extension-owned stale attachment after a harmless command succeeds via
+   * this extension's debugger API. A failed probe is an external/unknown owner
+   * conflict and must be resolved by the user or by choosing another tab.
+   */
+  async health(scopeTabIds?: Iterable<number>): Promise<BrowserControlHealth> {
+    const scope = scopeTabIds ? new Set(scopeTabIds) : null;
+    const controlledRoots = new Set<number>();
+    for (const target of this.byTarget.values()) {
+      if (!scope || scope.has(target.tabId)) controlledRoots.add(target.tabId);
+    }
+
+    let targets: Array<{
+      id: string;
+      tabId?: number;
+      type: string;
+      attached?: boolean;
+    }>;
+    try {
+      targets = await this.dbg.getTargets();
+    } catch {
+      return {
+        state: "unavailable",
+        controlled_tab_count: controlledRoots.size,
+        extension_owned_attachment_count: controlledRoots.size,
+        stale_attachment_count: 0,
+        conflict_count: 0,
+        missing_attachment_count: 0,
+        connection_conflict: false,
+        conflict_kind: "none",
+        owner_match: false,
+        safe_to_cleanup: false,
+        recommended_action: "reconnect_extension",
+      };
+    }
+
+    const attachedTabs = new Set<number>();
+    for (const target of targets) {
+      if (
+        target.type === "page" &&
+        target.attached === true &&
+        typeof target.tabId === "number" &&
+        target.tabId >= 0 &&
+        (!scope || scope.has(target.tabId))
+      ) {
+        attachedTabs.add(target.tabId);
+      }
+    }
+
+    let extensionOwned = 0;
+    let stale = 0;
+    let conflicts = 0;
+    for (const tabId of attachedTabs) {
+      if (controlledRoots.has(tabId)) {
+        extensionOwned += 1;
+        continue;
+      }
+      try {
+        await this.dbg.sendCommand({ tabId }, "Target.getTargetInfo");
+        extensionOwned += 1;
+        stale += 1;
+      } catch {
+        conflicts += 1;
+      }
+    }
+
+    let missing = 0;
+    for (const tabId of controlledRoots) {
+      if (!attachedTabs.has(tabId)) missing += 1;
+    }
+
+    const mixed = stale > 0 && conflicts > 0;
+    const conflictKind = mixed
+      ? "mixed"
+      : conflicts > 0
+        ? "external_debugger"
+        : stale > 0
+          ? "stale_extension_attachment"
+          : "none";
+    const state = conflicts > 0
+      ? "external_debugger_conflict"
+      : stale > 0
+        ? "stale_extension_attachment"
+        : missing > 0
+          ? "desynchronized"
+          : "healthy";
+    const recommendedAction = conflicts > 0
+      ? "close_external_debugger_or_choose_another_tab"
+      : stale > 0
+        ? "rediscover_tabs_and_start_selected_session"
+        : missing > 0
+          ? "refresh_browser_session_state"
+          : "continue";
+
+    return {
+      state,
+      controlled_tab_count: controlledRoots.size,
+      extension_owned_attachment_count: extensionOwned,
+      stale_attachment_count: stale,
+      conflict_count: conflicts,
+      missing_attachment_count: missing,
+      connection_conflict: conflicts > 0,
+      conflict_kind: conflictKind,
+      owner_match: stale === 0 && conflicts === 0 && missing === 0,
+      safe_to_cleanup: stale > 0 && conflicts === 0,
+      recommended_action: recommendedAction,
+    };
   }
 
   /** The OUTWARD stable tab id (real chrome tabId) for a target. */

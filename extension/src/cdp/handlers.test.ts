@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { HANDLERS, dispatch } from "./handlers";
+import {
+  HANDLERS,
+  MAX_COMMAND_WAIT_MS,
+  boundedCommandWaitMs,
+  dispatch,
+} from "./handlers";
 import { ALL_CMDS, CMD } from "../shared/commands";
 
 function fakeSM() {
@@ -14,11 +19,29 @@ function fakeSM() {
     }),
     closeExcursion: vi.fn().mockResolvedValue(undefined),
     knownTargets: () => ["T0"],
+    health: vi.fn().mockResolvedValue({
+      state: "healthy",
+      controlled_tab_count: 1,
+      extension_owned_attachment_count: 1,
+      stale_attachment_count: 0,
+      conflict_count: 0,
+      missing_attachment_count: 0,
+      connection_conflict: false,
+      conflict_kind: "none",
+      owner_match: true,
+      safe_to_cleanup: false,
+      recommended_action: "continue",
+    }),
   } as any;
 }
 const fakeOv = { highlight: vi.fn(), narrate: vi.fn() } as any;
 
 describe("CDP handlers", () => {
+  it("keeps inner waits below the host observation timeout", () => {
+    expect(boundedCommandWaitMs(60_000, 8_000)).toBe(MAX_COMMAND_WAIT_MS);
+    expect(boundedCommandWaitMs("bad", 8_000)).toBe(8_000);
+    expect(boundedCommandWaitMs(-1, 8_000)).toBe(0);
+  });
   it("every command in the closed enum has a bundled handler (§6)", () => {
     for (const c of ALL_CMDS) expect(HANDLERS[c]).toBeTypeOf("function");
     expect(Object.keys(HANDLERS).sort()).toEqual([...ALL_CMDS].sort());
@@ -59,6 +82,15 @@ describe("CDP handlers", () => {
 
     expect(ov.highlight).toHaveBeenCalledWith("T42", "#cta", "CTA");
     expect(ov.narrate).toHaveBeenCalledWith("T42", "Working");
+  });
+  it("includes browser-control health when listing controlled tabs", async () => {
+    const sm = fakeSM();
+    sm.tabIdFor = vi.fn().mockReturnValue(42);
+    const out = await dispatch(CMD.LIST_TABS, sm, fakeOv, "T0", {});
+    expect(out.health).toMatchObject({
+      state: "healthy",
+      recommended_action: "continue",
+    });
   });
   it("end_session detaches each controlled browser tab exactly once", async () => {
     const detach = vi.fn().mockResolvedValue(undefined);

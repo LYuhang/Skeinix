@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import tempfile
 import threading
 import time
@@ -88,10 +89,12 @@ class Api:
         return headers
 
     async def login(self) -> None:
+        email = os.environ.get("SKEINIX_ACCEPTANCE_EMAIL", "test")
+        password = os.environ.get("SKEINIX_ACCEPTANCE_PASSWORD", "test")
         response = await self.client.post(
             "/api/v1/auth/login",
             headers={"origin": self.origin},
-            json={"email": "test", "password": "test"},
+            json={"email": email, "password": password},
         )
         response.raise_for_status()
         payload = response.json()
@@ -188,6 +191,13 @@ async def _connect_extension(
             if last.get("observation", {}).get("ok"):
                 return int(target["tabId"])
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # Production-shape deployments intentionally disable the
+                # dev-only debug command endpoint. The first real
+                # browser_start_session call remains the authoritative
+                # transport readiness gate in that configuration.
+                await asyncio.sleep(0.75)
+                return int(target["tabId"])
             if exc.response.status_code != 409:
                 raise
         await asyncio.sleep(0.25)

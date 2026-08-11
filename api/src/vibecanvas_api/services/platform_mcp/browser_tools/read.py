@@ -18,7 +18,10 @@ from langchain_core.tools import tool
 
 from vibecanvas_api.agents.tools.decorator import tool_output, ToolError
 from vibecanvas_api.agents.tools.render import register_render, Rendered
-from vibecanvas_api.services.platform_mcp.browser_tools._common import _run
+from vibecanvas_api.services.platform_mcp.browser_tools._common import (
+    _browser_health_lines,
+    _run,
+)
 
 
 # ── browser_navigate ──────────────────────────────────────────────────────────
@@ -480,6 +483,9 @@ def _render_tab(raw: dict, ctx) -> Rendered:
             suffix = " [active]" if t.get("active") else ""
             lines.append(f"[{tab_id}] {title!r}  {url}{suffix}")
         content = "\n".join(lines) if lines else "(no tabs)"
+        health_lines = _browser_health_lines(data.get("health"))
+        if health_lines:
+            content = f"{content}\n" + "\n".join(health_lines)
         n = data.get("count", len(tabs))
         abstract = f"browser_tab: {n} tab{'s' if n != 1 else ''}"
     elif "tab" in data:

@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from vibecanvas_api.agents.tools.decorator import ToolError, tool_output
 from vibecanvas_api.agents.tools.render import register_render, Rendered
 from vibecanvas_api.services.platform_mcp.browser_tools._common import (
+    _browser_health_lines,
     _browser_tool_error,
     _get_browser,
     _load_browser_binding,
@@ -40,6 +41,7 @@ def _render_session_status(raw: dict, ctx) -> Rendered:
             lines.append(f"[{tab_id}] {title!r}  {url}{active}")
     else:
         lines.append("Controlled tabs: none")
+    lines.extend(_browser_health_lines(raw.get("health")))
     return Rendered(
         content="\n".join(lines),
         content_type="text/plain",
@@ -54,12 +56,23 @@ async def _session_status(runtime: ToolRuntime) -> dict:
     status = str((binding or {}).get("status") or "inactive")
     connected = _get_browser(ctx) is not None
     result: dict = {"status": status, "connected": connected, "tabs": []}
-    if connected and status == "attached":
+    if connected:
         try:
-            observation = await _run("list_tabs", ctx)
+            # Even an inactive durable session can have a debugger attachment
+            # left behind by an MV3 worker restart. list_open_tabs is the safe,
+            # pre-session observation path and carries the same health summary;
+            # do not expose its unrelated tab list through this status tool.
+            command = "list_tabs" if status == "attached" else "list_open_tabs"
+            observation = await _run(command, ctx)
             data = observation.get("data") if isinstance(observation, dict) else {}
-            if isinstance(data, dict) and isinstance(data.get("tabs"), list):
+            if (
+                status == "attached"
+                and isinstance(data, dict)
+                and isinstance(data.get("tabs"), list)
+            ):
                 result["tabs"] = data["tabs"]
+            if isinstance(data, dict) and isinstance(data.get("health"), dict):
+                result["health"] = data["health"]
         except ToolError:
             # Match the filesystem tools: errors are raised and normalized by
             # @tool_output, never returned inside a success payload.

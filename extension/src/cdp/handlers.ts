@@ -53,6 +53,33 @@ export type Handler = (
 
 const ok = (extra: Record<string, unknown> = {}) => ({ ok: true, ...extra });
 
+// The host waits 30s for a correlated observation. Keep every bundle-local
+// polling loop below that outer budget so the extension can always return a
+// determinate success/failure (plus best-effort page state) before the gateway
+// would have to label the result unknown.
+export const MAX_COMMAND_WAIT_MS = 25_000;
+export function boundedCommandWaitMs(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  const finite = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(Math.max(finite, 0), MAX_COMMAND_WAIT_MS);
+}
+
+async function browserWindowTabIds(
+  args: Record<string, unknown>,
+): Promise<number[] | undefined> {
+  const raw = args.browser_window_id;
+  const windowId = typeof raw === "number" ? raw : raw ? Number(raw) : NaN;
+  if (!Number.isFinite(windowId)) return undefined;
+  try {
+    const tabs = await chrome.tabs.query({ windowId });
+    return tabs
+      .map((tab) => tab.id)
+      .filter((tabId): tabId is number => typeof tabId === "number");
+  } catch {
+    return undefined;
+  }
+}
+
 // Full key descriptors for named keys — `Input.dispatchKeyEvent` needs `code` +
 // `windowsVirtualKeyCode` (and `text` for Enter/Space) or the page's key handlers
 // (which often check keyCode===13 / e.key) won't fire. Printable single chars use
@@ -114,7 +141,7 @@ async function settleExpect(
   const sel = a.expect;
   if (!sel) return ok();
   const tab = sm.tabIdFor(targetId);
-  const deadline = Date.now() + Number(a.timeout ?? 8000);
+  const deadline = Date.now() + boundedCommandWaitMs(a.timeout, 8000);
   const expr = `!!document.querySelector(${JSON.stringify(String(sel))})`;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 120));
@@ -163,7 +190,7 @@ export const HANDLERS: Record<Cmd, Handler> = {
     // the per-transport serial lock) — on timeout we return best-effort with
     // settled:false instead of failing, so the agent can still read what rendered.
     const waitUntil = String(a.wait_until ?? "load");
-    const timeout = Number(a.timeout ?? 20000);
+    const timeout = boundedCommandWaitMs(a.timeout, 20000);
     const deadline = Date.now() + timeout;
     let info: any = {};
     let ready = false;
@@ -667,7 +694,7 @@ export const HANDLERS: Record<Cmd, Handler> = {
     return ok();
   },
   [CMD.WAIT_FOR]: async (sm, _o, t, a) => {
-    const timeout = Number(a.timeout ?? 8000);
+    const timeout = boundedCommandWaitMs(a.timeout, 8000);
     const deadline = Date.now() + timeout;
     // Two modes: a CSS `selector` (default), or visible `text` (a substring of the
     // page's rendered text — robust when you don't know the exact tag/attributes,
@@ -713,7 +740,7 @@ export const HANDLERS: Record<Cmd, Handler> = {
     const what = text ? `text ${JSON.stringify(text)}` : `selector ${JSON.stringify(sel)}`;
     return { ok: false, error: `wait_for timeout: ${what} did not appear within ${timeout}ms` };
   },
-  [CMD.LIST_TABS]: async (sm, _o, t, _a) => {
+  [CMD.LIST_TABS]: async (sm, _o, t, a) => {
     // "ls" for the controlled SESSION (§9 session-of-tabs): the root tab plus any
     // excursion tabs the session auto-attached — NOT the user's unrelated tabs
     // (which the agent can't control and shouldn't see, §3/§15). Each tab is keyed
@@ -741,9 +768,15 @@ export const HANDLERS: Record<Cmd, Handler> = {
       }
       tabs.push({ tab, url, title, active: tab === currentTab });
     }
-    return ok({ tabs, count: tabs.length, controlled: tabs.length > 0 });
+    const health = await sm.health(await browserWindowTabIds(a));
+    return ok({
+      tabs,
+      count: tabs.length,
+      controlled: tabs.length > 0,
+      health,
+    });
   },
-  [CMD.LIST_OPEN_TABS]: async (_sm, _o, _t, a) => {
+  [CMD.LIST_OPEN_TABS]: async (sm, _o, _t, a) => {
     // The user's OWN open tabs (NOT the controlled session) — so the agent can
     // adopt one the user already has open. Skips internal pages it can't drive
     // (chrome://, the extension's own pages). `tab` is the real chrome tabId to
@@ -770,7 +803,8 @@ export const HANDLERS: Record<Cmd, Handler> = {
         title: x.title ?? "",
         active: !!x.active,
       }));
-    return ok({ tabs, count: tabs.length });
+    const health = await sm.health(tabs.map((tab) => tab.tab));
+    return ok({ tabs, count: tabs.length, health });
   },
   [CMD.USE_TAB]: async (sm, _o, _t, a) => {
     // Adopt the user's EXISTING tab as the controlled root: attach the debugger
@@ -816,11 +850,17 @@ export const HANDLERS: Record<Cmd, Handler> = {
       }
       return ok({ tab, target_id: targetId, controlled: true });
     } catch (e) {
+      const message = String((e as Error)?.message || e);
+      const debuggerConflict = /another debugger|already attached/i.test(message);
+      const health = await sm.health([tab]).catch(() => undefined);
       return {
         ok: false,
-        error: `could not take control of tab ${tab}: ${String(
-          (e as Error)?.message || e,
-        )}`,
+        error_code: debuggerConflict
+          ? "browser_debugger_conflict"
+          : "browser_command_not_executed",
+        error: `could not take control of tab ${tab}: ${message}`,
+        not_executed: true,
+        ...(health ? { health } : {}),
       };
     }
   },
@@ -852,7 +892,7 @@ export const HANDLERS: Record<Cmd, Handler> = {
     // Returns the newest non-root tab's stable id so the agent can operate on it.
     // (Use after a click that opens a new tab; then pass the returned `tab`.)
     const root = sm.rootTab();
-    const deadline = Date.now() + Number(a.timeout ?? 8000);
+    const deadline = Date.now() + boundedCommandWaitMs(a.timeout, 8000);
     for (;;) {
       const excursions = sm.knownTabs().filter((x) => x.tab !== root);
       if (excursions.length) {

@@ -16,7 +16,7 @@
  *     body is the full-width conversation (`ChatMessageList`) over a
  *     bottom-pinned `ChatComposer`.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, FileText, MessageSquare, Plus, Settings2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -41,14 +41,33 @@ import type { RawChunk } from '@/components/agent-sidebar/types';
 import type { SubmitInteractiveAsNewTurn } from '@/components/agent-sidebar/tool-render/InteractiveArtifactBlock';
 import { ChatComposer } from '@/components/agent-sidebar/ChatComposer';
 import { AgentSettingsModal } from '@/components/agent-sidebar/AgentSettingsModal';
-import { fetchChatHistory, useChatHistory, useChatSessions } from '@/lib/api/queries/chats';
+import {
+  CHAT_INITIAL_HISTORY_LIMIT,
+  fetchChatHistory,
+  fetchChatHistoryPage,
+  useChatHistory,
+  useChatSessions,
+} from '@/lib/api/queries/chats';
 import { queryClient } from '@/app/query-client';
 import { cn } from '@/lib/utils';
+import { mergeHistoryWindow, type ChatHistoryWindow } from '@/pages/chat/history-window';
 
 const AGENT_WIDTH_KEY = 'vibecanvas.agentWidth';
 const MIN_AGENT_WIDTH = 320;
 const MAX_AGENT_WIDTH = 760;
 const DEFAULT_AGENT_WIDTH = 420;
+const MAX_SIDEBAR_HISTORY_WINDOWS = 20;
+
+function retainSidebarHistoryWindow(
+  current: Record<string, ChatHistoryWindow>,
+  key: string,
+  value: ChatHistoryWindow,
+): Record<string, ChatHistoryWindow> {
+  const next = { ...current };
+  delete next[key];
+  next[key] = value;
+  return Object.fromEntries(Object.entries(next).slice(-MAX_SIDEBAR_HISTORY_WINDOWS));
+}
 
 type BrowserChatSession = {
   chat_id: string;
@@ -136,6 +155,44 @@ export function AgentChatSidebar({
     selectedChatIsPersisted ? activeChatId : null,
     selectedChatIsPersisted,
   );
+  const selectedHistoryKey = lastWfId && activeChatId
+    ? `${lastWfId}:${activeChatId}`
+    : '';
+  const [historyWindows, setHistoryWindows] = useState<Record<string, ChatHistoryWindow>>({});
+  useEffect(() => {
+    if (!selectedHistoryKey || !selectedHistory.data) return;
+    const page = selectedHistory.data;
+    setHistoryWindows((current) => retainSidebarHistoryWindow(
+      current,
+      selectedHistoryKey,
+      mergeHistoryWindow(current[selectedHistoryKey], page),
+    ));
+  }, [selectedHistory.data, selectedHistoryKey]);
+  const selectedHistoryWindow = selectedHistoryKey
+    ? historyWindows[selectedHistoryKey]
+    : undefined;
+  const olderHistoryLoadingRef = useRef(false);
+  const [olderHistoryLoading, setOlderHistoryLoading] = useState(false);
+  const hasOlderHistory = !!selectedHistoryWindow && selectedHistoryWindow.offset > 0;
+  const loadOlderHistory = useCallback(async () => {
+    if (!lastWfId || !activeChatId || !selectedHistoryKey || !selectedHistoryWindow) return;
+    if (olderHistoryLoadingRef.current || selectedHistoryWindow.offset <= 0) return;
+    olderHistoryLoadingRef.current = true;
+    setOlderHistoryLoading(true);
+    try {
+      const limit = Math.min(CHAT_INITIAL_HISTORY_LIMIT, selectedHistoryWindow.offset);
+      const offset = Math.max(0, selectedHistoryWindow.offset - limit);
+      const page = await fetchChatHistoryPage(lastWfId, activeChatId, { limit, offset });
+      setHistoryWindows((current) => retainSidebarHistoryWindow(
+        current,
+        selectedHistoryKey,
+        mergeHistoryWindow(current[selectedHistoryKey], page),
+      ));
+    } finally {
+      olderHistoryLoadingRef.current = false;
+      setOlderHistoryLoading(false);
+    }
+  }, [activeChatId, lastWfId, selectedHistoryKey, selectedHistoryWindow]);
   const historyReady =
     !selectedChatIsPersisted ||
       selectedHistory.data !== undefined ||
@@ -454,8 +511,14 @@ export function AgentChatSidebar({
           activeChatId={activeChatId}
           surface={chatSurface}
           compact={embedded}
-          historyItems={selectedHistory.data?.items as RawChunk[] | undefined}
+          historyItems={
+            selectedHistoryWindow?.items ??
+            (selectedHistory.data?.items as RawChunk[] | undefined)
+          }
           historyLoading={selectedHistory.isLoading}
+          hasOlderHistory={hasOlderHistory}
+          olderHistoryLoading={olderHistoryLoading}
+          onLoadOlderHistory={loadOlderHistory}
           onSubmitInteractiveAsNewMessage={submitInteractiveAsNewMessage}
         />
         <div className={cn('relative flex-none', embedded && 'bg-surface-work before:pointer-events-none before:absolute before:-top-5 before:inset-x-0 before:h-5 before:bg-gradient-to-t before:from-surface-work before:to-transparent')}>

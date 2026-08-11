@@ -1,10 +1,61 @@
-<!doctype html><html><body>
-  <h1 id="title">Review Item 42</h1>
-  <p id="desc">A product description with an image and a video.</p>
-  <img id="thumb" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
-  <input id="reason" type="text" />
-  <select id="decision"><option value="approve">approve</option><option value="reject">reject</option></select>
-  <a id="open-detail" href="detail.html" target="_blank">Open detail</a>
-  <button id="submit">Submit</button>
-  <span data-logged-in>signed in as tester</span>
-</body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser Form Acceptance</title>
+    <style>
+      :root { font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 2300px; background: linear-gradient(#f6f7fb, #e9ecf5); color: #192033; }
+      main { width: min(760px, calc(100% - 40px)); margin: 70px auto; padding: 38px; border: 1px solid #dfe4ef; border-radius: 22px; background: white; }
+      .fields { display: grid; gap: 18px; margin: 30px 0; }
+      label { display: grid; gap: 8px; font-weight: 700; }
+      input, select { padding: 13px; border: 1px solid #bdc5d8; border-radius: 10px; font: inherit; }
+      button, a { display: inline-flex; margin-right: 10px; padding: 12px 18px; border: 0; border-radius: 10px; background: #6757d9; color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+      #thumb { width: 72px; height: 72px; image-rendering: pixelated; border-radius: 12px; background: #eef0f8; }
+      #bottom { position: absolute; top: 2150px; left: 50%; transform: translateX(-50%); font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Review Item 42</h1>
+      <p id="desc">A deterministic form used to verify real browser input events and resource capture.</p>
+      <img id="thumb" alt="Acceptance pixel" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAG0lEQVR4nGNMD7/5/03BLQbG/5vd/79dZcwAAFtRCZGd93uGAAAAAElFTkSuQmCC" />
+      <div class="fields">
+        <label>Reason <input id="reason" type="text" /></label>
+        <label>Decision
+          <select id="decision"><option value="approve">approve</option><option value="reject">reject</option></select>
+        </label>
+      </div>
+      <button id="submit" type="button">Submit</button>
+      <a id="open-detail" href="detail.html" target="_blank">Open detail tab</a>
+      <p><span data-logged-in>signed in as tester</span></p>
+      <div id="ready">Fixture ready</div>
+    </main>
+    <div id="bottom">Bottom marker</div>
+    <script>
+      window.__allToolsClickCount = 0;
+      document.querySelector("#submit").addEventListener("click", () => {
+        window.__allToolsClickCount += 1;
+        let marker = document.querySelector("#clicked");
+        if (!marker) {
+          marker = document.createElement("div");
+          marker.id = "clicked";
+          document.querySelector("main").appendChild(marker);
+        }
+        marker.textContent = `Clicked ${window.__allToolsClickCount}`;
+      });
+      document.querySelector("#reason").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        let marker = document.querySelector("#keyed");
+        if (!marker) {
+          marker = document.createElement("div");
+          marker.id = "keyed";
+          document.querySelector("main").appendChild(marker);
+        }
+        marker.textContent = "Enter observed";
+      });
+    </script>
+  </body>
+</html>

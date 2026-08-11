@@ -64,7 +64,16 @@ class FakeAgentBrowser:
         self.calls.append(("list_open_tabs", kw))
         return {
             "ok": True,
-            "data": {"tabs": [{"tab": 42, "title": "Example", "url": "https://x.test", "active": True}]},
+            "data": {
+                "tabs": [{"tab": 42, "title": "Example", "url": "https://x.test", "active": True}],
+                "health": {
+                    "state": "stale_extension_attachment",
+                    "stale_attachment_count": 1,
+                    "conflict_count": 0,
+                    "missing_attachment_count": 0,
+                    "recommended_action": "rediscover_tabs_and_start_selected_session",
+                },
+            },
             "media": [],
         }
 
@@ -75,6 +84,13 @@ class FakeAgentBrowser:
             "data": {
                 "tabs": [{"tab": 7, "title": "Controlled", "url": "https://controlled.test", "active": True}],
                 "controlled": True,
+                "health": {
+                    "state": "healthy",
+                    "stale_attachment_count": 0,
+                    "conflict_count": 0,
+                    "missing_attachment_count": 0,
+                    "recommended_action": "continue",
+                },
             },
             "media": [],
         }
@@ -165,7 +181,32 @@ async def test_session_status_reports_durable_state_and_model_reusable_tab_ids(p
     assert "Browser control status: attached" in out
     assert "Extension connection: connected" in out
     assert "[7] 'Controlled'" in out
+    assert "Browser health: healthy" in out
+    assert "Recommended action: continue" in out
     assert patch_builder.calls[0][0] == "list_tabs"
+
+
+@pytest.mark.asyncio
+async def test_inactive_session_status_still_reports_extension_ghost_health(
+    patch_builder, monkeypatch,
+):
+    async def inactive_binding(_ctx):
+        return {"status": "inactive"}
+
+    monkeypatch.setattr(browser_session, "_load_browser_binding", inactive_binding)
+    ctx = types.SimpleNamespace(
+        browser=object(), tenant_id="tenant_1", chat_id="c1", turn_id="turn_1",
+    )
+
+    out = await _tool("browser_session_status").ainvoke({
+        "require_user_auth": False,
+        "runtime": FakeRuntime(ctx),
+    })
+
+    assert "Browser control status: inactive" in out
+    assert "Controlled tabs: none" in out
+    assert "Browser health: stale_extension_attachment" in out
+    assert patch_builder.calls[0][0] == "list_open_tabs"
 
 
 def test_session_status_requires_auth_by_default():
@@ -334,6 +375,46 @@ async def test_common_run_observation_unknown_effect_preserved_for_agent(monkeyp
     assert str(caught.value) == "browser_command_result_unknown"
     assert "command result was not confirmed" in (caught.value.message or "")
     assert "effect_status=unknown" in (caught.value.message or "")
+
+
+@pytest.mark.asyncio
+async def test_common_run_exposes_structured_debugger_conflict_health(monkeypatch):
+    health = {
+        "state": "external_debugger_conflict",
+        "stale_attachment_count": 0,
+        "conflict_count": 1,
+        "missing_attachment_count": 0,
+        "safe_to_cleanup": False,
+        "recommended_action": "close_external_debugger_or_choose_another_tab",
+    }
+
+    class ConflictBrowser:
+        async def _send(self, _cmd, **_kw):
+            return {
+                "ok": False,
+                "data": {
+                    "error_code": "browser_start_session_failed",
+                    "error": "Another debugger is already attached to the tab",
+                    "not_executed": True,
+                    "error_info": {"not_executed": True, "health": health},
+                },
+            }
+
+    monkeypatch.setattr(_common, "build_agent_browser", lambda ctx: ConflictBrowser())
+
+    async def fake_binding(_ctx):
+        return {"status": "attached"}
+
+    monkeypatch.setattr(_common, "_load_browser_binding", fake_binding)
+    ctx = types.SimpleNamespace(browser=object(), tenant_id="tenant_1", chat_id="chat_1")
+
+    with pytest.raises(ToolError) as caught:
+        await _common._run("start_session", ctx, target="existing", tab=42)
+
+    assert str(caught.value) == "browser_debugger_conflict"
+    assert "Browser health: external_debugger_conflict" in (caught.value.message or "")
+    assert "do not detach it automatically" in (caught.value.message or "")
+    assert caught.value.info["health"]["safe_to_cleanup"] is False
 
 
 @pytest.mark.asyncio

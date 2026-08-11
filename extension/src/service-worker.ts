@@ -1118,6 +1118,28 @@ chrome.runtime.onMessage.addListener(
         } catch (e) {
           if (cmd === "end_session") sessionReleaseInProgress = false;
           const error = String((e as Error)?.message || e);
+          const debuggerConflict = /another debugger|already attached/i.test(error);
+          // Capture a privacy-preserving ownership summary before resetting the
+          // in-memory session. This lets the Agent distinguish an adoptable
+          // extension ghost from DevTools/another automation client, without
+          // exposing unrelated page contents or detaching an unknown owner.
+          let healthScope: number[] | undefined;
+          if (args.tab != null && args.tab !== "" && Number.isFinite(Number(args.tab))) {
+            healthScope = [Number(args.tab)];
+          } else {
+            const windowId = expectedWindowIdFromArgs();
+            if (windowId !== undefined) {
+              healthScope = await chrome.tabs
+                .query({ windowId })
+                .then((tabs) =>
+                  tabs
+                    .map((tab) => tab.id)
+                    .filter((tabId): tabId is number => typeof tabId === "number"),
+                )
+                .catch(() => undefined);
+            }
+          }
+          const health = await sm.health(healthScope).catch(() => undefined);
           if (cmd === "start_session") {
             sm.reset();
             await chrome.storage.session
@@ -1131,8 +1153,13 @@ chrome.runtime.onMessage.addListener(
           }
           if (!observationSent) {
             sendCommandError(
-              cmd === "start_session" ? "browser_start_session_failed" : "browser_command_failed",
+              debuggerConflict
+                ? "browser_debugger_conflict"
+                : cmd === "start_session"
+                  ? "browser_start_session_failed"
+                  : "browser_command_failed",
               error,
+              health ? { health } : {},
             );
           }
         }

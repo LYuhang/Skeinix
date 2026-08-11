@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Skeinix Browser Search</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6fb; color: #192033; }
+      main { width: min(720px, calc(100% - 40px)); padding: 48px; border: 1px solid #dfe4ef; border-radius: 24px; background: white; box-shadow: 0 18px 55px rgba(31, 42, 68, .12); }
+      .eyebrow { margin: 0 0 12px; color: #6757d9; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: 42px; letter-spacing: -.035em; }
+      p { color: #59627a; line-height: 1.7; }
+      form { display: flex; gap: 12px; margin-top: 30px; }
+      input { flex: 1; min-width: 0; padding: 15px 17px; border: 1px solid #bdc5d8; border-radius: 12px; font: inherit; }
+      input:focus { outline: 3px solid #ddd8ff; border-color: #6757d9; }
+      button { padding: 15px 22px; border: 0; border-radius: 12px; background: #6757d9; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Browser acceptance</p>
+      <h1>Search the knowledge index</h1>
+      <p>Use the browser agent to enter a term, submit the search, inspect the results, and open the matching page.</p>
+      <form id="search-form" action="results.html" method="get">
+        <label for="search-input" hidden>Search term</label>
+        <input id="search-input" name="q" type="search" placeholder="Search for a topic" autocomplete="off" />
+        <button id="search-submit" type="submit">Search</button>
+      </form>
+    </main>
+    <script>
+      document.querySelector("#search-form").addEventListener("submit", () => {
+        const term = document.querySelector("#search-input").value.trim();
+        sessionStorage.setItem("skeinix.acceptance.search", term);
+        sessionStorage.removeItem("skeinix.acceptance.resultClicked");
+      });
+    </script>
+  </body>
+</html>
