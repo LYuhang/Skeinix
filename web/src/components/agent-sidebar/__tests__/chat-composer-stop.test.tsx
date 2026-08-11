@@ -21,7 +21,11 @@ function composerKey(chatId: string): string {
   });
 }
 
-function renderComposer(chatId: string, showModelSelector = false) {
+function renderComposer(
+  chatId: string,
+  showModelSelector = false,
+  onSendStart?: () => void,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -32,6 +36,7 @@ function renderComposer(chatId: string, showModelSelector = false) {
           wfId="wf_x"
           chatId={chatId}
           showModelSelector={showModelSelector}
+          onSendStart={onSendStart}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -389,13 +394,18 @@ describe('ChatComposer Stop', () => {
     };
     const stateKey = composerKey('chat_optimistic');
     useChatStreamStore.getState().addAttachment(stateKey, attachment);
-    const { container } = renderComposer('chat_optimistic');
+    const onSendStart = vi.fn();
+    const { container } = renderComposer('chat_optimistic', false, onSendStart);
     const input = screen.getByRole('textbox');
     expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
       .toHaveLength(1);
     await userEvent.type(input, 'show this immediately');
     await userEvent.click(screen.getByRole('button', { name: /send|发送/i }));
 
+    // The page must switch from its empty shell to the transcript while the
+    // request is still blocked, so network setup time is represented by the
+    // optimistic user bubble and Agent thinking state.
+    expect(onSendStart).toHaveBeenCalledTimes(1);
     expect(input).toHaveValue('');
     expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
       .toHaveLength(0);

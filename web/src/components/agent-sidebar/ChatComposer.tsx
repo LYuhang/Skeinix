@@ -640,6 +640,15 @@ export function ChatComposer({
     if (composerStateKey) {
       useChatStreamStore.getState().clearAttachments(composerStateKey);
     }
+    // The empty-chat shell and the conversation transcript are separate
+    // render branches. Switch branches at click-time so the optimistic bubble
+    // and thinking indicator appear during request setup, not after the
+    // backend has accepted the Turn. Remove the durable composer snapshot
+    // first: otherwise the newly-mounted conversation composer would hydrate
+    // the just-sent text back into its textarea. The in-memory `content` and
+    // `attachments` snapshots below remain the rollback source of truth.
+    if (composerStorageKey) localStorage.removeItem(composerStorageKey);
+    onSendStart?.();
     let accepted = false;
     await doSend(
       content,
@@ -650,11 +659,10 @@ export function ChatComposer({
       () => {
         accepted = true;
         optimisticSubmissionRef.current = false;
-        // A first accepted send replaces the empty-chat composer with the
-        // conversation composer. Clear the durable draft in that same commit
-        // so the newly mounted composer cannot hydrate the sent text.
+        // The optimistic transition already removed the durable draft. Keep
+        // this idempotent cleanup at durable acceptance so retries and callers
+        // without an empty-chat shell follow the same storage lifecycle.
         if (composerStorageKey) localStorage.removeItem(composerStorageKey);
-        onSendStart?.();
         void runtimeCapabilitiesQuery.refetch();
         useUIStore.getState().addOptimisticChatSession({
           scopeId: wfId,
