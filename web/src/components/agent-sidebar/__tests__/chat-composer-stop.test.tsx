@@ -394,7 +394,13 @@ describe('ChatComposer Stop', () => {
     };
     const stateKey = composerKey('chat_optimistic');
     useChatStreamStore.getState().addAttachment(stateKey, attachment);
-    const onSendStart = vi.fn();
+    const onSendStart = vi.fn(() => {
+      // The visual clear is committed before the empty-chat shell is allowed
+      // to switch to the optimistic transcript.
+      expect(input).toHaveValue('');
+      expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
+        .toHaveLength(0);
+    });
     const { container } = renderComposer('chat_optimistic', false, onSendStart);
     const input = screen.getByRole('textbox');
     expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
@@ -407,6 +413,7 @@ describe('ChatComposer Stop', () => {
     // optimistic user bubble and Agent thinking state.
     expect(onSendStart).toHaveBeenCalledTimes(1);
     expect(input).toHaveValue('');
+    expect(input).toHaveAttribute('placeholder', 'Agent is thinking…');
     expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
       .toHaveLength(0);
     expect(useChatStreamStore.getState().pendingAttachments[stateKey])

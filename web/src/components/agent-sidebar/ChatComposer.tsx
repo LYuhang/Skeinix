@@ -32,6 +32,7 @@
  * push would be unnecessary churn.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type SetStateAction } from 'react';
+import { flushSync } from 'react-dom';
 import { Blocks, BrainCircuit, Cpu, FileText, Image, Loader2, Paperclip, RotateCcw, Send, SlidersHorizontal, Square, Video, X } from 'lucide-react';
 import { useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -633,13 +634,21 @@ export function ChatComposer({
       ? useChatStreamStore.getState().pendingAttachments[composerStateKey] ?? []
       : [];
     optimisticSubmissionRef.current = true;
-    setValue('');
-    // Text and attachments belong to one message. Move both out of the
-    // composer before awaiting the network so the optimistic user bubble is
-    // the sole visible owner while the Agent is running.
-    if (composerStateKey) {
-      useChatStreamStore.getState().clearAttachments(composerStateKey);
-    }
+    // Commit the clear as its own synchronous visual state before switching
+    // the empty-chat shell to the transcript. React otherwise batches both
+    // updates and the newly-mounted conversation composer can paint one frame
+    // with the old draft. The optimistic bubble is projected immediately
+    // after this block, so the user sees one clean handoff: draft clears first,
+    // then the same content appears in the transcript.
+    flushSync(() => {
+      setValue('');
+      // Text and attachments belong to one message. Move both out of the
+      // composer before awaiting the network so the optimistic user bubble is
+      // the sole visible owner while the Agent is running.
+      if (composerStateKey) {
+        useChatStreamStore.getState().clearAttachments(composerStateKey);
+      }
+    });
     // The empty-chat shell and the conversation transcript are separate
     // render branches. Switch branches at click-time so the optimistic bubble
     // and thinking indicator appear during request setup, not after the
@@ -1035,8 +1044,13 @@ export function ChatComposer({
                   ? effectiveDisabledReason
                 : !historyReady
                   ? t('composer.loading_history', 'Loading conversation…')
+                  : isStreaming
+                    ? t('composer.running_placeholder', 'Agent is thinking…')
                   : chatId
-                    ? t('composer.placeholder', 'Message the agent…')
+                    ? t(
+                        'composer.placeholder',
+                        'Message the Agent. Type / to use a specific capability…',
+                      )
                     : t('composer.select_chat', 'Select or start a chat')
             }
             disabled={!chatId || isStreaming || readOnly || !historyReady || externallyDisabled}
