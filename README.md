@@ -171,27 +171,26 @@ inspect and refine on the canvas. The Workflow can then run directly, through a
 batch or scheduled Task, or as a Deployment that external systems can call.
 
 ```mermaid
-flowchart LR
-    H["👤 Human"]
+flowchart TB
+    G["💡 Describe a goal"]
+    B["🌐 Start from the browser extension<br/>for signed-in websites"]
+    C["💬 Collaborate with the Agent in Chat"]
+    A["🤖 Agent uses tools<br/>to build an executable solution"]
+    W["🧩 Inspect and refine<br/>the Workflow on the canvas"]
+    R{"Choose how to run"}
+    N["▶️ Run now"]
+    T["⏱️ Run in a batch or on a schedule"]
+    D["🚀 Publish as an API or webhook"]
+    O["📦 Review outputs and failures"]
+    E["🔌 Connect external systems"]
 
-    subgraph P["🧭 Skeinix platform"]
-        direction LR
-        I["💬 Chat<br/>🌐 Browser extension"]
-        A["🤖 Agent"]
-        W["🧩 Workflow"]
-        T["⏱️ Task / Run"]
-        D["🚀 Deployment"]
-    end
-
-    E["🔌 External systems"]
-
-    H <-->|"Goal · context · confirmation"| I
-    I <-->|"Commands · tools · progress"| A
-    A -->|"Build and refine"| W
-    W -->|"Execute and verify"| T
-    T -->|"Approve for publication"| D
-    D -->|"API · Webhook · Schedule"| E
-    T -.->|"Status · output · failure"| I
+    G --> C
+    B --> C
+    C --> A --> W --> R
+    R -->|Run| N --> O
+    R -->|Task| T --> O
+    R -->|Deployment| D --> E
+    O -.->|Refine| C
 ```
 
 The diagram shows a common path, not a set of mandatory dependencies. A Workflow
