@@ -326,3 +326,6 @@ an issue or pull request.
 
 Skeinix is licensed under the [Apache License 2.0](LICENSE). Dependencies retain
 their respective licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+
+
+<!-- Product demo videos use GitHub user attachments for inline playback. -->
