@@ -70,3 +70,9 @@ def test_dockerfile_runs_pip_install():
     assert text.count("--no-build-isolation") >= 2
     assert "pip uninstall -y" in text
     assert "hatchling editables" in text
+
+
+def test_dockerfile_installs_shared_sandbox_python_baseline():
+    text = DOCKERFILE_PATH.read_text()
+    assert "COPY requirements-sandbox.txt" in text
+    assert "--require-hashes -r /tmp/requirements-sandbox.txt" in text

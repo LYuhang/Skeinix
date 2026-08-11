@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  Build workflows with an agent, refine them on a visual canvas, run them in
-  isolated sandboxes, and publish them as APIs, webhooks, schedules, or batch jobs.
+  A self-hosted platform for building, running, and publishing AI-assisted
+  automation.
 </p>
 
 <p align="center">
@@ -24,6 +24,10 @@
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Project status: alpha">
   <img src="https://img.shields.io/badge/Python-3.11.15-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11.15">
   <img src="https://img.shields.io/badge/Node.js-22.23.2-5FA04E.svg?logo=nodedotjs&logoColor=white" alt="Node.js 22.23.2">
+</p>
+
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -37,30 +41,48 @@
 </p>
 
 > [!IMPORTANT]
-> Skeinix is alpha software. Core workflow, agent, storage, authorization,
+> Skeinix is in alpha. Its core agent, workflow, storage, authorization,
 > deployment, and sandbox services are implemented, but APIs and data models may
-> change before the first stable release. Browser automation is experimental.
+> change before the first stable release. Browser automation remains
+> experimental.
 
 ## Overview
 
-Skeinix is an open-source, agent-native workflow platform. Describe a goal to an
-agent, let it build and refine the real workflow graph, inspect every step on a
-visual canvas, and publish the result without moving between separate tools.
+Skeinix is an open-source platform for turning an agent conversation into a
+runnable workflow. Start with a goal in Chat. The agent builds or modifies the
+same workflow graph that appears on the visual canvas, so the structure,
+versions, runs, outputs, and failures remain visible throughout the process.
+
+Once the workflow behaves as intended, run it on demand, in a batch, or on a
+schedule, or publish it as an API or webhook. Agent and workflow execution is
+isolated from the control plane through the sandbox service.
+
+### How Skeinix works
+
+```text
+Describe a goal
+      ↓
+Build or modify a workflow in Chat
+      ↓
+Inspect and refine the graph on the canvas
+      ↓
+Run and verify it in an isolated sandbox
+      ↓
+Reuse it or publish it as an automated service
+```
 
 What makes Skeinix different:
 
-- 🪄 **Agent-native authoring** — Agents edit and validate the real workflow
-  graph instead of returning diagram-shaped suggestions.
-- 🎨 **Inspectable execution** — Plans, nodes, outputs, versions, and failures
-  stay visible and traceable from Chat to canvas.
-- 🧵 **Reusable workflow assets** — Turn dynamic Agent work into durable,
-  versioned workflows that can be refined and run again.
-- 🚀 **Build to deployment** — Move from an idea to isolated execution, batch
-  processing, schedules, APIs, and Webhooks in one platform.
-- 🧩 **Composable capabilities** — Combine LangChain or Codex with Knowledge,
-  MCP servers, Skills, SubAgents, and experimental browser control.
-- 🛡️ **Self-hosted and isolated** — Keep control of models and data with
-  sandboxed execution, tenant-aware authorization, audit, and encryption.
+- 🪄 **Agent-built workflows** — The agent edits and validates the real workflow
+  graph rather than returning a separate suggestion or diagram.
+- 🔎 **Visible from intent to result** — Plans, nodes, versions, runs, outputs,
+  and failures remain inspectable from Chat and the canvas.
+- ♻️ **Reusable automation** — Convert one-off agent work into a durable,
+  versioned workflow that can run again or be published.
+- 🧩 **Extensible agent capabilities** — Combine LangChain or Codex with MCP
+  servers, Skills, Knowledge, SubAgents, and browser control.
+- 🛡️ **Self-hosted execution boundaries** — Keep control of models and data
+  while routing untrusted execution through isolated sandboxes.
 
 ## Quick Start
 
@@ -68,7 +90,8 @@ What makes Skeinix different:
 
 #### Docker Compose (recommended)
 
-Docker Engine or Docker Desktop with Compose v2 is required.
+Install Docker Engine or Docker Desktop with Compose v2, then start the local
+stack:
 
 ```bash
 git clone https://github.com/LYuhang/Skeinix.git
@@ -76,18 +99,19 @@ cd Skeinix
 ./scripts/deploy/local_server.sh up
 ```
 
-The launcher generates local secrets, builds the stack, waits for health checks,
-and verifies the deployment. The first build can take several minutes.
+The launcher generates local secrets, builds the services, waits for their
+health checks, and verifies the deployment. The first build can take several
+minutes.
 
 #### Native Linux or WSL
 
-For a fresh Debian, Ubuntu, or WSL environment:
+Use the native bootstrap when developing on Debian, Ubuntu, or WSL:
 
 ```bash
 ./scripts/bootstrap_native_linux.sh
 ```
 
-For prerequisites, custom setup, configuration, remote access, and production
+For prerequisites, manual setup, configuration, remote access, and production
 guidance, see the [installation guide](docs/installation.md).
 
 ### Common Commands
@@ -100,46 +124,125 @@ guidance, see the [installation guide](docs/installation.md).
 | Status | `./scripts/deploy/local_server.sh status` | `./launch.sh status` |
 | Logs | `./scripts/deploy/local_server.sh logs` | `./launch.sh logs` |
 
-Open <http://localhost:9001> after startup verification succeeds. Before your
-first Chat, connect a supported model provider or Codex account from Settings.
+Open <http://localhost:9001> after startup verification succeeds.
+
+### Build your first workflow
+
+1. **Choose an Agent runtime.** Open **Settings → Agent runtime** and select the
+   default runtime for new Chats:
+   - **LangChain** uses model-provider credentials and supports the full
+     LangChain toolset, including `/plan`.
+   - **Codex** runs conversations through the Codex runtime.
+
+   Only runtimes enabled by the deployment are shown. The selection applies to
+   new Chats; an existing Chat keeps the runtime with which it was created.
+
+2. **Connect a model or account.** Complete the connection required by the
+   selected runtime:
+   - For **LangChain**, open **API Key** from the sidebar, add a credential, and
+     enter its provider, model name, and API key. OpenAI, Azure OpenAI,
+     Anthropic, Google Gemini, and custom providers are supported.
+   - For **Codex**, remain in **Settings → Agent runtime → Codex connection**.
+     Sign in with an OpenAI account using the device code, or select **OpenAI
+     API** and configure an available company-managed or personal
+     OpenAI-compatible API connection.
+
+   The available connection methods depend on the deployment configuration.
+   Stored API keys are encrypted and write-only: they cannot be read back from
+   the application after saving.
+
+3. **Start a Chat and build the Workflow.** Open **Chat**, create a new
+   conversation, and select the connected model if more than one is available.
+   Activate `/build`, then describe the automation you want to create, including
+   its expected inputs, outputs, and important constraints. Inspect the
+   generated Workflow on the canvas, validate and run it, then review the node
+   outputs and refine the Workflow in Chat or on the canvas.
+
+The workflow remains available as a versioned asset after the conversation ends.
+Publish it only after its inputs, outputs, and failure behavior have been
+verified.
 
 ## Usage
 
+Most work begins in Chat, where the user describes what they need. When the task
+involves an authenticated website, the conversation can start from the browser
+extension instead. The agent uses tools to build a Workflow, which the user can
+inspect and refine on the canvas. The Workflow can then run directly, through a
+batch or scheduled Task, or as a Deployment that external systems can call.
+
+```mermaid
+flowchart LR
+    H["👤 Human"]
+
+    subgraph P["🧭 Skeinix platform"]
+        direction LR
+        I["💬 Chat<br/>🌐 Browser extension"]
+        A["🤖 Agent"]
+        W["🧩 Workflow"]
+        T["⏱️ Task / Run"]
+        D["🚀 Deployment"]
+    end
+
+    E["🔌 External systems"]
+
+    H <-->|"Goal · context · confirmation"| I
+    I <-->|"Commands · tools · progress"| A
+    A -->|"Build and refine"| W
+    W -->|"Execute and verify"| T
+    T -->|"Approve for publication"| D
+    D -->|"API · Webhook · Schedule"| E
+    T -.->|"Status · output · failure"| I
+```
+
+The diagram shows a common path, not a set of mandatory dependencies. A Workflow
+can be tested directly on the canvas or handed to a Task for batch or scheduled
+execution. Once published, external calls and schedules can start new Runs and
+Tasks without repeating the original build conversation.
+
 ### Main Application
 
-- **Chat** — Work with a LangChain or Codex Agent, attach files, enable MCP
-  servers and Skills, and activate platform capabilities with Slash Commands.
-- **Workflow** — Create, edit, validate, version, execute, and batch-run visual
-  workflows.
-- **Task** — Inspect background jobs and manage scheduled runs, cancellation,
-  resume, events, and results.
-- **Deployment** — Publish workflows as APIs, asynchronous Runs, Webhooks, or
-  schedules, then inspect invocation history and metrics.
-- **Knowledge** — Upload, index, browse, and retrieve authorized knowledge
-  sources.
-- **MCP, Skills, and Storage** — Extend Agent capabilities and manage durable
-  files and generated artifacts.
+| Surface | What you can do | Demo |
+| --- | --- | --- |
+| **Chat** | Describe a request in conversation and let a LangChain or Codex agent use tools, build Workflows, create diagrams, and organize files. Preview Workflows, execution plans, background jobs, common documents, tables, media, and diagrams beside the conversation. Each Chat has its own workspace, with a sandbox that starts, hibernates, and restores as needed. | ▶ [Watch Chat](docs/assets/demos/chat.mp4) |
+| **Workflow** | Add, connect, and configure nodes on a visual canvas, validate the graph, and execute either the full Workflow or an individual node. Review run output, generated files, and earlier versions, or use batch execution and JSON import and export. | ▶ [Watch Workflow](docs/assets/demos/workflow.mp4) |
+| **Task** | Run a Workflow across a tabular input file or schedule it for a particular time or interval. Task Center shows queue and execution progress, events, output, and failures, and lets users pause, cancel, or resume work where supported. | ▶ [Watch Task](docs/assets/demos/task.mp4) |
+| **Deployment** | Publish a verified Workflow as an API, webhook, or scheduled service. Copy endpoints and code examples, test inputs in the UI, review run logs and latency metrics, and manage status, rate limits, and access credentials. | ▶ [Watch Deployment](docs/assets/demos/deployment.mp4) |
+| **Knowledge** | Create a knowledge base and upload PDF, Office, text, web, JSON, or tabular sources. The page reports indexing status; once indexed, the agent can find and read relevant material through `/knowledge`. | ▶ [Watch Knowledge](docs/assets/demos/knowledge.mp4) |
+| **MCP Server** | Find external tools through the Official MCP Registry or Smithery, or connect a custom server by URL or command. Review the source, requested access, and credential requirements before installation; after connection, the agent loads its tools when needed. | ▶ [Watch MCP Server](docs/assets/demos/mcp-server.mp4) |
+| **Skills** | Find and install reusable instruction packages from sources such as OpenAI and Anthropic, or import a custom Skill. Review its instructions, bundled files, tool requirements, and source before making it available to agents. | ▶ [Watch Skills](docs/assets/demos/skills.mp4) |
+| **Storage** | Browse platform files by shared mount, Workflow, Chat, or Task. Search, sort, upload, and download files, and—where permissions allow—create folders, rename or delete items, and preview or edit supported content. | ▶ [Watch Storage](docs/assets/demos/storage.mp4) |
 
 #### Chat Slash Commands
 
-Commands activate additional capabilities and remain active in the current
-Chat. Multiple commands can be combined when a task crosses capability
-boundaries.
+Slash Commands tell Skeinix which specialized capabilities the current
+conversation needs. Activating a command gives the agent the corresponding
+tools and operating guidance for the rest of that Chat. Commands can be
+combined when a task spans more than one area.
 
 | Command | Purpose | Availability |
 | --- | --- | --- |
-| `/build` | Create, edit, validate, version, and run workflows | Main app and extension; LangChain/Codex |
-| `/task` | Inspect and manage Task Center work and scheduled runs | Main app and extension; LangChain/Codex |
-| `/deployment` | Inspect and manage workflow deployments | Main app and extension; LangChain/Codex |
-| `/knowledge` | Discover and search authorized knowledge bases | Main app and extension; LangChain/Codex |
-| `/diagram` | Create, validate, review, and export semantic diagrams | Main app and extension; LangChain/Codex |
-| `/plan` | Create a durable dynamic execution plan for SubAgents | LangChain only |
-| `/browser` | Control the connected browser and its authenticated pages | Extension side panel only; LangChain/Codex |
+| `/build` | Ask the agent to create or open a Workflow, then modify nodes, validate the graph, create versions, or run it from the conversation | Main app and extension; LangChain/Codex |
+| `/task` | Ask the agent to find Tasks, create or update scheduled runs, and cancel or resume work | Main app and extension; LangChain/Codex |
+| `/deployment` | Ask the agent to find, create, update, or remove Workflow Deployments | Main app and extension; LangChain/Codex |
+| `/knowledge` | Let the agent find and progressively read material from knowledge bases the user can access | Main app and extension; LangChain/Codex |
+| `/diagram` | Ask the agent to create a semantic diagram, then validate, render, visually review, and export it | Main app and extension; LangChain/Codex |
+| `/plan` | Have the agent organize complex work into a durable execution plan and coordinate SubAgents across its steps | LangChain only |
+| `/browser` | Let the agent read or operate tabs and authenticated pages in the connected browser | Extension side panel only; LangChain/Codex |
 
 ### Browser Extension
 
-The experimental Chrome MV3 extension connects the Agent to the user's current
-browser session. Build and load it locally:
+The experimental Chrome MV3 extension connects a Chat to the current browser
+session. It is intended for work that must reuse the user's current signed-in
+state. Within its authorized scope, the agent can read pages, switch tabs,
+click, type, select options, and take screenshots.
+
+Download the extension package that matches the current deployment from
+**Settings → Extensions → Download extension**. Extract the ZIP to a permanent
+folder, open `chrome://extensions`, enable **Developer mode**, and choose
+**Load unpacked**. Select the extracted folder, then pin Skeinix and open its
+side panel.
+
+Developers can also build the extension from source:
 
 ```bash
 cd extension
@@ -149,24 +252,20 @@ pnpm test
 pnpm build
 ```
 
-Load `extension/dist` as an unpacked Chrome extension, open its side panel, and
-use `/browser` there. Teaching, freezing, self-healing, and batch browser
-automation remain under active development.
+Load `extension/dist` with **Load unpacked**, open the side panel, and activate
+`/browser`. The command is unavailable in the main application because browser
+control requires the extension's scoped connection to the active tab.
 
 ## Architecture
 
-### Repository Structure
+### System at a glance
 
-```text
-api/        FastAPI control plane, Agent Runtime, auth, storage, and workers
-engine/     Framework-independent Python workflow execution engine
-web/        React application and visual workflow canvas
-extension/  Experimental Chrome MV3 browser integration
-docs/       Public installation, architecture, and protocol documentation
-scripts/    Bootstrap, deployment, diagnostics, and security utilities
-```
-
-### System Architecture
+Skeinix separates platform management from task execution. The Web application
+provides Chat, the visual canvas, and management pages. The FastAPI control
+plane handles identity, authorization, persistence, orchestration, and live
+event delivery. `sandboxd` places Agent and Workflow execution in isolated
+sandboxes, while workers process background jobs, scheduled runs, knowledge
+indexing, and batch execution.
 
 ```text
 Browser / Chrome extension
@@ -178,24 +277,45 @@ Browser / Chrome extension
       FastAPI control plane ─── PostgreSQL / OpenFGA / object storage
             │
             ├── Valkey / Celery workers
-            └── sandboxd ─── per-Chat Agent Runtime and workflow sandboxes
+            └── sandboxd ─── per-Chat agent runtime and workflow sandboxes
 ```
 
-PostgreSQL is the system of record, OpenFGA and row-level security enforce
-authorization boundaries, and untrusted Agent and workflow execution is routed
-through the sandbox service. See [Architecture](docs/architecture.md) for the
-Runtime lifecycle, MCP boundaries, storage model, and network isolation.
+PostgreSQL is the system of record. OpenFGA and row-level security enforce
+authorization boundaries, object storage holds durable file content, and
+Valkey provides queueing and transient coordination. The sandbox service keeps
+agent and workflow execution outside the API process.
+
+See the [architecture guide](docs/architecture.md) for runtime lifecycle, MCP
+boundaries, storage ownership, authorization, and network isolation.
+
+### Repository structure
+
+```text
+api/        FastAPI control plane, agent runtime, auth, storage, and workers
+engine/     Framework-independent Python workflow execution engine
+web/        React application and visual workflow canvas
+extension/  Experimental Chrome MV3 browser integration
+docs/       Public installation, architecture, security, and development guides
+scripts/    Bootstrap, deployment, diagnostics, and security utilities
+```
 
 ## Documentation
 
-For more detail, see [Installation](docs/installation.md),
-[Architecture](docs/architecture.md), and [Development](docs/development.md).
+| Goal | Document |
+| --- | --- |
+| Install, configure, or troubleshoot a self-hosted instance | [Installation and deployment](docs/installation.md) |
+| Understand components, runtime flow, storage, and isolation | [Architecture](docs/architecture.md) |
+| Prepare and operate a production deployment | [Production deployment](DEPLOY.md) |
+| Understand security controls and data lifecycle | [Security and data lifecycle](docs/security-and-data-lifecycle.md) |
+| Set up a development environment and run checks | [Development guide](docs/development.md) |
+| Contribute code or documentation | [Contributing guide](CONTRIBUTING.md) |
 
 ## Security
 
 Do not report vulnerabilities through public GitHub issues. Follow the private
-disclosure process in [SECURITY.md](SECURITY.md). Security controls reduce risk
-but do not make an alpha deployment automatically suitable for sensitive data.
+disclosure process in [SECURITY.md](SECURITY.md). Review the documented trust
+boundaries and deployment requirements before using alpha releases with
+sensitive data.
 
 ## Contributing
 

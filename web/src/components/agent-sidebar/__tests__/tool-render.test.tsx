@@ -79,6 +79,24 @@ function QueryWrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={makeClient()}>{children}</QueryClientProvider>;
 }
 
+function loadInteractiveSandboxDocument(frame: HTMLIFrameElement): string {
+  const target = frame.contentWindow;
+  expect(target).not.toBeNull();
+  const postMessage = vi.spyOn(target as Window, 'postMessage');
+  fireEvent.load(frame);
+  const call = postMessage.mock.calls.find(([payload]) => (
+    typeof payload === 'object'
+    && payload !== null
+    && (payload as Record<string, unknown>).channel === 'vibecanvas:interactive-loader:v1'
+    && (payload as Record<string, unknown>).type === 'load'
+  ));
+  postMessage.mockRestore();
+  expect(call).toBeDefined();
+  const html = (call?.[0] as Record<string, unknown> | undefined)?.html;
+  expect(typeof html).toBe('string');
+  return String(html);
+}
+
 describe('parseEnvelope', () => {
   it('parses a valid success envelope with inline data', () => {
     const env = parseEnvelope(
@@ -1013,7 +1031,8 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       return element as HTMLIFrameElement;
     });
     expect(frame.style.height).toBe('662px');
-    expect(frame.srcdoc).toContain('/api/v1/vfs/resources/view-token/');
+    expect(frame).toHaveAttribute('src', '/interactive-sandbox.html');
+    expect(loadInteractiveSandboxDocument(frame)).toContain('/api/v1/vfs/resources/view-token/');
   });
 
   it('renders dynamic HTML in a script-only sandbox with an ephemeral resource session', async () => {
@@ -1086,8 +1105,9 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       return element as HTMLIFrameElement;
     });
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
-    expect(frame.srcdoc).toContain('/api/v1/vfs/resources/opaque/');
-    expect(frame.srcdoc).not.toContain('allow-same-origin');
+    expect(frame).toHaveAttribute('src', '/interactive-sandbox.html');
+    expect(loadInteractiveSandboxDocument(frame)).toContain('/api/v1/vfs/resources/opaque/');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
     window.dispatchEvent(new MessageEvent('message', {
       origin: 'null',
       source: frame.contentWindow,
@@ -1238,9 +1258,9 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
     const frozenFrame = await waitFor(() => {
       const element = document.querySelector('[data-role="interactive-html-preview"]') as HTMLIFrameElement;
       expect(element).not.toBe(liveFrame);
-      expect(element.srcdoc).toContain('&quot;frozen&quot;:true');
       return element;
     });
+    expect(loadInteractiveSandboxDocument(frozenFrame)).toContain('&quot;frozen&quot;:true');
     const frozenWindow = frozenFrame.contentWindow;
     window.dispatchEvent(new MessageEvent('message', {
       origin: 'null',
@@ -1430,18 +1450,19 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
 
     const frame = await screen.findByTitle('Dataset HTML');
     expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-forms');
-    const srcdoc = frame.getAttribute('srcdoc') ?? '';
-    expect(srcdoc).toContain('Dataset preview');
+    expect(frame).toHaveAttribute('src', '/interactive-sandbox.html');
+    const sandboxDocument = loadInteractiveSandboxDocument(frame as HTMLIFrameElement);
+    expect(sandboxDocument).toContain('Dataset preview');
     // The source HTML is preserved, but its remote image is intentionally not
     // permitted by CSP: interactive assets must first materialize remote
     // resources into VFS and reference one of the exact resource-session URLs.
-    expect(srcdoc).toContain('https://media.example.test/frame.png');
-    expect(srcdoc).toContain(
+    expect(sandboxDocument).toContain('https://media.example.test/frame.png');
+    expect(sandboxDocument).toContain(
       'img-src data: blob: http://localhost/api/v1/vfs/resources/html-mount-token/mount/ http://localhost/api/v1/vfs/resources/html-token/',
     );
     // Exact resource-session URLs may themselves be HTTP in jsdom. What must
     // never return is a bare HTTP(S) scheme-source that permits every host.
-    expect(srcdoc).not.toMatch(/img-src[^;]*\shttps?:\s/);
+    expect(sandboxDocument).not.toMatch(/img-src[^;]*\shttps?:\s/);
     expect(sessionReads).toBe(2);
     window.dispatchEvent(new CustomEvent(CHAT_RECONCILED_EVENT));
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -1544,7 +1565,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
     );
 
     const frame = await screen.findByTitle('Late HTML', {}, { timeout: 2_000 });
-    expect(frame.getAttribute('srcdoc')).toContain('Available after writeback');
+    expect(loadInteractiveSandboxDocument(frame as HTMLIFrameElement)).toContain('Available after writeback');
     expect(reads).toBe(2);
     expect(screen.queryByText('The file preview resource could not be loaded.')).toBeNull();
   });

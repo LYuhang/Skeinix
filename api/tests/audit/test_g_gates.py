@@ -225,6 +225,42 @@ async def test_g1_append_only_blocks_update_and_delete(app_engine, pg_engine):
     assert n == 1
 
 
+@pytest.mark.asyncio
+async def test_g1_app_cannot_forge_account_erasure_override(app_engine):
+    """The custom erasure GUC is not an authorization credential.
+
+    PostgreSQL clients may set arbitrary custom GUCs, so the append-only
+    trigger must also require the dedicated maintenance database identity.
+    """
+    tid = uuid.uuid4()
+    await _seed_tenant(app_engine, tid)
+    async with app_engine.connect() as c:
+        await c.execute(
+            text("SELECT set_config('app.tenant_id', :t, false)"),
+            {"t": str(tid)},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO audit_log (action, outcome) "
+                "VALUES ('auth.logout', 'success')"
+            )
+        )
+        await c.commit()
+
+    async with app_engine.connect() as c:
+        await c.execute(
+            text("SELECT set_config('app.tenant_id', :t, false)"),
+            {"t": str(tid)},
+        )
+        await c.execute(text("SET LOCAL app.account_erasure = 'on'"))
+        with pytest.raises(Exception) as exc_info:
+            await c.execute(
+                text("UPDATE audit_log SET meta = '{}'::jsonb WHERE tenant_id=:t"),
+                {"t": tid},
+            )
+        assert APPEND_ONLY_MSG in str(exc_info.value)
+
+
 # ===========================================================================
 # G2 — RLS isolation: tenant B can't see A; NULL-tenant row hidden.
 # ===========================================================================

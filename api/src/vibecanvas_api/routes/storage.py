@@ -343,6 +343,20 @@ def _logical_resource(
     return None
 
 
+def _task_artifact_size(summary: dict, artifact_name: str) -> int | None:
+    """Return one persisted Task artifact size without reading its blob."""
+    size_key = {
+        "results.csv": "csv",
+        "results.jsonl": "jsonl",
+        "summary.json": "summary",
+    }.get(artifact_name)
+    sizes = summary.get("artifact_sizes")
+    if not size_key or not isinstance(sizes, dict):
+        return None
+    value = sizes.get(size_key)
+    return value if isinstance(value, int) and value >= 0 else None
+
+
 async def _authorize_logical_path(
     logical_path: str,
     *,
@@ -749,7 +763,7 @@ async def list_storage(
                 name=name,
                 path=f"/task/{resolved.task_id}/{name}",
                 kind="file",
-                size_bytes=None,
+                size_bytes=_task_artifact_size(summary, name),
                 modified_at=_iso(task.finished_at if task else None),
                 content_type=content_types[name],
                 source="task generated",

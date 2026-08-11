@@ -1,9 +1,8 @@
 """Retired compatibility task for the old save-time overlay build path.
 
-Dependency installation is now a capability of interactive Workflow
-node/whole-workflow sandbox initialization only. Keep the historical task name
-registered while old broker messages drain, but never build from a background
-worker: doing so would bypass that lifecycle boundary.
+Dependency installation is now owned by sandboxd's narrow execution-time
+builder capability. Keep the historical task name registered while old broker
+messages drain, but never build directly in a general background worker.
 """
 from __future__ import annotations
 
@@ -25,5 +24,5 @@ def build_env_overlay(
         "build_env_overlay_retired",
         overlay_key=overlay_key,
         requirements_present=bool(requirements.strip()),
-        reason="dependencies install only during interactive Workflow execution",
+        reason="dependency builds are owned by sandboxd execution preparation",
     )

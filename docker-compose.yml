@@ -79,6 +79,26 @@ services:
     networks:
       - authorization_data
 
+  # OpenFGA intentionally retains relationship changes after tuple deletion.
+  # Provision a separate role that can only execute Skeinix's identity-history
+  # erasure function; runtime workers never receive OpenFGA's owner password.
+  openfga_erasure_bootstrap:
+    image: postgres:17.10-trixie@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317
+    command: ["/opt/skeinix/bootstrap_openfga_erasure.sh"]
+    environment:
+      OPENFGA_ADMIN_DATABASE_URL: postgresql://openfga:${OPENFGA_POSTGRES_PASSWORD:-openfga-development-only}@openfga_postgres:5432/openfga?sslmode=disable
+      OPENFGA_ERASURE_DATABASE_NAME: openfga
+      OPENFGA_ERASURE_PASSWORD: ${OPENFGA_ERASURE_PASSWORD:-openfga-erasure-development-only}
+    volumes:
+      - ./scripts/security/bootstrap_openfga_erasure.sh:/opt/skeinix/bootstrap_openfga_erasure.sh:ro
+      - ./scripts/security/openfga_erasure.sql:/opt/skeinix/openfga_erasure.sql:ro
+    depends_on:
+      openfga_migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - authorization_data
+
   openfga:
     image: openfga/openfga:v1.18.1@sha256:efde89d24487da1a8bc37d85b61341f1fb7024943a1ded65f4b7d51a75666688
     command: ["run"]
@@ -97,6 +117,8 @@ services:
       - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_METRICS_PORT:-2112}:2112"
     depends_on:
       openfga_migrate:
+        condition: service_completed_successfully
+      openfga_erasure_bootstrap:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -185,6 +207,9 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
+      args:
+        # Only sandboxd owns the wheel-only Workflow dependency builder.
+        VIBECANVAS_RUNTIME_ENV_BUILDER: "1"
     command:
       - /bin/sh
       - -ec
@@ -348,12 +373,9 @@ services:
       KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
       KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
       CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
-      # CodeNode 3rd-party library overlay (content-addressed). The celery_worker
-      # BUILDS it (env_build task); the api READS + bind-mounts it read-only into
-      # the sandbox. Like object_store_data above, it MUST be the SAME shared
-      # named volume on api + celery_worker — otherwise the api binds an empty
-      # dir and declared libs fail with ImportError at run time (the unset-env
-      # default is a per-container /tmp path, which does NOT span the boundary).
+      # CodeNode 3rd-party library overlay (content-addressed). sandboxd builds
+      # it through its narrow control-plane method; API/worker processes only
+      # retain this shared mount for compatibility with embedded deployments.
       LIB_OVERLAY_ROOT: /var/lib/vibecanvas/lib-overlay
       # Private durable Codex account authentication. Chat-owned thread files
       # live in VFS_VOLUME_ROOT; auth is mounted only for explicit account turns.
@@ -419,7 +441,7 @@ services:
       - vibecanvas_api.celery_app
       - worker
       - -Q
-      - interactive,deployments,kb_indexing
+      - interactive,deployments,kb_indexing,maintenance
       - --concurrency=2
     user: "10001:10001"
     env_file:
@@ -431,8 +453,10 @@ services:
       OPENFGA_API_URL: http://openfga:8080
       OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
       OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
+      OPENFGA_ERASURE_DATABASE_URL: postgresql://skeinix_openfga_erasure:${OPENFGA_ERASURE_PASSWORD:-openfga-erasure-development-only}@openfga_postgres:5432/openfga?sslmode=disable
       PLATFORM_MCP_INTERNAL_BASE_URL: ${PLATFORM_MCP_INTERNAL_BASE_URL:-http://api:8000}
-      CELERY_QUEUES: interactive,deployments,kb_indexing
+      CELERY_QUEUES: interactive,deployments,kb_indexing,maintenance
+      PURGE_WORKER_ENABLED: ${PURGE_WORKER_ENABLED:-true}
       OBJECT_STORE_PROVIDER: ${OBJECT_STORE_PROVIDER:-filesystem}
       OBJECT_STORE_FS_ROOT: ${OBJECT_STORE_FS_ROOT:-/var/lib/vibecanvas/objectstore}
       VIBECANVAS_STORAGE_ROOT: /var/lib/vibecanvas/local-data
@@ -441,9 +465,9 @@ services:
       KMS_WORKLOAD_IDENTITY: ${KMS_WORKLOAD_IDENTITY:-}
       KMS_LOCAL_MASTER_KEY: ${KMS_LOCAL_MASTER_KEY:-}
       CONTENT_LOOKUP_HMAC_KEY: ${CONTENT_LOOKUP_HMAC_KEY:-}
-      # Same shared overlay volume as the api (see api service comment). The
-      # worker WRITES overlays here (env_build task) + runs batch/deployment
-      # sandboxes; the api binds the same path RO.
+      # Same shared overlay volume as sandboxd. The worker asks sandboxd to
+      # prepare missing layers and passes the returned content-addressed path
+      # back with each Task job; it does not carry a package installer itself.
       LIB_OVERLAY_ROOT: /var/lib/vibecanvas/lib-overlay
       RUNSC_PATH: /usr/local/bin/runsc
       SANDBOX_SERVICE_MODE: service
@@ -468,12 +492,15 @@ services:
         condition: service_healthy
       openfga_bootstrap:
         condition: service_completed_successfully
+      openfga_erasure_bootstrap:
+        condition: service_completed_successfully
       sandbox_prewarm:
         condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - data
       - authorization
+      - authorization_data
       - worker_egress
 
   celery_beat:

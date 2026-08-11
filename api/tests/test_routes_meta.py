@@ -41,7 +41,9 @@ async def test_version_no_auth(client, pg_engine):
 
 
 @pytest.mark.asyncio
-async def test_public_config_exposes_only_login_capabilities(client, monkeypatch):
+async def test_public_config_exposes_login_and_account_deletion_capabilities(
+    client, monkeypatch
+):
     monkeypatch.setattr(config, "enable_test_user", True)
     monkeypatch.setattr(config, "enterprise_sso_enabled", False)
     response = await client.get("/api/v1/public-config")
@@ -49,6 +51,8 @@ async def test_public_config_exposes_only_login_capabilities(client, monkeypatch
     assert response.json() == {
         "enable_test_user": True,
         "enterprise_sso_enabled": False,
+        "account_deletion_mode": "immediate",
+        "account_deletion_retention_days": 14,
     }
 
 

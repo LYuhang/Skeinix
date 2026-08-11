@@ -21,6 +21,9 @@ if not getattr(celery_app.conf, "beat_schedule", None):
     celery_app.conf.beat_schedule = {}
 celery_app.conf.beat_schedule["data_purge.run_due"] = {
     "task": "data_purge.run_due",
-    "schedule": 60.0,
+    # Immediate deletion is asynchronous but should become observable within
+    # seconds, not a full scheduler minute. SKIP LOCKED keeps overlapping ticks
+    # safe when a previous purge is still running.
+    "schedule": 5.0,
     "options": {"queue": "maintenance"},
 }

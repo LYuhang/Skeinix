@@ -10,6 +10,11 @@ import { PreviewApiError, createPreviewResourceSession } from '@/lib/api/preview
 import { useWritePreviewFile } from '@/lib/api/queries/previews';
 import type { PreviewDescriptorV1, PreviewErrorInfo } from '@/lib/preview/protocol';
 import { agentFilePathFromHref } from '@/lib/preview/protocol';
+import {
+  isPreviewSandboxLoaderMessage,
+  loadPreviewSandboxDocument,
+  PREVIEW_SANDBOX_LOADER_PATH,
+} from '@/lib/preview/sandbox-loader';
 import { cn } from '@/lib/utils';
 import {
   buildFilePreviewHtmlDocument,
@@ -53,6 +58,7 @@ function HtmlDocument({
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [documentHtml, setDocumentHtml] = useState<string | null>(null);
+  const [documentRevision, setDocumentRevision] = useState(0);
   const [error, setError] = useState<PreviewErrorInfo | null>(null);
 
   useEffect(() => {
@@ -61,6 +67,7 @@ function HtmlDocument({
       (session) => {
         setError(null);
         setDocumentHtml(buildFilePreviewHtmlDocument(html, session));
+        setDocumentRevision((value) => value + 1);
       },
       () => {
         if (!controller.signal.aborted) {
@@ -71,10 +78,19 @@ function HtmlDocument({
     return () => controller.abort();
   }, [descriptor.fileRef, descriptor.revision, html]);
 
+  const loadSandboxDocument = useCallback(() => {
+    loadPreviewSandboxDocument(iframeRef.current, documentHtml ?? '');
+  }, [documentHtml]);
+
   useEffect(() => {
     const listener = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (event.origin !== 'null') return;
+      if (isPreviewSandboxLoaderMessage(event.data)) {
+        if (event.data.type === 'ready') loadSandboxDocument();
+        else setError({ code: 'content_unavailable', params: {} });
+        return;
+      }
       const message = event.data as Record<string, unknown> | null;
       if (
         message?.channel === FILE_PREVIEW_CHANNEL
@@ -87,16 +103,18 @@ function HtmlDocument({
     };
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);
-  }, [onOpenFile]);
+  }, [loadSandboxDocument, onOpenFile]);
 
   if (error) return <PreviewErrorState descriptor={descriptor} error={error} />;
   if (!documentHtml) return <div className="p-4 text-sm text-muted-foreground">Loading HTML preview…</div>;
   return (
     <iframe
+      key={`${descriptor.revision}:${documentRevision}`}
       ref={iframeRef}
       title={descriptor.name}
       sandbox="allow-scripts"
-      srcDoc={documentHtml}
+      src={PREVIEW_SANDBOX_LOADER_PATH}
+      onLoad={loadSandboxDocument}
       className="h-full min-h-[360px] w-full border-0 bg-white"
     />
   );

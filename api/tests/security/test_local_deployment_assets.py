@@ -46,6 +46,7 @@ def test_local_server_init_is_secure_and_idempotent(tmp_path: Path) -> None:
             "VIBECANVAS_MIGRATOR_PASSWORD",
             "VIBECANVAS_MAINTENANCE_PASSWORD",
             "OPENFGA_POSTGRES_PASSWORD",
+            "OPENFGA_ERASURE_PASSWORD",
             "OPENFGA_API_TOKEN",
             "KMS_LOCAL_MASTER_KEY",
             "CONTENT_LOOKUP_HMAC_KEY",
@@ -54,8 +55,32 @@ def test_local_server_init_is_secure_and_idempotent(tmp_path: Path) -> None:
             "OAUTH_ENCRYPTION_KEY",
         )
     }
-    assert len(independent_secrets) == 11
+    assert len(independent_secrets) == 12
     assert all(len(value) >= 32 for value in independent_secrets)
+
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True, capture_output=True)
+    assert env_file.read_bytes() == first
+
+
+def test_local_server_init_backfills_missing_upgrade_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / "existing.env"
+    env_file.write_text(
+        "POSTGRES_PASSWORD=keep-existing-secret\n"
+        "VIBECANVAS_BIND_ADDRESS=127.0.0.1\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "VIBECANVAS_ENV_FILE": str(env_file)}
+    command = [str(REPO_ROOT / "scripts/deploy/local_server.sh"), "init"]
+
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True, capture_output=True)
+    first = env_file.read_bytes()
+    values = _dotenv(env_file)
+
+    assert values["POSTGRES_PASSWORD"] == "keep-existing-secret"
+    assert len(values["OPENFGA_ERASURE_PASSWORD"]) >= 32
+    assert values["SANDBOX_EGRESS_MODE"] == "proxy"
+    assert values["SANDBOX_EGRESS_POLICY"] == "public"
+    assert env_file.stat().st_mode & 0o777 == 0o600
 
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True, capture_output=True)
     assert env_file.read_bytes() == first
@@ -120,6 +145,12 @@ def test_compose_networks_separate_edge_control_data_and_authorization() -> None
     assert services["postgres"]["networks"] == ["data"]
     assert services["redis"]["networks"] == ["data"]
     assert services["openfga_postgres"]["networks"] == ["authorization_data"]
+    assert set(services["celery_worker"]["networks"]) == {
+        "data",
+        "authorization",
+        "authorization_data",
+        "worker_egress",
+    }
     assert networks["control"]["internal"] is True
     assert networks["data"]["internal"] is True
     assert networks["authorization"]["internal"] is True
@@ -131,7 +162,22 @@ def test_nginx_refreshes_compose_service_dns() -> None:
 
     assert "resolver 127.0.0.11" in nginx
     assert "server api:8000 resolve;" in nginx
-    assert nginx.count("proxy_pass http://skeinix_api;") == 2
+    assert nginx.count("proxy_pass http://skeinix_api;") == 3
+
+
+def test_nginx_preserves_browser_authority_for_origin_validation() -> None:
+    nginx = (REPO_ROOT / "web/nginx.conf").read_text(encoding="utf-8")
+
+    websocket = nginx.split("location = /api/v1/browser/ws", 1)[1].split(
+        "location /api/", 1
+    )[0]
+    api_proxy = nginx.split("location /api/", 1)[1].split(
+        "location /healthz", 1
+    )[0]
+    assert "proxy_set_header Host $http_host;" in websocket
+    assert "proxy_set_header Host $http_host;" in api_proxy
+    assert "proxy_set_header Host $host;" not in websocket
+    assert "proxy_set_header Host $host;" not in api_proxy
 
 
 def test_nginx_serves_module_workers_with_javascript_mime() -> None:
@@ -145,6 +191,41 @@ def test_nginx_serves_module_workers_with_javascript_mime() -> None:
     assert "try_files $uri =404;" in nginx
     assert "PDF_WORKER_CACHE_REVISION = 'module-mime-v1'" in pdf_renderer
     assert "pdfWorkerUrl}?v=${PDF_WORKER_CACHE_REVISION}" in pdf_renderer
+
+
+def test_interactive_preview_has_a_dedicated_response_sandbox() -> None:
+    nginx = (REPO_ROOT / "web/nginx.conf").read_text(encoding="utf-8")
+    loader = (
+        REPO_ROOT / "web/public/interactive-sandbox.html"
+    ).read_text(encoding="utf-8")
+    location = nginx.split(
+        "location = /interactive-sandbox.html", 1
+    )[1].split("location /", 1)[0]
+
+    # The application shell retains the strict no-unsafe-inline policy. Only
+    # the exact loader response can execute Agent-authored inline behavior.
+    server_headers = nginx.split("location ^~ /embed/", 1)[0]
+    assert "script-src 'self' ${CSP_SCRIPT_HASHES}" in server_headers
+    assert "script-src 'self' 'unsafe-inline'" not in server_headers
+    assert "sandbox allow-scripts allow-forms" in location
+    assert "script-src 'unsafe-inline'" in location
+    assert "frame-ancestors 'self'" in location
+    assert 'X-Frame-Options "SAMEORIGIN"' in location
+    assert 'Cache-Control "no-store"' in location
+    assert "connect-src 'self' data: blob:" in location
+    assert "frame-src 'none'" in location
+    assert "object-src 'none'" in location
+
+    # The document arrives over postMessage rather than a URL/query/history
+    # channel, and the bootstrap accepts messages only from its parent frame.
+    assert "vibecanvas:interactive-loader:v1" in loader
+    assert "event.source !== window.parent" in loader
+    assert "typeof payload.html !== 'string'" in loader
+    assert "MAX_DOCUMENT_CHARS = 2 * 1024 * 1024" in loader
+    assert "document.write(html)" in loader
+    assert "location.search" not in loader
+    assert "location.hash" not in loader
+    assert "localStorage" not in loader
 
 
 def test_runtime_state_schema_precedes_strict_content_backfill() -> None:
@@ -180,6 +261,21 @@ def test_postgres_role_passwords_are_environment_bound() -> None:
         assert "\\getenv" in init_sql
         assert key in init_sql
     assert "PASSWORD 'vc_app'" not in init_sql
+
+
+def test_openfga_erasure_role_cannot_access_live_tuples() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    services = compose["services"]
+    sql = (REPO_ROOT / "scripts/security/openfga_erasure.sql").read_text()
+
+    worker = services["celery_worker"]
+    assert "OPENFGA_ERASURE_DATABASE_URL" in worker["environment"]
+    assert "openfga_erasure_bootstrap" in worker["depends_on"]
+    assert "SECURITY DEFINER" in sql
+    assert "REVOKE ALL ON ALL TABLES IN SCHEMA public" in sql
+    assert "GRANT EXECUTE ON FUNCTION public.skeinix_erase_changelog" in sql
+    assert "GRANT SELECT" not in sql
+    assert "GRANT DELETE" not in sql
 
 
 def test_strict_migrator_supports_source_and_image_layouts(tmp_path: Path) -> None:

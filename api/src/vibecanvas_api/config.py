@@ -1320,6 +1320,11 @@ class AppConfig:
         )
         if not 0.05 <= self.openfga_timeout_seconds <= 30.0:
             raise ValueError("OPENFGA_TIMEOUT_SECONDS must be between 0.05 and 30")
+        self.openfga_erasure_database_url: str = str(
+            os.environ.get("OPENFGA_ERASURE_DATABASE_URL")
+            or raw.get("openfga_erasure_database_url")
+            or ""
+        ).strip()
         self.kms_provider: str = str(
             os.environ.get("KMS_PROVIDER") or raw.get("kms_provider") or ""
         ).strip()
@@ -1399,8 +1404,31 @@ class AppConfig:
         self.purge_worker_enabled: bool = _as_bool(
             raw.get("purge_worker_enabled"),
             os.environ.get("PURGE_WORKER_ENABLED"),
-            default=False,
+            default=True,
         )
+        self.account_deletion_mode: str = str(
+            os.environ.get("ACCOUNT_DELETION_MODE")
+            or raw.get("account_deletion_mode")
+            or "immediate"
+        ).strip().lower()
+        if self.account_deletion_mode not in {"immediate", "delayed"}:
+            raise ValueError(
+                "ACCOUNT_DELETION_MODE must be 'immediate' or 'delayed'"
+            )
+        try:
+            self.account_deletion_retention_days: int = int(
+                os.environ.get("ACCOUNT_DELETION_RETENTION_DAYS")
+                or raw.get("account_deletion_retention_days")
+                or 14
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "ACCOUNT_DELETION_RETENTION_DAYS must be an integer"
+            ) from exc
+        if not 1 <= self.account_deletion_retention_days <= 365:
+            raise ValueError(
+                "ACCOUNT_DELETION_RETENTION_DAYS must be between 1 and 365"
+            )
         self.distributed_auth_rate_limit_enabled: bool = _as_bool(
             raw.get("distributed_auth_rate_limit_enabled"),
             os.environ.get("DISTRIBUTED_AUTH_RATE_LIMIT_ENABLED"),

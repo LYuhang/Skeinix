@@ -54,8 +54,6 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { runAgentTurn } from '@/lib/api/sse/run-agent-turn';
-import { readServerActiveTurns } from '@/lib/api/sse/server-active-turn';
-import { resumeActiveTurn } from '@/lib/api/sse/resume-turn';
 import type { HitlContinueControl } from '@/lib/api/sse/agent-stream';
 import { useAgentRuntimeCapabilities } from '@/lib/api/queries/agent-runtime';
 import type { AgentRuntimeCapabilities } from '@/lib/api/agent-runtime';
@@ -237,7 +235,6 @@ export function ChatComposer({
     : selectedMcpIds;
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [compactOptions, setCompactOptions] = useState(false);
-  const [checkingServerRun, setCheckingServerRun] = useState(false);
   const [chatConfigRevision, setChatConfigRevision] = useState(0);
   const [mcpHydratedChatId, setMcpHydratedChatId] = useState<string | null>(null);
   if (!chatId && mcpHydratedChatId !== null) {
@@ -347,6 +344,10 @@ export function ChatComposer({
   const readOnly = PINNED_VERSION_PATHNAME_RE.test(location.pathname);
   const streamBelongsToThisChat = !!chatId && runtime?.chatId === chatId;
   const hydratedComposerKeyRef = useRef<string | null>(null);
+  // Keep the last durable draft until the backend accepts the optimistic
+  // submission. This lets the textarea clear immediately without losing text
+  // if the request is rejected before it acquires the Chat turn lease.
+  const optimisticSubmissionRef = useRef(false);
 
   const uploadFiles = useCallback(async (
     inputFiles: readonly File[],
@@ -385,7 +386,11 @@ export function ChatComposer({
     }));
     setUploads((current) => [...current, ...batch.map((item) => item.pending)]);
 
-    await Promise.all(batch.map(async ({ file, pending }) => {
+    // Preserve selection order and avoid making every file compete to create
+    // a brand-new Chat. The API also serializes first creation across workers,
+    // but a short client-side queue avoids redundant authorization/projection
+    // work and gives attachment chips a deterministic order.
+    for (const { file, pending } of batch) {
       try {
         const attachment = await uploadChatAttachment({
           scopeId: wfId,
@@ -403,7 +408,7 @@ export function ChatComposer({
       } finally {
         setUploads((current) => current.filter((item) => item.id !== pending.id));
       }
-    }));
+    }
   }, [activeUploads.length, chatId, composerStateKey, t, wfId]);
 
   const handleFileInput = useCallback((
@@ -478,6 +483,7 @@ export function ChatComposer({
 
   useEffect(() => {
     if (!composerStorageKey || hydratedComposerKeyRef.current !== composerStateKey) return;
+    if (optimisticSubmissionRef.current) return;
     try {
       if (!value && pendingAttachments.length === 0) {
         window.localStorage.removeItem(composerStorageKey);
@@ -544,7 +550,6 @@ export function ChatComposer({
     (value.trim().length > 0 || pendingAttachments.length > 0) &&
     activeUploads.length === 0 &&
     !isStreaming &&
-    !checkingServerRun &&
     !readOnly &&
     historyReady &&
     !externallyDisabled;
@@ -555,11 +560,11 @@ export function ChatComposer({
    * signature, and so the `if (!chatId) return` guard lives in one
    * place rather than at every caller.
    *
-   * Attachments lifecycle (T15.5): the caller passes whatever chips were
-   * pending at click-time. We do *not* clear `pendingAttachments` here —
-   * `handleSend` clears on the success path, so a failed send leaves the
-   * chips intact for an immediate Retry. Retry itself reuses
-   * `lastInput.attachments` so subsequent clicks resend the same set.
+   * Attachments lifecycle (T15.5): the caller moves the chips out of the
+   * composer at click-time. `runAgentTurn` projects that same snapshot into
+   * the optimistic user message, while `lastInput.attachments` remains the
+   * retry source of truth. A request rejected before durable acceptance is
+   * the only path that restores the snapshot to the composer.
    */
   const doSend = async (
     content: string,
@@ -592,27 +597,9 @@ export function ChatComposer({
 
   const handleSend = async () => {
     if (!canSend) return;
-    setCheckingServerRun(true);
-    const serverTurns = await readServerActiveTurns(wfId);
-    const blockingTurns = serverTurns?.filter(
-      (turn) => turn.chatId === chatId,
-    ) ?? [];
-    if (blockingTurns.length > 0) {
-      for (const turn of blockingTurns) void resumeActiveTurn(turn);
-      setCheckingServerRun(false);
-      toast.info(
-        t(
-          'composer.wait_for_active_turn',
-          'The agent is finishing the current turn. Your draft has been kept.',
-        ),
-      );
-      return;
-    }
-    setCheckingServerRun(false);
-    // The active-run check above narrows the race with a server-originated
-    // delivery Turn. The backend's atomic Chat claim remains authoritative;
-    // if it wins immediately afterwards, the send fails and this draft stays
-    // intact because it is cleared only by onAccepted below.
+    // The backend's atomic Chat claim is the sole authority for concurrent
+    // Turns. A preflight active-turn GET used to block the optimistic bubble
+    // and textarea clear on every send, while still being inherently racy.
     setNotice(null);
     // Embed (side-panel) browser surface: a BARE message in the browser-first
     // side panel is promoted to a `mode=browser` turn using the shell-provided
@@ -645,8 +632,16 @@ export function ChatComposer({
     const attachments = composerStateKey
       ? useChatStreamStore.getState().pendingAttachments[composerStateKey] ?? []
       : [];
+    optimisticSubmissionRef.current = true;
+    setValue('');
+    // Text and attachments belong to one message. Move both out of the
+    // composer before awaiting the network so the optimistic user bubble is
+    // the sole visible owner while the Agent is running.
+    if (composerStateKey) {
+      useChatStreamStore.getState().clearAttachments(composerStateKey);
+    }
     let accepted = false;
-    const sent = await doSend(
+    await doSend(
       content,
       attachments.length > 0 ? attachments : undefined,
       mode,
@@ -654,7 +649,7 @@ export function ChatComposer({
       undefined,
       () => {
         accepted = true;
-        setValue('');
+        optimisticSubmissionRef.current = false;
         // A first accepted send replaces the empty-chat composer with the
         // conversation composer. Clear the durable draft in that same commit
         // so the newly mounted composer cannot hydrate the sent text.
@@ -669,9 +664,15 @@ export function ChatComposer({
         });
       },
     );
-    if (!sent && !accepted) {
-      // In particular, a 409 active-turn race must never eat what the user
-      // typed. The store already holds the unchanged durable draft.
+    if (!accepted) {
+      // A request is sent only when the backend exposes durable acceptance.
+      // A 409 race, pre-accept disconnect, or malformed success response must
+      // never eat the user's text or attachments.
+      optimisticSubmissionRef.current = false;
+      setValue(content);
+      if (composerStateKey) {
+        useChatStreamStore.getState().setAttachments(composerStateKey, attachments);
+      }
       textareaRef.current?.focus();
     }
     if (chatId) {
@@ -683,13 +684,6 @@ export function ChatComposer({
         // The stream already owns user-visible transport errors. A state
         // refresh failure must not replay the completed Turn.
       }
-    }
-    // Only clear chips after the SSE round-trip finishes cleanly. A
-    // failure path keeps the chips visible so the user can hit Retry
-    // without re-attaching context.
-    const finalState = useChatStreamStore.getState().runtimes[chatId as string]?.state;
-    if (finalState !== 'cancelled' && finalState !== 'failed' && finalState !== 'interrupted') {
-      if (composerStateKey) useChatStreamStore.getState().clearAttachments(composerStateKey);
     }
   };
 

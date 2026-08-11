@@ -103,6 +103,47 @@ const RuntimeProgressIndicator = memo(function RuntimeProgressIndicator({
   );
 });
 
+const AgentRunningIndicator = memo(function AgentRunningIndicator({
+  compact,
+  startupProgress,
+}: {
+  compact: boolean;
+  startupProgress: RuntimeStartupProgress | null;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="flex items-start justify-start gap-3"
+      data-role="agent-thinking"
+      data-message-role="assistant"
+      role="status"
+      aria-live="polite"
+      aria-label={t('agent.thinking', 'Agent is thinking')}
+      title={t('agent.thinking', 'Agent is thinking')}
+    >
+      {!compact && <MessageAvatar label="A" tone="agent" />}
+      <div
+        className={cn(
+          'flex min-h-9 min-w-12 items-center justify-center gap-2.5 rounded-2xl rounded-bl-sm border border-edge-subtle bg-surface-sunken/70 px-3.5 py-2 text-sm text-muted-foreground',
+          compact && 'max-w-[94%] rounded-xl px-3 py-2 text-[13px]',
+        )}
+        data-message-content-rail="assistant"
+      >
+        {startupProgress ? <RuntimeProgressIndicator progress={startupProgress} /> : null}
+        <span
+          className="inline-flex h-4 shrink-0 items-center gap-1 text-state-running"
+          aria-hidden="true"
+          data-role="agent-thinking-dots"
+        >
+          <span className="chat-thinking-dot h-1.5 w-1.5 rounded-full bg-current" />
+          <span className="chat-thinking-dot h-1.5 w-1.5 rounded-full bg-current" />
+          <span className="chat-thinking-dot h-1.5 w-1.5 rounded-full bg-current" />
+        </span>
+      </div>
+    </div>
+  );
+});
+
 export interface ChatMessageListProps {
   wfId: string;
   vfsScopeId?: string;
@@ -529,30 +570,6 @@ export function ChatMessageList({
   }, [historyMessages, liveMessages, showStream]);
 
   const renderItems = useMemo(() => groupToolActivity(merged), [merged]);
-  const hasStreamingTool = useMemo(
-    () =>
-      isStreaming &&
-      renderItems.some(
-        (item) =>
-          item.kind === 'tool_group' &&
-          item.endIndex >= streamBoundary &&
-          item.calls.some((call) => call.status === 'running'),
-      ),
-    [isStreaming, renderItems, streamBoundary],
-  );
-  const hasVisibleStreamingOutput = useMemo(
-    () =>
-      streamMessages.some(
-        (message) =>
-          message.role === 'assistant' &&
-          (
-            message.content.trim().length > 0 ||
-            message.tool_calls.length > 0
-          ),
-      ),
-    [streamMessages],
-  );
-
   const maybeLoadOlderHistory = useCallback(() => {
     const el = scrollRef.current;
     if (!el || !hasOlderHistory || olderHistoryLoading || loadingOlderRef.current || !onLoadOlderHistory) return;
@@ -802,33 +819,12 @@ export function ChatMessageList({
                   </div>
                 );
               })}
-              {isActivelyWorking && !hasStreamingTool && !hasVisibleStreamingOutput && (
-                <div
-                  className="flex items-start justify-start gap-3"
-                  data-role="agent-thinking"
-                  data-message-role="assistant"
-                  role="status"
-                  aria-live="polite"
-                  aria-label={t('agent.thinking', 'Agent is thinking')}
-                  title={t('agent.thinking', 'Agent is thinking')}
-                >
-                  {!compact && <MessageAvatar label="A" tone="agent" />}
-                  <div
-                    className={cn(
-                      'flex min-h-9 min-w-12 items-center justify-center gap-2.5 rounded-2xl rounded-bl-sm border border-edge-subtle bg-surface-sunken/70 px-3.5 py-2 text-sm text-muted-foreground',
-                      compact && 'max-w-[94%] rounded-xl px-3 py-2 text-[13px]',
-                    )}
-                    data-message-content-rail="assistant"
-                  >
-                    {startupProgress ? <RuntimeProgressIndicator progress={startupProgress} /> : null}
-                    <Loader2
-                      className="h-4 w-4 animate-spin text-state-running motion-reduce:animate-none"
-                      aria-hidden="true"
-                      data-role="agent-thinking-spinner"
-                    />
-                  </div>
-                </div>
-              )}
+              {isActivelyWorking ? (
+                <AgentRunningIndicator
+                  compact={compact}
+                  startupProgress={startupProgress}
+                />
+              ) : null}
               {streamState === 'cancelled' && (
                 <div
                   className="flex items-start gap-2.5 rounded-lg border border-state-warning/30 bg-state-warning/5 px-3 py-2.5 text-sm"

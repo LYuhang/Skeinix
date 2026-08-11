@@ -485,7 +485,7 @@ async def test_enterprise_identity_schema_is_at_current_head(pg_engine) -> None:
             "('enterprise_identity_providers','enterprise_directory_users',"
             "'oidc_login_transactions')"
         ))).scalars())
-    assert revision == "119"
+    assert revision == "120"
     assert {
         "enterprise_identity_providers.organization_slug",
         "enterprise_identity_providers.scim_token_hash",

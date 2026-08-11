@@ -75,9 +75,23 @@ RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex && \
 # runsc and receives the required host capabilities; its startup probe validates
 # the selected platform plus checkpoint/restore support on the actual host.
 ARG RUNSC_RELEASE=20260601.0
+# Small, version-pinned command-line baseline exposed inside every gVisor
+# sandbox. These are runtime inspection/editing tools; compilers and language
+# package managers remain opt-in environment dependencies to keep the trusted
+# base image lean and its attack surface bounded.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+        file=1:5.46-5 \
+        git=1:2.47.3-0+deb13u1 \
+        jq=1.7.1-6+deb13u3 \
+        openssh-client=1:10.0p1-7+deb13u4 \
+        patch=2.8-2 \
+        procps=2:4.0.4-9 \
+        ripgrep=14.1.1-1+b4 \
+        unzip=6.0-29 \
+        zip=3.0-15 \
         fonts-dejavu-core=2.37-8 \
         fonts-wqy-zenhei=0.9.45-8; \
     arch="$(uname -m)"; \
@@ -87,15 +101,17 @@ RUN set -eux; \
     echo "$(awk '{print $1}' /tmp/runsc.sha512 | head -n1)  /tmp/runsc" | sha512sum -c -; \
     chmod 0755 /tmp/runsc && mv /tmp/runsc /usr/local/bin/runsc; \
     rm -f /tmp/runsc.sha512; \
-    apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*
 
 # Install reviewed, hash-locked build tooling and runtime dependencies before
 # local source. Local packages disable build isolation so no undeclared package
 # downloads can occur during their wheel builds.
 COPY requirements-build.txt /tmp/requirements-build.txt
 COPY requirements-runtime.txt /tmp/requirements-runtime.txt
+COPY requirements-sandbox.txt /tmp/requirements-sandbox.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-build.txt && \
-    pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.txt
+    pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.txt && \
+    pip install --no-cache-dir --require-hashes -r /tmp/requirements-sandbox.txt
 
 # Engine is installed from this repository without resolving dependencies again.
 COPY engine /tmp/engine
@@ -114,14 +130,19 @@ COPY scripts/security/ /app/scripts/security/
 
 RUN pip install --no-cache-dir --no-deps --no-build-isolation .
 
-# Package installers are build tools, not runtime dependencies. Removing them
-# from the final image reduces its attack surface without changing application
-# imports or the hash-locked dependency set above.
-RUN python -m pip uninstall -y \
-      pip setuptools wheel hatchling editables pathspec pluggy trove-classifiers \
-      jaraco.context && \
-    test ! -e /usr/local/bin/pip && \
-    test ! -e /usr/local/bin/pip3
+# API/worker images do not need a package installer. The dedicated sandboxd
+# image opts into pip because it owns the narrow, wheel-only, content-addressed
+# Workflow dependency builder; third-party code still executes only in gVisor.
+ARG VIBECANVAS_RUNTIME_ENV_BUILDER=0
+RUN if [ "${VIBECANVAS_RUNTIME_ENV_BUILDER}" = "1" ]; then \
+      python -m pip --version; \
+    else \
+      python -m pip uninstall -y \
+        pip setuptools wheel hatchling editables pathspec pluggy trove-classifiers \
+        jaraco.context && \
+      test ! -e /usr/local/bin/pip && \
+      test ! -e /usr/local/bin/pip3; \
+    fi
 
 # Every API-derived service is unprivileged by default. Compose explicitly
 # overrides only sandboxd to UID 0 for rootful gVisor checkpoint/restore.

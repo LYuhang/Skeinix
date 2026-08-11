@@ -53,6 +53,8 @@ import { formatNumber } from '@/lib/format/number';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { resolveApiUrl } from '@/lib/base-path';
 import { OneTimeSecretField } from '@/pages/deployments/OneTimeSecretField';
+import { useWorkflow } from '@/lib/api/queries/workflow';
+import { getStartNodeFields, type StartNodeField } from '@/lib/workflow/start-node';
 
 type TabKey = 'overview' | 'config' | 'code' | 'runs' | 'monitoring' | 'test' | 'security';
 type CodeLanguage = 'curl' | 'python' | 'javascript';
@@ -264,12 +266,40 @@ function ConfigTab({ dep }: { dep: Deployment }) {
   );
 }
 
-function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
+function exampleValue(field: StartNodeField): unknown {
+  switch (field.type.toLowerCase()) {
+    case 'integer':
+    case 'number':
+    case 'float':
+      return 0;
+    case 'boolean':
+    case 'bool':
+      return true;
+    case 'array':
+    case 'list':
+      return [];
+    case 'object':
+    case 'dict':
+      return {};
+    default:
+      return `<${field.name}>`;
+  }
+}
+
+function workflowExampleInputs(fields: StartNodeField[]): Record<string, unknown> {
+  return Object.fromEntries(fields.map((field) => [field.name, exampleValue(field)]));
+}
+
+function deploymentCodeExamples(
+  dep: Deployment,
+  exampleInputs: Record<string, unknown>,
+): Record<CodeLanguage, string> {
   const endpoint = resolveApiUrl(endpointFor(dep));
+  const payload = JSON.stringify(exampleInputs);
   if (dep.trigger_type === 'webhook') {
     return {
       curl: [
-        "payload='{\"input\":\"hello\"}'",
+        `payload='${payload}'`,
         'timestamp="$(date +%s)"',
         'signature="$(printf \'%s\' "${timestamp}.${payload}" | openssl dgst -sha256 -hmac "${SKEINIX_WEBHOOK_SECRET}" | awk \'{print $2}\')"',
         '',
@@ -289,7 +319,7 @@ function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
         'import requests',
         '',
         `url = ${JSON.stringify(endpoint)}`,
-        'payload = json.dumps({"input": "hello"}, separators=(",", ":"))',
+        `payload = json.dumps(json.loads(${JSON.stringify(payload)}), separators=(",", ":"))`,
         'timestamp = str(int(time.time()))',
         'secret = os.environ["SKEINIX_WEBHOOK_SECRET"].encode()',
         'signature = hmac.new(',
@@ -312,7 +342,7 @@ function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
         "import { createHmac } from 'node:crypto';",
         '',
         `const url = ${JSON.stringify(endpoint)};`,
-        "const payload = JSON.stringify({ input: 'hello' });",
+        `const payload = JSON.stringify(${payload});`,
         'const timestamp = Math.floor(Date.now() / 1000).toString();',
         "const secret = process.env.SKEINIX_WEBHOOK_SECRET;",
         "if (!secret) throw new Error('SKEINIX_WEBHOOK_SECRET is required');",
@@ -339,15 +369,16 @@ function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
       `curl --request POST '${endpoint}' \\`,
       "  --header 'Content-Type: application/json' \\",
       "  --header 'Authorization: Bearer ${SKEINIX_API_KEY}' \\",
-      "  --data '{\"input\":\"hello\"}'",
+      `  --data '${payload}'`,
     ].join('\n'),
     python: [
       'import os',
+      'import json',
       'import requests',
       '',
       `response = requests.post(${JSON.stringify(endpoint)},`,
       '    headers={"Authorization": f"Bearer {os.environ[\'SKEINIX_API_KEY\']}"},',
-      '    json={"input": "hello"},',
+      `    json=json.loads(${JSON.stringify(payload)}),`,
       '    timeout=60,',
       ')',
       'response.raise_for_status()',
@@ -360,7 +391,7 @@ function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
       "    'Content-Type': 'application/json',",
       "    Authorization: `Bearer ${process.env.SKEINIX_API_KEY}` ,",
       '  },',
-      "  body: JSON.stringify({ input: 'hello' }),",
+      `  body: JSON.stringify(${payload}),`,
       '});',
       'if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);',
       'console.log(await response.json());',
@@ -368,10 +399,19 @@ function deploymentCodeExamples(dep: Deployment): Record<CodeLanguage, string> {
   };
 }
 
-function CodeExamplesTab({ dep }: { dep: Deployment }) {
+function CodeExamplesTab({
+  dep,
+  exampleInputs,
+}: {
+  dep: Deployment;
+  exampleInputs: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
   const [language, setLanguage] = useState<CodeLanguage>('curl');
-  const examples = useMemo(() => deploymentCodeExamples(dep), [dep]);
+  const examples = useMemo(
+    () => deploymentCodeExamples(dep, exampleInputs),
+    [dep, exampleInputs],
+  );
   const code = examples[language];
   return (
     <section className="border-y border-edge-subtle py-4">
@@ -613,9 +653,15 @@ function MonitoringTab({ depId, active }: { depId: string; active: boolean }) {
   );
 }
 
-function TestTab({ depId }: { depId: string }) {
+function TestTab({
+  depId,
+  exampleInputs,
+}: {
+  depId: string;
+  exampleInputs: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
-  const [inputsText, setInputsText] = useState('{}');
+  const [inputsText, setInputsText] = useState(JSON.stringify(exampleInputs, null, 2));
   const [output, setOutput] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const mutation = useMutation({
@@ -793,6 +839,12 @@ export function DeploymentDetailPage() {
     refetchOnWindowFocus: false,
     refetchInterval: 15_000,
   });
+  const workflowQuery = useWorkflow(query.data?.wf_id ?? '');
+  const workflowSnapshot = workflowQuery.data?.workflow as Record<string, unknown> | null | undefined;
+  const exampleInputs = useMemo(
+    () => workflowExampleInputs(getStartNodeFields(workflowSnapshot)),
+    [workflowSnapshot],
+  );
 
   if (!depId) {
     return <div className="flex-1 p-6 text-sm text-muted-foreground">{t('deployments.detail.missingId', 'Missing deployment id in URL')}</div>;
@@ -926,7 +978,7 @@ export function DeploymentDetailPage() {
             <ConfigTab dep={dep} />
           </TabsContent>
           <TabsContent value="code">
-            <CodeExamplesTab dep={dep} />
+            <CodeExamplesTab dep={dep} exampleInputs={exampleInputs} />
           </TabsContent>
           <TabsContent value="runs">
             <RunsTab depId={depId} active={activeTab === 'runs'} />
@@ -935,7 +987,11 @@ export function DeploymentDetailPage() {
             <MonitoringTab depId={depId} active={activeTab === 'monitoring'} />
           </TabsContent>
           <TabsContent value="test">
-            <TestTab depId={depId} />
+            <TestTab
+              key={JSON.stringify(exampleInputs)}
+              depId={depId}
+              exampleInputs={exampleInputs}
+            />
           </TabsContent>
           <TabsContent value="security">
             <SecurityTab dep={dep} />

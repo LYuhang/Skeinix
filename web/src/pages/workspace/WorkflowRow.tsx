@@ -121,7 +121,7 @@ export function WorkflowRow({
         data-testid="wf-row"
         data-wf-id={wf.wf_id}
       >
-      <td className="max-w-0 py-3 pl-4 pr-3">
+      <td className="py-3 pl-4 pr-3">
         <div className="flex min-w-0 items-start gap-3">
           <ResourceIcon kind="workflow" size="sm" className="mt-0.5" />
           <div className="min-w-0 flex-1">
@@ -195,7 +195,7 @@ export function WorkflowRow({
           <span>{sandboxLabel}</span>
         </button>
       </td>
-      <td className="hidden whitespace-nowrap px-3 py-3 text-sm text-muted-foreground sm:table-cell">
+      <td className="hidden whitespace-nowrap px-3 py-3 text-sm text-muted-foreground xl:table-cell">
         {formatDateTime(wf.updated_at)}
       </td>
       <td className="py-3 pl-3 pr-4">

@@ -44,12 +44,16 @@ export function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
+  const cancelAccountDeletion = useAuthStore((s) => s.cancelAccountDeletion);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [enableTestUser, setEnableTestUser] = useState(false);
   const [enterpriseSsoEnabled, setEnterpriseSsoEnabled] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'email' | 'sso'>('email');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [pendingMfa, setPendingMfa] = useState<LoginMfaRequired | null>(null);
+  const [accountDeletionMode, setAccountDeletionMode] = useState<'immediate' | 'delayed'>('immediate');
+  const [deletionCanBeCancelled, setDeletionCanBeCancelled] = useState(false);
+  const [cancellingDeletion, setCancellingDeletion] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -71,6 +75,9 @@ export function LoginPage() {
         setEnableTestUser(enabled);
         const ssoEnabled = Boolean(payload?.enterprise_sso_enabled);
         setEnterpriseSsoEnabled(ssoEnabled);
+        setAccountDeletionMode(
+          payload?.account_deletion_mode === 'delayed' ? 'delayed' : 'immediate',
+        );
         if (!ssoEnabled) setLoginMethod('email');
         if (enabled) {
           const current = form.getValues();
@@ -93,6 +100,7 @@ export function LoginPage() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitError(null);
+    setDeletionCanBeCancelled(false);
     try {
       const pending = await login(values.email, values.password);
       if (pending) {
@@ -107,11 +115,38 @@ export function LoginPage() {
         // verbatim. (English UI users will see the same Chinese detail —
         // this is intentional alignment with the API contract.)
         setSubmitError(err.detail);
+        setDeletionCanBeCancelled(
+          err.status === 423 && accountDeletionMode === 'delayed',
+        );
       } else {
         setSubmitError(t('auth_error_network', 'Network error. Please retry.'));
       }
     }
   });
+
+  const cancelDeletionAndSignIn = async () => {
+    const values = form.getValues();
+    setCancellingDeletion(true);
+    setSubmitError(null);
+    try {
+      await cancelAccountDeletion(values.email, values.password);
+      const pending = await login(values.email, values.password);
+      setDeletionCanBeCancelled(false);
+      if (pending) {
+        setPendingMfa(pending);
+      } else {
+        navigate('/chat', { replace: true });
+      }
+    } catch (err) {
+      setSubmitError(
+        err instanceof AuthApiError
+          ? err.detail
+          : t('auth_error_network', 'Network error. Please retry.'),
+      );
+    } finally {
+      setCancellingDeletion(false);
+    }
+  };
 
   const emailLogin = (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -196,6 +231,18 @@ export function LoginPage() {
         >
           {submitError}
         </p>
+      ) : null}
+      {deletionCanBeCancelled ? (
+        <Button
+          type="button"
+          variant="outline"
+          disabled={cancellingDeletion}
+          onClick={() => void cancelDeletionAndSignIn()}
+        >
+          {cancellingDeletion
+            ? t('account_delete_cancelling', 'Restoring account…')
+            : t('account_delete_cancel_and_sign_in', 'Cancel deletion and sign in')}
+        </Button>
       ) : null}
       <Button type="submit" disabled={form.formState.isSubmitting}>
         {form.formState.isSubmitting

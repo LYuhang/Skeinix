@@ -1,15 +1,12 @@
 /**
  * Sandboxed HTML renderer for `text/html`.
  *
- * CSP DECISION (verified 2026-06-19): the app ships NO Content-Security-Policy
- * — `web/index.html` has no CSP `<meta>`, the Vite dev/build/preview config
- * sets no `Content-Security-Policy` / `frame-src` header, and a repo-wide grep
- * for CSP found nothing. There is therefore no `frame-src`/`sandbox` directive
- * that would block a same-document sandboxed iframe. So we take the SAFE-but-
- * richer option: a sandboxed `<iframe srcdoc>` preview with the `sandbox`
- * attribute set to the EMPTY string — which disables scripts, forms, popups,
- * same-origin access, top-navigation, everything. (NO `allow-scripts`: the
- * agent's HTML output is untrusted, so no JS ever runs.)
+ * CSP DECISION (verified 2026-08-11): ordinary tool-envelope HTML remains
+ * inert. The application shell ships a strict CSP, and this renderer also uses
+ * an empty iframe sandbox, disabling scripts, forms, popups, same-origin
+ * access, and top navigation. Rich Agent-authored behavior is available only
+ * through the separate Interactive Artifact contract and its dedicated
+ * response-level sandbox; this fallback must never acquire `allow-scripts`.
  *
  * The preview is collapsed by default (P3 — hide machinery for non-technical
  * users); a toggle switches between the rendered Preview and the escaped HTML

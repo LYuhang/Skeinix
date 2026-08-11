@@ -23,6 +23,7 @@ source_marker() {
     "$REPO_ROOT/engine/pyproject.toml" \
     "$REPO_ROOT/api/pyproject.toml" \
     "$REPO_ROOT/requirements-dev.txt" \
+    "$REPO_ROOT/requirements-sandbox.txt" \
     "$REPO_ROOT/scripts/prepare_runtime_environment.sh"; do
     [[ -e "$path" ]] && stat -c '%Y:%s' "$path"
   done | tr '\n' ':'
@@ -30,7 +31,7 @@ source_marker() {
 
 runtime_self_check() {
   PYTHONNOUSERSITE=1 env -u PYTHONPATH "$CACHE_PREFIX/bin/python" -c \
-    'import asyncio, fastapi, langgraph, psycopg, sqlalchemy, webauthn; print("runtime environment self-check: ok")'
+    'import asyncio, fastapi, jsonlines, langgraph, matplotlib, networkx, numpy, pandas, psycopg, seaborn, sqlalchemy, tabulate, webauthn; print("runtime environment self-check: ok")'
 }
 
 sync_base_environment() {

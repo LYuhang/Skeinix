@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive preview</title>
+  </head>
+  <body>
+    <script>
+      (() => {
+        'use strict';
+        const CHANNEL = 'vibecanvas:interactive-loader:v1';
+        const MAX_DOCUMENT_CHARS = 2 * 1024 * 1024;
+        let loaded = false;
+
+        const send = (type, message) => {
+          window.parent.postMessage({ channel: CHANNEL, type, message }, '*');
+        };
+        const receive = (event) => {
+          if (loaded || event.source !== window.parent) return;
+          const payload = event.data;
+          if (
+            !payload
+            || payload.channel !== CHANNEL
+            || payload.type !== 'load'
+            || typeof payload.html !== 'string'
+          ) return;
+          if (payload.html.length > MAX_DOCUMENT_CHARS) {
+            loaded = true;
+            window.removeEventListener('message', receive);
+            send('error', 'The interactive preview document is too large.');
+            return;
+          }
+          loaded = true;
+          window.removeEventListener('message', receive);
+          const html = payload.html;
+          document.open();
+          document.write(html);
+          document.close();
+        };
+
+        window.addEventListener('message', receive);
+        send('ready');
+      })();
+    </script>
+  </body>
+</html>

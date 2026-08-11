@@ -52,6 +52,8 @@ jobs:
           .venv/bin/python -m pip install --require-hashes \
             --requirement requirements-build.txt
           .venv/bin/python -m pip install --requirement requirements-dev.txt
+          .venv/bin/python -m pip install --require-hashes \
+            --requirement requirements-sandbox.txt
           .venv/bin/python -m pip install --no-build-isolation --no-deps \
             --editable ./engine --editable ./api
           .venv/bin/python scripts/verify_dependency_locks.py

@@ -228,8 +228,8 @@ async def test_runner_no_codenode_no_overlay(pg_session, monkeypatch, tmp_path):
     tenant, user, wf_id = await _seed_committed_wf(pg_session, _wf_no_code_node())
     _patch_fs_run_workspace(monkeypatch, tmp_path)
 
-    lookup_mock = AsyncMock()
-    monkeypatch.setattr(runner_mod, "find_ready_overlay", lookup_mock)
+    ensure_mock = AsyncMock()
+    monkeypatch.setattr(runner_mod, "ensure_overlay", ensure_mock)
     captured: dict = {}
     monkeypatch.setattr(runner_mod, "get_sandbox_provider",
                         lambda **kw: _stub_provider_capturing(captured))
@@ -239,7 +239,7 @@ async def test_runner_no_codenode_no_overlay(pg_session, monkeypatch, tmp_path):
             workflow_id=wf_id, inputs={}, tenant_id=tenant, user_id=user)
 
     await asyncio.to_thread(_call)
-    lookup_mock.assert_not_called()
+    ensure_mock.assert_not_called()
     assert captured["called"] is True
     assert captured["lib_overlay"] is None
 
@@ -255,8 +255,8 @@ async def test_runner_codenode_no_reqs_no_overlay(
         pg_session, _wf_with_code_node(code_requirements=None))
     _patch_fs_run_workspace(monkeypatch, tmp_path)
 
-    lookup_mock = AsyncMock()
-    monkeypatch.setattr(runner_mod, "find_ready_overlay", lookup_mock)
+    ensure_mock = AsyncMock()
+    monkeypatch.setattr(runner_mod, "ensure_overlay", ensure_mock)
     captured: dict = {}
     monkeypatch.setattr(runner_mod, "get_sandbox_provider",
                         lambda **kw: _stub_provider_capturing(captured))
@@ -266,7 +266,7 @@ async def test_runner_codenode_no_reqs_no_overlay(
             workflow_id=wf_id, inputs={"x": 1}, tenant_id=tenant, user_id=user)
 
     await asyncio.to_thread(_call)
-    lookup_mock.assert_not_called()
+    ensure_mock.assert_not_called()
     assert captured["lib_overlay"] is None
 
 
@@ -283,9 +283,9 @@ async def test_noninteractive_runner_reuses_prepared_requirements(
         pg_session, _wf_with_code_node(code_requirements="six==1.16.0"))
     _patch_fs_run_workspace(monkeypatch, tmp_path)
 
-    lookup_mock = AsyncMock(return_value=EnsureResult(
+    ensure_mock = AsyncMock(return_value=EnsureResult(
         overlay_key="k", status="ready", path=overlay_path, error_log=None))
-    monkeypatch.setattr(runner_mod, "find_ready_overlay", lookup_mock)
+    monkeypatch.setattr(runner_mod, "ensure_overlay", ensure_mock)
     captured: dict = {}
     monkeypatch.setattr(runner_mod, "get_sandbox_provider",
                         lambda **kw: _stub_provider_capturing(captured))
@@ -295,26 +295,27 @@ async def test_noninteractive_runner_reuses_prepared_requirements(
             workflow_id=wf_id, inputs={"x": 1}, tenant_id=tenant, user_id=user)
 
     await asyncio.to_thread(_call)
-    lookup_mock.assert_awaited_once()
+    ensure_mock.assert_awaited_once()
     # called with the declared requirements text.
-    assert lookup_mock.await_args.args[0] == "six==1.16.0"
+    assert ensure_mock.await_args.args[0] == "six==1.16.0"
     assert captured["lib_overlay"] == overlay_path
 
 
 @pytest.mark.asyncio
-async def test_noninteractive_runner_missing_overlay_does_not_install(
+async def test_noninteractive_runner_prepares_missing_overlay(
         pg_session, monkeypatch, tmp_path):
-    """A non-interactive run only looks up the layer and never installs it."""
+    """A non-interactive run self-heals a cold dependency cache."""
     from vibecanvas_api.services import workflow_runner as runner_mod
 
+    overlay_path = str(tmp_path / "overlay" / "py")
+    os.makedirs(overlay_path, exist_ok=True)
     tenant, user, wf_id = await _seed_committed_wf(
-        pg_session, _wf_with_code_node(code_requirements="doesnotexist==9.9.9"))
+        pg_session, _wf_with_code_node(code_requirements="six==1.16.0"))
     _patch_fs_run_workspace(monkeypatch, tmp_path)
 
-    lookup_mock = AsyncMock(return_value=EnsureResult(
-        overlay_key="k", status="unavailable", path=None,
-        error_log="overlay status is 'missing'"))
-    monkeypatch.setattr(runner_mod, "find_ready_overlay", lookup_mock)
+    ensure_mock = AsyncMock(return_value=EnsureResult(
+        overlay_key="k", status="ready", path=overlay_path, error_log=None))
+    monkeypatch.setattr(runner_mod, "ensure_overlay", ensure_mock)
 
     captured: dict = {}
     monkeypatch.setattr(runner_mod, "get_sandbox_provider",
@@ -324,9 +325,35 @@ async def test_noninteractive_runner_missing_overlay_does_not_install(
         return runner_mod.run_workflow_sandboxed_sync(
             workflow_id=wf_id, inputs={"x": 1}, tenant_id=tenant, user_id=user)
 
-    with pytest.raises(RuntimeError) as ei:
+    await asyncio.to_thread(_call)
+    ensure_mock.assert_awaited_once_with("six==1.16.0")
+    assert captured["called"] is True
+    assert captured["lib_overlay"] == overlay_path
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_runner_dependency_build_failure_is_clear(
+        pg_session, monkeypatch, tmp_path):
+    """A failed cold dependency build stops before sandbox execution."""
+    from vibecanvas_api.services import workflow_runner as runner_mod
+
+    tenant, user, wf_id = await _seed_committed_wf(
+        pg_session, _wf_with_code_node(code_requirements="private-pkg==9.9.9"))
+    _patch_fs_run_workspace(monkeypatch, tmp_path)
+
+    ensure_mock = AsyncMock(return_value=EnsureResult(
+        overlay_key="k", status="failed", path=None,
+        error_log="no compatible wheel"))
+    monkeypatch.setattr(runner_mod, "ensure_overlay", ensure_mock)
+    captured: dict = {}
+    monkeypatch.setattr(runner_mod, "get_sandbox_provider",
+                        lambda **kw: _stub_provider_capturing(captured))
+
+    def _call():
+        return runner_mod.run_workflow_sandboxed_sync(
+            workflow_id=wf_id, inputs={"x": 1}, tenant_id=tenant, user_id=user)
+
+    with pytest.raises(RuntimeError, match="no compatible wheel"):
         await asyncio.to_thread(_call)
-    # clear error mentioning provisioning + the failure log; NO launch.
-    assert "Workflow page" in str(ei.value)
-    lookup_mock.assert_awaited_once()
+    ensure_mock.assert_awaited_once_with("private-pkg==9.9.9")
     assert captured.get("called") is not True

@@ -35,6 +35,7 @@ import stat
 import sys
 import tempfile
 import time
+import uuid
 
 import structlog
 from vibecanvas_engine.sandbox_bus import (
@@ -61,7 +62,7 @@ from vibecanvas_api.services.codex_cli import (
     codex_cli_readonly_root,
     resolve_codex_executable,
 )
-from vibecanvas_api.services.env.overlay_builder import find_ready_overlay
+from vibecanvas_api.services.env.overlay_builder import ensure_overlay
 from vibecanvas_api.services.object_store import FilesystemObjectStore, get_object_store
 from vibecanvas_api.services.run_workspace import RunWorkspace
 from vibecanvas_api.services.sandbox import get_sandbox_provider
@@ -105,6 +106,43 @@ _SNAPSHOT_STORE_LOCK = asyncio.Lock()
 # (/data), scratch memory (/memory), and run logs (/logs). Each is a host
 # subdir of the chat/workspace ``run_dir`` mirrored to the matching VFS prefix.
 _RUN_WRITEBACK_FOLDERS = ("data", "memory", "logs")
+_SANDBOX_BASELINE_TOOLS = (
+    "git",
+    "jq",
+    "curl",
+    "ssh",
+    "rg",
+    "zip",
+    "unzip",
+    "patch",
+    "file",
+    "ps",
+    "tar",
+    "node",
+    "python",
+)
+_SANDBOX_BASELINE_PYTHON_MODULES = (
+    "bs4",
+    "docx",
+    "httpx",
+    "jsonlines",
+    "lxml",
+    "markdown",
+    "matplotlib",
+    "networkx",
+    "numpy",
+    "openpyxl",
+    "pandas",
+    "PIL",
+    "pptx",
+    "pypdf",
+    "reportlab",
+    "requests",
+    "seaborn",
+    "tabulate",
+    "xlsxwriter",
+    "yaml",
+)
 DIR_KEEP_SENTINEL = ".vibekeep"
 
 
@@ -2803,7 +2841,16 @@ class SandboxManager:
                 pool.submit_fileop,
                 {
                     "op": "exec",
-                    "command": "python -c 'import json,sys; print(json.dumps({\"ok\": sys.version_info[:2] >= (3, 11)}))'",
+                    "command": (
+                        "set -eu; for tool in "
+                        + " ".join(_SANDBOX_BASELINE_TOOLS)
+                        + "; do command -v \"$tool\" >/dev/null; done; "
+                        "python -c 'import importlib,json,sys; "
+                        "[importlib.import_module(module) for module in "
+                        + json.dumps(_SANDBOX_BASELINE_PYTHON_MODULES)
+                        + "]; "
+                        "print(json.dumps({\"ok\": sys.version_info[:2] >= (3, 11)}))'"
+                    ),
                     "cwd": "/",
                     "timeout": 30,
                 },
@@ -2812,6 +2859,12 @@ class SandboxManager:
             if int(result.get("exit_code", 1)) != 0 or '"ok": true' not in str(
                 result.get("stdout") or ""
             ).lower():
+                logger.error(
+                    "sandbox_base_fileop_verification_failed",
+                    exit_code=result.get("exit_code"),
+                    stdout=str(result.get("stdout") or "")[:1000],
+                    stderr=str(result.get("stderr") or "")[:1000],
+                )
                 raise RuntimeError("base file-operation verification failed")
             if self.snapshot_sessions:
                 snapshot_root = SandboxSession._snapshot_store_root(
@@ -3053,15 +3106,18 @@ class SandboxManager:
         lib_overlay = None
         normalized_requirements = str(requirements or "").strip()
         if normalized_requirements:
-            prepared = await find_ready_overlay(normalized_requirements)
-            if prepared.status != "ready":
-                detail = prepared.error_log or f"overlay status is {prepared.status!r}"
-                raise RuntimeError(
-                    "workflow dependency environment is not initialized; run a "
-                    "node or the workflow once from the Workflow page before "
-                    f"invoking it here ({normalized_requirements!r}: {detail})"
+            prepared = await self.ensure_workflow_dependencies(
+                normalized_requirements,
+            )
+            if prepared["status"] != "ready":
+                detail = prepared.get("error_log") or (
+                    f"overlay status is {prepared['status']!r}"
                 )
-            lib_overlay = prepared.path
+                raise RuntimeError(
+                    "workflow dependency preparation failed "
+                    f"({normalized_requirements!r}: {detail})"
+                )
+            lib_overlay = prepared.get("path")
 
         async with RunWorkspace(
             run_id,
@@ -3107,6 +3163,22 @@ class SandboxManager:
                 "error_dict": result.error_dict,
                 "execution_time": result.execution_time,
             }
+
+    async def ensure_workflow_dependencies(self, requirements: str) -> dict:
+        """Prepare one content-addressed dependency layer on the sandbox node.
+
+        Package installation stays out of API and worker images. The rootful
+        sandbox service owns the shared overlay volume and exposes only this
+        narrow, wheel-only builder capability over its authenticated control
+        channel; Workflow execution then mounts the published layer read-only.
+        """
+        prepared = await ensure_overlay(requirements)
+        return {
+            "overlay_key": prepared.overlay_key,
+            "status": prepared.status,
+            "path": prepared.path,
+            "error_log": prepared.error_log,
+        }
 
     async def _close_session_best_effort(self, session: SandboxSession, *, reason: str) -> None:
         timeout_s = max(0.1, float(config.sandbox_session_close_timeout_s))
@@ -3478,6 +3550,94 @@ class SandboxManager:
             self._schedule_close(victim, reason=reason)
         await self.drain_background_closes()
         return len(victims)
+
+    async def close_user(self, user_id: str, *, reason: str = "account_purge") -> int:
+        """Detach this identity's sandboxes across every organization.
+
+        Account deletion removes the personal tenant, but a user may also have
+        resident Chat or debug sessions inside organization-owned workspaces.
+        Those processes still contain user-scoped Runtime state and therefore
+        must not survive identity erasure.
+        """
+        victims: list[SandboxSession] = []
+        async with self._lock:
+            keys = [
+                key for key, session in self._sessions.items()
+                if session.user_id == user_id
+            ]
+            for key in keys:
+                victim = self._sessions.pop(key)
+                self._closed_markers[key] = time.monotonic()
+                victims.append(victim)
+        for victim in victims:
+            self._schedule_close(victim, reason=reason)
+        await self.drain_background_closes()
+        return len(victims)
+
+    async def purge_user_storage(
+        self,
+        user_id: str,
+        tenant_ids: list[str],
+        personal_tenant_id: str,
+    ) -> bool:
+        """Remove identity-owned persistent Runtime trees on the sandbox host.
+
+        API and worker containers intentionally do not mount these volumes in a
+        service deployment. Account erasure must therefore cross the sandboxd
+        control plane instead of deleting a same-named, container-local path.
+        UUID canonicalization and parent checks keep the RPC narrowly scoped.
+        """
+        canonical_user_id = str(uuid.UUID(user_id))
+        canonical_personal_tenant_id = str(uuid.UUID(personal_tenant_id))
+        canonical_tenant_ids = {
+            str(uuid.UUID(tenant_id)) for tenant_id in tenant_ids
+        }
+        canonical_tenant_ids.add(canonical_personal_tenant_id)
+
+        def remove_user_directory(root: str, tenant_id: str) -> None:
+            if not root:
+                return
+            resolved_root = os.path.realpath(root)
+            tenant_directory = os.path.join(resolved_root, tenant_id)
+            target = os.path.join(tenant_directory, canonical_user_id)
+            if os.path.islink(tenant_directory) or os.path.islink(target):
+                raise RuntimeError("sandbox storage purge refuses symbolic links")
+            if not os.path.exists(target):
+                return
+            if os.path.commonpath((resolved_root, os.path.realpath(target))) != resolved_root:
+                raise RuntimeError("sandbox user storage escaped configured root")
+            shutil.rmtree(target)
+
+        def remove_personal_tenant_directory(root: str) -> None:
+            if not root:
+                return
+            resolved_root = os.path.realpath(root)
+            target = os.path.join(resolved_root, canonical_personal_tenant_id)
+            if os.path.islink(target):
+                raise RuntimeError("sandbox storage purge refuses symbolic links")
+            if not os.path.exists(target):
+                return
+            if (
+                os.path.dirname(os.path.realpath(target)) != resolved_root
+                or os.path.realpath(target) == resolved_root
+            ):
+                raise RuntimeError("sandbox tenant storage escaped configured root")
+            shutil.rmtree(target)
+
+        roots = {
+            os.path.realpath(root)
+            for root in (
+                config.agent_overlay_root,
+                config.agent_runtime_root,
+                config.vfs_volume_root,
+            )
+            if root
+        }
+        for root in sorted(roots):
+            for tenant_id in sorted(canonical_tenant_ids):
+                await asyncio.to_thread(remove_user_directory, root, tenant_id)
+            await asyncio.to_thread(remove_personal_tenant_directory, root)
+        return True
 
     async def invalidate_codex_account_sessions(
         self,

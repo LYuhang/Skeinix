@@ -34,6 +34,49 @@ set_env_value() {
   mv "$temporary" "$ENV_FILE"
 }
 
+env_has_nonempty_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $1 == key && length(substr($0, index($0, "=") + 1)) > 0 { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$ENV_FILE"
+}
+
+ensure_env_value() {
+  local key="$1"
+  local value="$2"
+  if ! env_has_nonempty_value "$key"; then
+    set_env_value "$key" "$value"
+  fi
+}
+
+backfill_env() {
+  ensure_env_value POSTGRES_PASSWORD "$(random_hex 24)"
+  ensure_env_value VIBECANVAS_APP_PASSWORD "$(random_hex 24)"
+  ensure_env_value VIBECANVAS_MIGRATOR_PASSWORD "$(random_hex 24)"
+  ensure_env_value VIBECANVAS_MAINTENANCE_PASSWORD "$(random_hex 24)"
+  ensure_env_value OPENFGA_POSTGRES_PASSWORD "$(random_hex 24)"
+  ensure_env_value OPENFGA_ERASURE_PASSWORD "$(random_hex 24)"
+  ensure_env_value OPENFGA_API_TOKEN "$(random_hex 32)"
+  ensure_env_value KMS_PROVIDER local
+  ensure_env_value KMS_KEY_ID vibecanvas-local-development
+  ensure_env_value KMS_LOCAL_MASTER_KEY "$(random_urlsafe_key)"
+  ensure_env_value CONTENT_LOOKUP_HMAC_KEY "$(random_urlsafe_key)"
+  ensure_env_value BROWSER_TOKEN_SECRET "$(random_urlsafe_key)"
+  ensure_env_value VIBECANVAS_SIGNING_SECRET "$(random_urlsafe_key)"
+  ensure_env_value OAUTH_ENCRYPTION_KEY "$(random_urlsafe_key)"
+  ensure_env_value ENABLE_TEST_USER false
+  ensure_env_value ENTERPRISE_SSO_ENABLED false
+  ensure_env_value AGENT_RUNTIME_TYPES langchain,codex
+  ensure_env_value CODEX_RUNTIME_AUTH_METHODS chatgpt,managed_api,personal_api
+  ensure_env_value CODEX_MANAGED_APIS_JSON '[]'
+  ensure_env_value AGENT_DEBUG_VIEW_ENABLED false
+  ensure_env_value BROWSER_DEBUG_SEND false
+  ensure_env_value SANDBOX_TYPE rootful-snapshot
+  ensure_env_value SANDBOX_EGRESS_MODE "${SANDBOX_EGRESS_MODE:-proxy}"
+  ensure_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"
+}
+
 initialize_env() {
   command -v openssl >/dev/null 2>&1 || {
     echo "ERROR: openssl is required to generate local secrets" >&2
@@ -41,7 +84,8 @@ initialize_env() {
   }
   if [[ -e "$ENV_FILE" ]]; then
     chmod 600 "$ENV_FILE"
-    echo "existing env preserved without modification: $ENV_FILE"
+    backfill_env
+    echo "existing env preserved; missing settings initialized: $ENV_FILE"
     return
   fi
 
@@ -54,6 +98,7 @@ initialize_env() {
   set_env_value VIBECANVAS_MIGRATOR_PASSWORD "$(random_hex 24)"
   set_env_value VIBECANVAS_MAINTENANCE_PASSWORD "$(random_hex 24)"
   set_env_value OPENFGA_POSTGRES_PASSWORD "$(random_hex 24)"
+  set_env_value OPENFGA_ERASURE_PASSWORD "$(random_hex 24)"
   set_env_value OPENFGA_API_TOKEN "$(random_hex 32)"
   set_env_value KMS_PROVIDER local
   set_env_value KMS_KEY_ID vibecanvas-local-development
@@ -71,7 +116,7 @@ initialize_env() {
   set_env_value BROWSER_DEBUG_SEND false
   set_env_value SANDBOX_TYPE rootful-snapshot
   set_env_value SANDBOX_EGRESS_MODE "${SANDBOX_EGRESS_MODE:-proxy}"
-  set_env_value SANDBOX_AGENT_EGRESS_POLICY "${SANDBOX_AGENT_EGRESS_POLICY:-public}"
+  set_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"
 
   echo "created $ENV_FILE with mode 0600"
   echo "optional: edit model credentials in $ENV_FILE before first AI request"

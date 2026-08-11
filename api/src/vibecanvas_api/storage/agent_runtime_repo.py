@@ -220,15 +220,18 @@ class AgentRuntimeRepo:
         runtime_type: str,
         runtime_session_id: str,
         state_ref: str,
+        previous_state_ref: str | None = None,
     ) -> dict | None:
-        """Persist the Runtime-native dialogue reference exactly once.
+        """Persist or compare-and-swap the Runtime-native dialogue reference.
 
-        The row lock makes a first Codex Turn safe across API workers. A
-        different value for an already-bound Chat is an invariant violation,
-        never a reason to silently fork the conversation.
+        The row lock makes the first write and an intentional Codex thread
+        rotation safe across API workers.  A different value is accepted only
+        when the Runtime supplies the exact previously persisted reference;
+        stale or unsolicited forks remain invariant violations.
         """
         if not state_ref.strip():
             raise ValueError("runtime state ref is required")
+        expected_previous = str(previous_state_ref or "").strip()
         chat = (
             await self._session.execute(
                 select(Chat)
@@ -251,7 +254,11 @@ class AgentRuntimeRepo:
             chat.runtime_state_ref = state_ref
             await self._session.flush()
         elif chat.runtime_state_ref != state_ref:
-            raise ValueError("runtime state ref conflict")
+            if expected_previous and chat.runtime_state_ref == expected_previous:
+                chat.runtime_state_ref = state_ref
+                await self._session.flush()
+            else:
+                raise ValueError("runtime state ref conflict")
         return self._binding(chat)
 
     async def set_runtime_model_id(

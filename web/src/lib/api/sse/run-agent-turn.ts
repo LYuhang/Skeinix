@@ -30,9 +30,9 @@
  *   5. Clear the abort controller on completion so the store doesn't
  *      hold a stale reference.
  *
- * Does NOT clear `pendingAttachments` — the caller decides whether
- * the chips survive a send (composer clears on success; retry
- * preserves so the user can keep iterating).
+ * Does NOT mutate `pendingAttachments`. The composer atomically moves its
+ * draft snapshot into this call before the request; Retry calls this helper
+ * directly from `lastInput` and therefore has no composer chips to drain.
  */
 import { toast } from 'sonner';
 import type { components } from '@/lib/api/schema';

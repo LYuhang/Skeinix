@@ -236,7 +236,68 @@ async def test_prepare_requirements_failure_is_clear(monkeypatch):
     with pytest.raises(runner.WorkflowSandboxRunError, match="no compatible wheel"):
         await runner.prepare_code_pythonpath({
             "__meta__": {"settings": {"code_requirements": "private-pkg==1"}}
-        })
+        }, session=SimpleNamespace(remote=False))
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_execution_self_heals_cold_requirements(
+    monkeypatch, tmp_path,
+):
+    """Deployment/Task execution uses the same idempotent overlay builder."""
+    from vibecanvas_api.services import workflow_sandbox_runner as runner
+
+    overlay = tmp_path / "overlays" / "key" / "py"
+    overlay.mkdir(parents=True)
+    calls = []
+
+    async def fake_ensure(requirements):
+        calls.append(requirements)
+        return SimpleNamespace(
+            status="ready", path=str(overlay), error_log=None,
+        )
+
+    monkeypatch.setattr(runner, "ensure_overlay", fake_ensure)
+    path = await runner.ensure_code_pythonpath({
+        "__meta__": {
+            "settings": {"code_requirements": "  requests==2.32.5  "},
+        },
+    }, session=SimpleNamespace(remote=False))
+
+    assert path == str(overlay)
+    assert calls == ["requests==2.32.5"]
+
+
+@pytest.mark.asyncio
+async def test_remote_dependency_preparation_is_owned_by_sandboxd(monkeypatch):
+    """API/worker proxies never require a local package installer."""
+    from vibecanvas_api.services import workflow_sandbox_runner as runner
+
+    calls = []
+
+    class FakeManager:
+        async def ensure_workflow_dependencies(self, requirements):
+            calls.append(requirements)
+            return {
+                "status": "ready",
+                "path": "/sandboxd/lib-overlay/key/py",
+                "error_log": None,
+            }
+
+    async def local_build_forbidden(_requirements):
+        raise AssertionError("remote execution must not run pip in API/worker")
+
+    monkeypatch.setattr(runner, "ensure_overlay", local_build_forbidden)
+    path = await runner.ensure_code_pythonpath(
+        {
+            "__meta__": {
+                "settings": {"code_requirements": "requests==2.32.5"},
+            },
+        },
+        session=SimpleNamespace(remote=True, _manager=FakeManager()),
+    )
+
+    assert path == "/sandboxd/lib-overlay/key/py"
+    assert calls == ["requests==2.32.5"]
 
 
 def test_merge_stage_extra_preserves_credentials(tmp_path):

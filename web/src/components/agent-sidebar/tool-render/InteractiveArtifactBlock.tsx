@@ -31,6 +31,11 @@ import {
 } from '@/lib/api/interactive-artifacts';
 import { cn } from '@/lib/utils';
 import type { FileRefV1 } from '@/lib/preview/protocol';
+import {
+  isPreviewSandboxLoaderMessage,
+  loadPreviewSandboxDocument,
+  PREVIEW_SANDBOX_LOADER_PATH,
+} from '@/lib/preview/sandbox-loader';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStreamStore } from '@/stores/chat-stream';
 
@@ -614,6 +619,22 @@ function HtmlPreviewRenderer({
   const [diagnostics, setDiagnostics] = useState<InteractiveRenderDiagnostic[]>([]);
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
 
+  const resolvedHtml = useMemo(
+    () => session ? buildInteractiveHtmlDocument({
+      artifactId,
+      html,
+      resourceMounts: session.resource_mounts,
+      baseUrl: session.base_url,
+      initialState: documentInitialState,
+      frozen,
+    }) : '',
+    [artifactId, documentInitialState, frozen, html, session],
+  );
+
+  const loadSandboxDocument = useCallback(() => {
+    loadPreviewSandboxDocument(iframeRef.current, resolvedHtml);
+  }, [resolvedHtml]);
+
   const retry = useCallback(() => {
     sandboxSessionNonceRef.current = '';
     if (bootTimerRef.current !== null) window.clearTimeout(bootTimerRef.current);
@@ -694,6 +715,20 @@ function HtmlPreviewRenderer({
     const receive = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (event.origin !== 'null') return;
+      if (isPreviewSandboxLoaderMessage(event.data)) {
+        if (event.data.type === 'ready') {
+          loadSandboxDocument();
+        } else {
+          setFailure({
+            id: 'sandbox-loader',
+            status: 'open',
+            severity: 'error',
+            kind: 'boot',
+            message: event.data.message || 'The interactive preview could not be loaded.',
+          });
+        }
+        return;
+      }
       if (!isInteractiveSandboxMessage(event.data) || event.data.artifactId !== artifactId) return;
       if (event.data.type === 'diagnostic' && event.data.diagnostic) {
         if (
@@ -780,24 +815,13 @@ function HtmlPreviewRenderer({
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
-  }, [artifactId, onOpenFilePreview, onWidgetStateChange, persistDraft, saveDraftNow]);
+  }, [artifactId, loadSandboxDocument, onOpenFilePreview, onWidgetStateChange, persistDraft, saveDraftNow]);
 
-  const resolvedHtml = useMemo(
-    () => session ? buildInteractiveHtmlDocument({
-      artifactId,
-      html,
-      resourceMounts: session.resource_mounts,
-      baseUrl: session.base_url,
-      initialState: documentInitialState,
-      frozen,
-    }) : '',
-    [artifactId, documentInitialState, frozen, html, session],
-  );
-
-  // Changing between the live and durable frozen document reloads srcDoc and
-  // therefore creates a new opaque-origin sandbox session. Reset before the
-  // browser can deliver that document's first ordered `ready` message; keeping
-  // the prior nonce would reject every message from the current iframe.
+  // Changing between the live and durable frozen document remounts the loader
+  // iframe and therefore creates a new opaque-origin sandbox session. Reset
+  // before the browser can deliver that document's first ordered `ready`
+  // message; keeping the prior nonce would reject every message from the
+  // current iframe.
   useLayoutEffect(() => {
     sandboxSessionNonceRef.current = '';
   }, [artifactId, frozen, resolvedHtml, sessionRevision]);
@@ -836,10 +860,11 @@ function HtmlPreviewRenderer({
         <InteractiveDiagnosticPanel diagnostics={diagnostics} onRetry={retry} feedbackContext={feedbackContext} />
       ) : null}
       <iframe
-        key={`${artifactId}:${sessionRevision}:${frozen ? 'frozen' : 'live'}`}
+        key={`${artifactId}:${sessionRevision}:${frozen ? 'frozen' : 'live'}:${session?.base_url ?? ''}`}
         ref={iframeRef}
         sandbox="allow-scripts allow-forms"
-        srcDoc={resolvedHtml}
+        src={PREVIEW_SANDBOX_LOADER_PATH}
+        onLoad={loadSandboxDocument}
         title={stringFrom(props.title, 'HTML preview')}
         className="w-full border-0 bg-white"
         style={{ height: Math.max(120, height - 58) }}

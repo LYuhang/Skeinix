@@ -25,7 +25,7 @@ from vibecanvas_api.services.batch_output import build_output_sink, serialize_re
 from vibecanvas_api.services.llm_credentials_inject import inject_into_run_context_async
 from vibecanvas_api.services.object_store import get_object_store, uri_to_key
 from vibecanvas_api.services.sandbox.coordinator import get_sandbox_coordinator
-from vibecanvas_api.services.workflow_sandbox_runner import reuse_code_pythonpath
+from vibecanvas_api.services.workflow_sandbox_runner import ensure_code_pythonpath
 
 _ROW_STATUS_RERUN = {
     "error",
@@ -342,12 +342,11 @@ async def run_batch_workflow(
         # to an earlier worker loop into this batch loop.
         run_extra = dict(prepared_run_extra)
 
-    # Batch rows execute the same Workflow contract as interactive runs. Build
+    # Batch rows execute the same Workflow contract as interactive runs. Ensure
     # the incremental package layer once per batch, then reuse its read-only,
-    # content-addressed path for every row job.
-    # Batch jobs may reuse a dependency layer initialized by an interactive
-    # Workflow-page execution, but never install packages themselves.
-    code_pythonpath = await reuse_code_pythonpath(workflow)
+    # content-addressed path for every row job. The idempotent builder makes a
+    # warm run a lookup and lets a cold Task recover without a manual editor run.
+    code_pythonpath = await ensure_code_pythonpath(workflow)
     if code_pythonpath:
         run_extra["code_pythonpath"] = code_pythonpath
     else:
@@ -525,12 +524,27 @@ async def run_batch_workflow(
         if any(row.get("status") == "cancelled" for row in final_rows):
             summary["task_status"] = "interrupted"
             summary["can_resume"] = True
+        summary_bytes = json.dumps(
+            summary,
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ).encode("utf-8")
         artifact_uris["summary"] = store.put_bytes(
             f"tasks/{task_id}/summary.json",
-            json.dumps(summary, ensure_ascii=False, default=str, indent=2).encode("utf-8"),
+            summary_bytes,
             content_type="application/json",
         )
         summary["artifact_uris"] = artifact_uris
+        # Storage lists Task artifacts without downloading them. Persist the
+        # plaintext byte counts alongside the durable URIs so encrypted local
+        # objects and remote S3 objects can report an accurate size without a
+        # full read (which may be very expensive for a large batch result).
+        summary["artifact_sizes"] = {
+            "jsonl": len(final_jsonl),
+            "csv": len(final_csv),
+            "summary": len(summary_bytes),
+        }
 
         return BatchRunResult(
             status=summary["task_status"],

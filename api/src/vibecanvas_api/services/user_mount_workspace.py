@@ -216,6 +216,25 @@ class HostMountBridge:
         ]
         return await self.sync(registration)
 
+    async def unregister_user(self, *, user_id: str) -> tuple[str, ...]:
+        """Stop every mirror for a user before permanent account erasure.
+
+        Removing registrations first prevents the periodic loop from starting a
+        new sync. Acquiring each lock then waits for any already-running sync to
+        leave its transaction before the purge deletes VFS and host state.
+        """
+        user = _canonical_uuid(user_id, label="user_id")
+        registrations: list[_MirrorRegistration] = []
+        for key, registration in list(self._registrations.items()):
+            if key[1] != user:
+                continue
+            self._registrations.pop(key, None)
+            registrations.append(registration)
+        for registration in registrations:
+            async with registration.lock:
+                pass
+        return tuple(registration.directory for registration in registrations)
+
     async def _sync_locked(self, registration: _MirrorRegistration) -> int:
         scope_id = mount_scope_id(registration.user_id)
         if scope_id is None:

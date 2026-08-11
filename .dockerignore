@@ -4,6 +4,12 @@
 .env.example
 .venv
 .tools
+.playwright
+.playwright-cli
+.pytest_cache
+.ruff_cache
+output
+node_modules
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
@@ -14,9 +20,12 @@ web/dist
 web/playwright-report
 web/test-results
 web/screenshots
+extension/node_modules
+extension/dist
 api/.pytest_cache
 api/.venv
 api/dist
+docs/assets/demos
 docs/superpowers/specs
 docs/superpowers/plans
 **/docs/internal

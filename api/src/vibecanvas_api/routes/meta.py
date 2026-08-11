@@ -27,6 +27,10 @@ async def public_config() -> dict:
         "enterprise_sso_enabled": bool(
             getattr(app_config, "enterprise_sso_enabled", False)
         ),
+        "account_deletion_mode": app_config.account_deletion_mode,
+        "account_deletion_retention_days": (
+            app_config.account_deletion_retention_days
+        ),
     }
 
 

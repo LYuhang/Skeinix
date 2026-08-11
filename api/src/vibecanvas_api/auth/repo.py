@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 
 import uuid
 
@@ -479,8 +480,84 @@ class AuthRepo:
             delete(Session).where(Session.user_id == user_id))
         await self._s.flush()
 
+    async def blocking_owned_organizations(
+        self, *, user_id, personal_tenant_id,
+    ) -> list[tuple[uuid.UUID, str]]:
+        """Return non-personal organizations that would lose their last owner.
+
+        Membership discovery uses the authenticated-user RLS seam. Each
+        discovered organization is then scoped and locked separately, so this
+        user-request path never needs the maintenance/RLS-bypassing role.
+        Locks are taken in tenant order for the duration of the deletion
+        transaction so a concurrent membership mutation cannot make the
+        preflight decision from a partially observed owner set.
+        """
+        await self._s.execute(
+            text("SELECT set_config('app.user_id', :user_id, true)"),
+            {"user_id": str(user_id)},
+        )
+        candidate_ids = list(
+            (
+                await self._s.execute(
+                    select(OrgMembership.tenant_id)
+                    .where(
+                        OrgMembership.user_id == user_id,
+                        OrgMembership.org_role == "owner",
+                        OrgMembership.status == "active",
+                        OrgMembership.tenant_id != personal_tenant_id,
+                    )
+                    .order_by(OrgMembership.tenant_id)
+                )
+            ).scalars()
+        )
+
+        blocking: list[tuple[uuid.UUID, str]] = []
+        for tenant_id in candidate_ids:
+            await self._s.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            await self._s.execute(
+                text(
+                    "SELECT membership_id FROM org_memberships "
+                    "WHERE tenant_id=:tenant_id "
+                    "ORDER BY membership_id FOR UPDATE"
+                ),
+                {"tenant_id": tenant_id},
+            )
+            row = (
+                await self._s.execute(
+                    text(
+                        "SELECT organization.tenant_id, organization.name "
+                        "FROM organizations AS organization "
+                        "WHERE organization.tenant_id=:tenant_id "
+                        "  AND organization.kind<>'personal' "
+                        "  AND NOT EXISTS ("
+                        "    SELECT 1 FROM org_memberships AS another_owner "
+                        "    WHERE another_owner.tenant_id=:tenant_id "
+                        "      AND another_owner.user_id<>:user_id "
+                        "      AND another_owner.org_role='owner' "
+                        "      AND another_owner.status='active'"
+                        "  )"
+                    ),
+                    {"tenant_id": tenant_id, "user_id": user_id},
+                )
+            ).one_or_none()
+            if row is not None:
+                blocking.append((row.tenant_id, str(row.name)))
+
+        # The caller continues the deletion request in the personal tenant.
+        # Do not leak the last inspected organization into later RLS queries in
+        # this transaction.
+        await self._s.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(personal_tenant_id)},
+        )
+        return sorted(blocking, key=lambda value: (value[1], str(value[0])))
+
     async def request_account_deletion(
         self, *, user_id, tenant_id, email: str, purge_after: datetime,
+        deletion_mode: str,
     ) -> None:
         """Mark the account pending deletion and invalidate sessions.
 
@@ -491,6 +568,29 @@ class AuthRepo:
             update(User)
             .where(User.user_id == user_id)
             .values(status="pending_deletion"))
+        frozen_resource_state = (
+            await self._s.execute(
+                text(
+                    "SELECT jsonb_build_object("
+                    "'deployments', coalesce((SELECT jsonb_agg(id::text) "
+                    "  FROM deployments WHERE tenant_id=:tenant_id "
+                    "  AND enabled=true AND deleted_at IS NULL), '[]'::jsonb), "
+                    "'task_schedules', coalesce((SELECT jsonb_agg(id::text) "
+                    "  FROM task_schedules WHERE tenant_id=:tenant_id "
+                    "  AND enabled=true), '[]'::jsonb), "
+                    "'service_accounts', coalesce((SELECT "
+                    "  jsonb_agg(service_account_id::text) FROM service_accounts "
+                    "  WHERE tenant_id=:tenant_id AND status='active'), '[]'::jsonb), "
+                    "'llm_credentials', coalesce((SELECT jsonb_agg(id::text) "
+                    "  FROM llm_credentials WHERE tenant_id=:tenant_id "
+                    "  AND enabled=true AND deleted_at IS NULL), '[]'::jsonb), "
+                    "'mcp_servers', coalesce((SELECT jsonb_agg(id::text) "
+                    "  FROM mcp_servers WHERE tenant_id=:tenant_id "
+                    "  AND enabled=true AND deleted_at IS NULL), '[]'::jsonb))"
+                ),
+                {"tenant_id": tenant_id},
+            )
+        ).scalar_one()
         encrypted_email = await encrypt_account_deletion_email(
             self._s,
             user_id=uuid.UUID(str(user_id)),
@@ -502,13 +602,17 @@ class AuthRepo:
                 "INSERT INTO account_deletion_requests "
                 "(user_id, tenant_id, email_snapshot, "
                 "email_snapshot_ciphertext, email_snapshot_nonce, "
-                "email_snapshot_key_id, purge_after) "
+                "email_snapshot_key_id, deletion_mode, frozen_resource_state, "
+                "purge_after) "
                 "VALUES (:user_id, :tenant_id, '', :ciphertext, :nonce, "
-                ":key_id, :purge_after) "
+                ":key_id, :deletion_mode, CAST(:frozen_state AS jsonb), "
+                ":purge_after) "
                 "ON CONFLICT (user_id) WHERE status IN ('pending','purging','failed') "
                 "DO UPDATE SET status = 'pending', requested_at = now(), "
                 "purge_after = EXCLUDED.purge_after, cancelled_at = NULL, "
                 "purging_at = NULL, purged_at = NULL, last_error = NULL, "
+                "deletion_mode=EXCLUDED.deletion_mode, "
+                "frozen_resource_state=EXCLUDED.frozen_resource_state, "
                 "email_snapshot='', "
                 "email_snapshot_ciphertext=EXCLUDED.email_snapshot_ciphertext, "
                 "email_snapshot_nonce=EXCLUDED.email_snapshot_nonce, "
@@ -521,6 +625,8 @@ class AuthRepo:
                 "ciphertext": encrypted_email.ciphertext,
                 "nonce": encrypted_email.nonce,
                 "key_id": encrypted_email.key_id,
+                "deletion_mode": deletion_mode,
+                "frozen_state": json.dumps(frozen_resource_state),
                 "purge_after": purge_after,
             },
         )).scalar_one()
@@ -542,17 +648,61 @@ class AuthRepo:
                 "purge_after": purge_after,
             },
         )
+        # A pending personal account must stop serving public or scheduled
+        # work immediately, even though physical erasure remains asynchronous.
+        await self._s.execute(
+            text(
+                "UPDATE deployments SET enabled=false, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND deleted_at IS NULL"
+            ),
+            {"tenant_id": tenant_id},
+        )
+        await self._s.execute(
+            text(
+                "UPDATE task_schedules SET enabled=false, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND enabled=true"
+            ),
+            {"tenant_id": tenant_id},
+        )
+        await self._s.execute(
+            text(
+                "UPDATE service_accounts SET status='disabled', "
+                "generation=generation + CASE WHEN :deletion_mode='immediate' "
+                "THEN 1 ELSE 0 END, disabled_at=now(), updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND status='active'"
+            ),
+            {"tenant_id": tenant_id, "deletion_mode": deletion_mode},
+        )
+        await self._s.execute(
+            text(
+                "UPDATE llm_credentials SET enabled=false, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND deleted_at IS NULL"
+            ),
+            {"tenant_id": tenant_id},
+        )
+        await self._s.execute(
+            text(
+                "UPDATE mcp_servers SET enabled=false, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND deleted_at IS NULL"
+            ),
+            {"tenant_id": tenant_id},
+        )
         await self.delete_user_sessions(user_id)
 
-    async def cancel_account_deletion(self, user_id) -> None:
-        await self._s.execute(
+    async def cancel_account_deletion(self, user_id) -> bool:
+        request_row = (
+            await self._s.execute(
             text(
                 "UPDATE account_deletion_requests "
                 "SET status = 'cancelled', cancelled_at = now() "
-                "WHERE user_id = :user_id AND status IN ('pending','failed')"
+                "WHERE user_id = :user_id AND deletion_mode='delayed' "
+                "AND status IN ('pending','failed') "
+                "RETURNING id, tenant_id, frozen_resource_state"
             ),
             {"user_id": user_id},
-        )
+        )).mappings().one_or_none()
+        if request_row is None:
+            return False
         await self._s.execute(
             text(
                 "UPDATE data_purge_jobs SET status = 'cancelled', "
@@ -565,7 +715,48 @@ class AuthRepo:
             update(User)
             .where(User.user_id == user_id)
             .values(status="active"))
+        await self._s.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(request_row["tenant_id"])},
+        )
+        frozen = dict(request_row["frozen_resource_state"] or {})
+
+        def ids(name: str) -> list[uuid.UUID]:
+            return [uuid.UUID(str(value)) for value in frozen.get(name, [])]
+
+        restore_statements = (
+            (
+                "UPDATE deployments SET enabled=true, updated_at=now() "
+                "WHERE id=ANY(CAST(:ids AS uuid[])) AND deleted_at IS NULL",
+                ids("deployments"),
+            ),
+            (
+                "UPDATE task_schedules SET enabled=true, updated_at=now() "
+                "WHERE id=ANY(CAST(:ids AS uuid[]))",
+                ids("task_schedules"),
+            ),
+            (
+                "UPDATE service_accounts SET status='active', disabled_at=NULL, "
+                "updated_at=now() WHERE service_account_id="
+                "ANY(CAST(:ids AS uuid[])) AND status='disabled'",
+                ids("service_accounts"),
+            ),
+            (
+                "UPDATE llm_credentials SET enabled=true, updated_at=now() "
+                "WHERE id=ANY(CAST(:ids AS uuid[])) AND deleted_at IS NULL",
+                ids("llm_credentials"),
+            ),
+            (
+                "UPDATE mcp_servers SET enabled=true, updated_at=now() "
+                "WHERE id=ANY(CAST(:ids AS uuid[])) AND deleted_at IS NULL",
+                ids("mcp_servers"),
+            ),
+        )
+        for statement, resource_ids in restore_statements:
+            if resource_ids:
+                await self._s.execute(text(statement), {"ids": resource_ids})
         await self._s.flush()
+        return True
 
     async def set_user_status(self, user_id, status: str) -> None:
         await self._s.execute(

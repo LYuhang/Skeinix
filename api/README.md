@@ -1,93 +1,196 @@
 # Skeinix API
 
-The API package contains Skeinix's FastAPI service, agent runtime, persistence,
-authorization, background jobs, sandbox control plane, and deployment APIs. Its
-Python import name remains `vibecanvas_api` for compatibility.
+The API package provides Skeinix's HTTP interface and coordinates the backend
+services behind Chat, Workflow, Task, Browser, and Deployment experiences. It
+connects product requests to the Agent Runtime, workflow engine, persistent
+state, authorization, background jobs, and isolated execution environments.
 
-## Requirements
+The installable package and Python import namespace remain `vibecanvas-api` and
+`vibecanvas_api` for compatibility.
 
-- Python 3.11.15 (managed by uv in the supported development setup)
-- PostgreSQL
-- Redis
-- OpenFGA for the full authorization profile
-- the sibling `engine/` package
+For an end-user overview, begin with the repository [README](../README.md). This
+document is intended for contributors working on the backend package.
 
-For a complete environment, follow the repository-level
-[installation guide](../docs/installation.md). To install only the Python
-packages in the repository-local uv environment:
+## Responsibilities and boundaries
+
+The API package owns:
+
+- versioned HTTP contracts, authentication, request validation, and streaming;
+- Agent Runtime orchestration and model/MCP brokering;
+- application persistence, database migrations, and object-store integration;
+- tenant authorization through OpenFGA;
+- durable and scheduled work through Celery; and
+- the control contracts used to request isolated execution from `sandboxd`.
+
+Framework-independent workflow definitions and execution primitives belong to
+the sibling [`engine/`](../engine/) package. Browser-facing product behavior
+belongs to [`web/`](../web/), while privileged sandbox lifecycle management is
+implemented by the dedicated sandbox service. See the
+[architecture guide](../docs/architecture.md) for the complete system design.
+
+## Runtime topology
+
+The backend is deployed as a group of cooperating processes rather than as one
+standalone web server:
+
+| Component | Role |
+| --- | --- |
+| **API** | Serves HTTP and streaming requests, validates access, coordinates Agent Runtime operations, and submits durable work |
+| **Celery worker** | Executes queued interactive, deployment, knowledge-indexing, and maintenance jobs |
+| **Celery beat** | Schedules periodic dispatch and reconciliation work |
+| **`sandboxd`** | Owns gVisor processes and isolated execution lifecycle; API and worker processes communicate with it through the sandbox service contract |
+| **PostgreSQL** | Stores application state, authorization projections, execution records, and Agent Runtime checkpoints |
+| **Redis-compatible service** | Provides the Celery broker and result backend; the Compose stack uses Valkey |
+| **OpenFGA** | Evaluates tenant and resource authorization from the pinned model |
+| **Object store** | Stores encrypted file and content payloads shared across backend processes |
+
+The supported local launchers create and connect these components. Starting
+only the FastAPI process is useful for focused backend development, but it does
+not replace the full service topology.
+
+## Development
+
+Prepare the repository environment and start the complete source-development
+stack from the repository root:
 
 ```bash
-cd ..
-uv python install 3.11.15
-uv venv --python 3.11.15 --seed .venv
-uv pip install --python .venv/bin/python --requirement requirements-dev.txt
-uv pip install --python .venv/bin/python --no-deps --editable ./engine --editable ./api
+./scripts/bootstrap_native_linux.sh --prepare-only
+WEB_MODE=dev ./launch.sh start
+```
+
+The API is available at <http://127.0.0.1:8000> by default. Python processes do
+not automatically reload when source files change; use `./launch.sh restart`
+after backend changes.
+
+The [development guide](../docs/development.md) documents prerequisites,
+package checks, logs, database changes, and generated contracts. The
+[installation guide](../docs/installation.md) covers evaluation and local
+self-hosting instead.
+
+### Run the API process directly
+
+After the repository environment and dependent services have been prepared,
+the package CLI can run only the HTTP process:
+
+```bash
 source .venv/bin/activate
+vibecanvas-api serve --host 127.0.0.1 --port 8000 --reload
 ```
 
-## Run the service
+This command expects the database, Redis-compatible service, OpenFGA, sandbox
+service, and required environment configuration to be available already. The
+canonical configuration template is [`.env.example`](../.env.example); use the
+repository launchers to assemble a consistent local configuration.
 
-Copy the public example configuration and review its values:
+## HTTP interface
+
+Most application endpoints are grouped under `/api/v1`; protocol-specific
+interfaces such as SCIM retain their standard paths. The route modules in
+[`routes/`](src/vibecanvas_api/routes/) define the public contracts for
+authentication, organizations, Chat, Workflow, Task, Deployment, Browser,
+skills, knowledge, files, and runtime services.
+
+Local development exposes the following discovery endpoints:
+
+- `GET /healthz` — process liveness;
+- `GET /docs` — Swagger UI;
+- `GET /redoc` — ReDoc; and
+- `GET /openapi.json` — the generated OpenAPI document.
+
+Interactive API documentation and the OpenAPI endpoint are disabled by the
+production security profile. The CLI can also generate a schema without
+starting Uvicorn:
 
 ```bash
-cp .env.example .env
-vibecanvas-api serve --host 127.0.0.1 --port 8000
+vibecanvas-api dump-openapi --output /tmp/skeinix-openapi.json
 ```
 
-The full stack normally starts through the repository launcher or Docker
-Compose, which also provides migrations, workers, authorization, and sandbox
-services. Do not expose a development server directly to the Internet.
+When a public contract changes, update the committed Web snapshot and
+TypeScript definitions using the workflow in
+[Generated contracts](../docs/development.md#generated-contracts).
 
-Useful endpoints on a local server:
+## Persistence and migrations
 
-- `GET /healthz` — liveness
-- `GET /docs` — Swagger UI
-- `GET /redoc` — ReDoc
-- `GET /openapi.json` — OpenAPI schema
+SQLAlchemy repositories and database models live under
+[`storage/`](src/vibecanvas_api/storage/). Alembic revisions are committed in
+[`alembic/versions/`](alembic/versions/), and the local launchers apply them
+before application processes start.
 
-Run migrations manually when needed:
+For a deliberate package-level migration against a prepared database, use a
+dedicated migrator connection:
 
 ```bash
-alembic upgrade head
+cd api
+MIGRATION_DATABASE_URL='postgresql+asyncpg://<migrator>@<host>/<database>' \
+  alembic upgrade head
 ```
+
+Production API and worker processes do not receive schema-changing authority;
+migrations run as a separate deployment workload. Data backfills and encryption
+cutovers may require additional operational scripts, so do not replace the
+documented deployment sequence with an unreviewed Alembic command.
+
+## Background work and sandbox execution
+
+[`celery_app.py`](src/vibecanvas_api/celery_app.py) configures the worker, JSON
+serialization, and queue behavior. Job entry points live under
+[`celery_tasks/`](src/vibecanvas_api/celery_tasks/). Worker and scheduler
+processes are required for asynchronous deployments, scheduled runs, knowledge
+indexing, reconciliation, and maintenance.
+
+Sandbox contracts and clients live under
+[`services/sandbox/`](src/vibecanvas_api/services/sandbox/). In the supported
+topology, only `sandboxd` starts and owns gVisor processes; the API and Celery
+worker request execution through its Unix-socket or mTLS gRPC interface. The
+[sandbox lifecycle](../docs/architecture.md#sandbox-lifecycle) section explains
+the isolation and ownership boundary in detail.
 
 ## Tests
 
-The test suite uses local PostgreSQL server binaries through
-`pytest-postgresql`; it does not require a long-running development database.
+Run the API suite from the repository root:
 
 ```bash
-python -m pytest api/tests
+source .venv/bin/activate
+python -m pytest -q api/tests
 ```
 
-Some integration tests additionally require gVisor, browser binaries, or a
-running stack and skip when their prerequisites are unavailable.
+The suite starts isolated PostgreSQL instances through `pytest-postgresql`, so
+PostgreSQL server binaries such as `pg_ctl` must be installed. Tests requiring
+gVisor or other system capabilities skip when their prerequisites are absent;
+a skip is not equivalent to release verification. For targeted commands and
+the full validation matrix, see
+[Validate changes](../docs/development.md#validate-changes).
 
 ## Container image
 
-Use the repository root as the build context so the engine package is included:
+Use the repository root as the build context because the image includes both
+the API and Engine packages:
 
 ```bash
-cd /path/to/Skeinix
 docker build -f api/Dockerfile -t skeinix-api:dev .
 ```
 
-Production images must be digest-pinned and attested as described in
-[`DEPLOY.md`](../DEPLOY.md).
+The image is shared by the API, Celery, migration, and sandbox service roles in
+the Compose topology; it is not a complete deployment by itself. Use the
+[installation guide](../docs/installation.md) for a local stack and
+[`DEPLOY.md`](../DEPLOY.md) for production requirements.
 
-## Package boundaries
+## Source map
 
-- `routes/` defines HTTP contracts.
-- `storage/` contains PostgreSQL repositories and models.
-- `authorization/` owns the OpenFGA model and adapters.
-- `agents/` and `services/agent_runtime/` implement agent execution.
-- `services/sandbox/` owns isolated execution contracts and brokers.
-- `celery_tasks/` contains asynchronous workers.
-- `security/` contains security profiles, migrations, and verification logic.
-
-The workflow execution primitives belong in `engine/`; UI behavior belongs in
-`web/`. Keep credentials out of source and pass them through the documented
-runtime configuration paths.
+| Path | Responsibility |
+| --- | --- |
+| [`app.py`](src/vibecanvas_api/app.py) | FastAPI factory, lifespan, middleware, and route registration |
+| [`routes/`](src/vibecanvas_api/routes/) | HTTP and streaming endpoints |
+| [`schemas/`](src/vibecanvas_api/schemas/) | Public request and response models |
+| [`agents/`](src/vibecanvas_api/agents/) | Agent prompts, commands, middleware, and tools |
+| [`services/agent_runtime/`](src/vibecanvas_api/services/agent_runtime/) | Agent Runtime adapters and lifecycle |
+| [`streaming/`](src/vibecanvas_api/streaming/) | Turn buffering and server-sent event delivery |
+| [`storage/`](src/vibecanvas_api/storage/) | PostgreSQL repositories and persistence models |
+| [`authorization/`](src/vibecanvas_api/authorization/) | Authorization manifest, OpenFGA model, and adapters |
+| [`celery_tasks/`](src/vibecanvas_api/celery_tasks/) | Asynchronous and scheduled job entry points |
+| [`services/sandbox/`](src/vibecanvas_api/services/sandbox/) | Sandbox service contracts, clients, and lifecycle implementation |
+| [`security/`](src/vibecanvas_api/security/) | Production security validation, cryptography, and security controls |
+| [`alembic/`](alembic/) | Database migration environment and revisions |
 
 ## License
 

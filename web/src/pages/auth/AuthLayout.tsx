@@ -97,21 +97,23 @@ export function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {
         })}
       </div>
 
-      <div className="grid w-full max-w-[64rem] items-center gap-14 lg:grid-cols-[1fr_25rem] lg:gap-20">
+      <div className="grid w-full max-w-[72rem] items-start gap-14 lg:grid-cols-[minmax(0,1fr)_27rem] lg:gap-20">
         <aside className="hidden lg:block">
-          <div className="flex items-center gap-3.5">
-            <AppIcon
-              alt=""
-              aria-hidden="true"
-              className="size-14 rounded-[15px]"
-            />
-            <span className="text-[1.75rem] font-semibold leading-8 tracking-[-0.025em]">
+          <div className="flex items-center gap-4">
+            <span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-[17px]">
+              <AppIcon
+                alt=""
+                aria-hidden="true"
+                className="size-full scale-125"
+              />
+            </span>
+            <span className="text-[2.25rem] font-semibold leading-10 tracking-[-0.035em]">
               {t('ws_title', 'Skeinix')}
             </span>
           </div>
 
-          <div className="mt-12 max-w-[34rem]">
-            <h2 className="text-balance text-[2rem] font-semibold leading-[1.16] tracking-[-0.03em] text-foreground xl:text-[2.25rem]">
+          <div className="mt-9 max-w-[38rem]">
+            <h2 className="text-balance text-[1.875rem] font-semibold leading-[1.2] tracking-[-0.025em] text-foreground xl:text-[2rem]">
               {t(
                 'auth_hero_title',
                 'Build, preview, automate, and deploy with AI agents, visual workflows, tasks, and your browser—all in one platform.',
@@ -159,14 +161,16 @@ export function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {
         </aside>
 
         <section className="min-w-0">
-          <div className="mx-auto w-full max-w-[25rem] rounded-2xl border border-edge-structural bg-surface-raised px-6 py-7 shadow-raised sm:px-8 sm:py-8 [&_button[type=submit]]:h-11 [&_input]:h-11">
-            <div className="mb-7 flex items-center gap-3 lg:hidden">
-              <AppIcon
-                alt=""
-                aria-hidden="true"
-                className="size-12 rounded-[13px]"
-              />
-              <span className="text-[1.375rem] font-semibold tracking-[-0.02em]">
+          <div className="mx-auto w-full max-w-[27rem] rounded-2xl border border-edge-structural bg-surface-raised px-6 py-7 shadow-raised sm:px-9 sm:py-9 [&_button[type=submit]]:h-11 [&_input]:h-11">
+            <div className="mb-7 flex items-center gap-3.5 lg:hidden">
+              <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-[15px]">
+                <AppIcon
+                  alt=""
+                  aria-hidden="true"
+                  className="size-full scale-125"
+                />
+              </span>
+              <span className="text-[1.75rem] font-semibold leading-8 tracking-[-0.025em]">
                 {t('ws_title', 'Skeinix')}
               </span>
             </div>

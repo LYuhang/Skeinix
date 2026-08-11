@@ -3,11 +3,10 @@
 The HTTP surface of the content-addressed Python-library overlay build
 pipeline. Phase-3 callers:
 
-Package installation is deliberately not exposed as an HTTP operation. A new
-overlay can only be prepared by the Workflow page's node/whole-workflow
-execution path while it initializes the execution sandbox. ``POST /ensure`` is
-kept as an explicit compatibility rejection so older clients get a useful
-message instead of silently starting a build on Save.
+Package installation is deliberately not exposed as a generic HTTP operation.
+A new overlay is prepared only by an authorized Workflow execution path through
+sandboxd. ``POST /ensure`` remains an explicit compatibility rejection so
+older clients cannot start package downloads merely by saving a Workflow.
 
 Auth vs. data scope: these routes REQUIRE a logged-in user (``current_user``),
 but ``env_builds`` is a GLOBAL, RLS-free public-PyPI registry keyed by a content
@@ -50,8 +49,8 @@ async def ensure_env(
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=(
-            "dependencies are installed only when the Workflow page initializes "
-            "a sandbox to execute a node or workflow"
+            "dependencies are prepared by sandboxd only when an authorized "
+            "Workflow, Task, or Deployment execution starts"
         ),
     )
 

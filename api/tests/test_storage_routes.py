@@ -4,6 +4,8 @@ import uuid
 
 import pytest
 
+from vibecanvas_api.routes.storage import _task_artifact_size
+
 
 async def _register(client) -> tuple[str, str]:
     email = f"storage_{uuid.uuid4().hex[:12]}@example.com"
@@ -22,6 +24,17 @@ def _auth(token: str) -> dict:
 
 def _mount_scope_id(user_id: str) -> str:
     return f"__mount_{user_id.replace('-', '')[:24]}"
+
+
+def test_task_artifact_size_uses_persisted_plaintext_metadata():
+    summary = {
+        "artifact_sizes": {"csv": 1024, "jsonl": 2048, "summary": 512},
+    }
+    assert _task_artifact_size(summary, "results.csv") == 1024
+    assert _task_artifact_size(summary, "results.jsonl") == 2048
+    assert _task_artifact_size(summary, "summary.json") == 512
+    assert _task_artifact_size(summary, "unknown.bin") is None
+    assert _task_artifact_size({"artifact_sizes": {"csv": -1}}, "results.csv") is None
 
 
 async def _create_workflow(client, token: str) -> str:

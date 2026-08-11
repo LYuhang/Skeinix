@@ -206,7 +206,7 @@ describe('ChatMessageList', () => {
     expect(historyMock).toHaveBeenCalledWith('wf', null, false, '');
   });
 
-  it('streaming assistant text replaces the thinking indicator immediately', () => {
+  it('keeps the running indicator below streaming assistant text', () => {
     historyMock.mockReturnValue({ data: { items: [] }, isLoading: false });
     useChatStreamStore.getState().beginTurn('c1', 'turn-1');
     useChatStreamStore.getState().appendChunk(
@@ -216,11 +216,12 @@ describe('ChatMessageList', () => {
     render(<ChatMessageList wfId="wf" activeChatId="c1" />);
     expect(screen.queryByText('No messages yet.')).toBeNull();   // the C1 guard
     expect(screen.getByText('live answer')).toBeInTheDocument();
-    expect(screen.queryByLabelText(/agent is thinking/i)).toBeNull();
-    expect(screen.getByLabelText(/agent is still working/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/agent is thinking/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/agent is thinking/i))
+      .toHaveAttribute('data-message-role', 'assistant');
 
     act(() => useChatStreamStore.getState().setState('complete', 'c1'));
-    expect(screen.queryByLabelText(/agent is still working/i)).toBeNull();
+    expect(screen.queryByLabelText(/agent is thinking/i)).toBeNull();
   });
 
   it('shows thinking only while a streaming turn has no visible output', () => {
@@ -229,7 +230,7 @@ describe('ChatMessageList', () => {
     render(<ChatMessageList wfId="wf" activeChatId="c1" />);
     const thinking = screen.getByLabelText(/agent is thinking/i);
     expect(thinking.querySelector('[data-role="agent-startup-phase"]')).toBeNull();
-    expect(thinking.querySelector('[data-role="agent-thinking-spinner"]')).not.toBeNull();
+    expect(thinking.querySelectorAll('.chat-thinking-dot')).toHaveLength(3);
   });
 
   it('stops the thinking animation while an active turn waits for user input', () => {
@@ -254,7 +255,7 @@ describe('ChatMessageList', () => {
     expect(phase).not.toHaveTextContent(/…|\.\.\./);
     expect(
       screen.getByLabelText(/agent is thinking/i)
-        .querySelector('[data-role="agent-thinking-spinner"]'),
+        .querySelector('[data-role="agent-thinking-dots"]'),
     ).not.toBeNull();
   });
 

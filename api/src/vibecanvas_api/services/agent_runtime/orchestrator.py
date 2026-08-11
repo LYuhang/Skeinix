@@ -1141,6 +1141,9 @@ class AgentRuntimeOrchestrator:
                     completed = True
                 if event.type == "checkpoint":
                     state_ref = str(event.payload.get("state_ref") or "")
+                    previous_state_ref = str(
+                        event.payload.get("previous_state_ref") or ""
+                    )
                     async with session_scope(
                         tenant_id=turn_request.tenant_id
                     ) as session:
@@ -1151,6 +1154,7 @@ class AgentRuntimeOrchestrator:
                             runtime_type=event.runtime_type.value,
                             runtime_session_id=event.runtime_session_id,
                             state_ref=state_ref,
+                            previous_state_ref=previous_state_ref or None,
                         )
                         if binding is None:
                             raise RuntimeError(

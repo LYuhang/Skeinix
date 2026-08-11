@@ -53,6 +53,36 @@ def validate_runtime_lock(path: Path, development: dict[str, str]) -> None:
         )
 
 
+def validate_sandbox_lock(development: dict[str, str]) -> None:
+    """Keep the shared Agent/Workflow baseline exact, hashed, and compatible."""
+
+    input_path = ROOT / "requirements-sandbox.in"
+    lock_path = ROOT / "requirements-sandbox.txt"
+    requested = pins(input_path)
+    locked = validate_hashed_lock(lock_path)
+    missing = sorted(set(requested) - set(locked))
+    if missing:
+        raise SystemExit(f"requirements-sandbox.txt is missing direct pins: {missing}")
+    changed = {
+        name: (version, locked.get(name))
+        for name, version in requested.items()
+        if locked.get(name) != version
+    }
+    if changed:
+        raise SystemExit(
+            f"requirements-sandbox.txt differs from requirements-sandbox.in: {changed}"
+        )
+    conflicts = {
+        name: (version, development[name])
+        for name, version in locked.items()
+        if name in development and development[name] != version
+    }
+    if conflicts:
+        raise SystemExit(
+            f"requirements-sandbox.txt conflicts with requirements-dev.txt: {conflicts}"
+        )
+
+
 def validate_hashed_lock(path: Path) -> dict[str, str]:
     text = path.read_text(encoding="utf-8")
     locked = pins(path)
@@ -107,6 +137,7 @@ def main() -> None:
     development = pins(ROOT / "requirements-dev.txt")
     validate_runtime_lock(ROOT / "requirements-runtime.txt", development)
     validate_runtime_lock(ROOT / "engine/requirements-runtime.txt", development)
+    validate_sandbox_lock(development)
     validate_build_locks()
     validate_node_lock("web")
     validate_node_lock("extension")

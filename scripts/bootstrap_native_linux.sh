@@ -49,8 +49,9 @@ command -v sudo >/dev/null || {
 echo "[1/7] Installing host packages"
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  build-essential ca-certificates curl git gnupg jq libpq-dev openssl \
-  postgresql postgresql-contrib redis-server rsync tar unzip util-linux \
+  build-essential ca-certificates curl file git gnupg jq libpq-dev openssh-client \
+  openssl patch postgresql postgresql-contrib procps redis-server ripgrep rsync \
+  tar unzip util-linux zip \
   fonts-dejavu-core fonts-noto-cjk fonts-wqy-zenhei
 
 node_is_compatible() {
@@ -110,10 +111,12 @@ fi
 uv pip install --python .venv/bin/python --require-hashes \
   --requirement requirements-build.txt
 uv pip install --python .venv/bin/python --requirement requirements-dev.txt
+uv pip install --python .venv/bin/python --require-hashes \
+  --requirement requirements-sandbox.txt
 uv pip install --python .venv/bin/python --no-build-isolation --no-deps \
   --editable ./engine --editable ./api
 .venv/bin/python -c \
-  'import fastapi, langgraph, psycopg, sqlalchemy, vibecanvas_api, vibecanvas_engine; print("Python environment: ok")'
+  'import fastapi, jsonlines, langgraph, matplotlib, networkx, numpy, pandas, psycopg, seaborn, sqlalchemy, tabulate, vibecanvas_api, vibecanvas_engine; print("Python environment: ok")'
 
 echo "[6/7] Installing Web and extension packages"
 pnpm --dir web install --frozen-lockfile

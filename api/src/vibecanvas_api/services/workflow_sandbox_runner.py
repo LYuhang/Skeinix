@@ -1,9 +1,8 @@
 """Shared workflow execution helpers for resident sandbox sessions.
 
 This module is the single host-side protocol for running workflow jobs inside a
-``SandboxSession``. Jobs share the same staging protocol, while dependency
-installation remains an explicit capability reserved for interactive Workflow
-page execution.
+``SandboxSession``. Jobs share the same staging protocol and resolve declared
+dependencies through one content-addressed, idempotent preparation path.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ from vibecanvas_api.config import config
 from vibecanvas_api.services.llm_credentials_inject import (
     inject_into_run_context_async,
 )
-from vibecanvas_api.services.env.overlay_builder import ensure_overlay, find_ready_overlay
+from vibecanvas_api.services.env.overlay_builder import ensure_overlay
 from vibecanvas_api.services.env.overlay_key import compute_overlay_key
 from vibecanvas_api.services.vfs_run_context import clear_run_contents
 
@@ -70,9 +69,10 @@ async def prepare_code_pythonpath(
     same warm sandbox do not call the overlay builder again.
 
     Plain Chat never calls this helper while its workspace/runtime sandbox is
-    starting. Deployment invocation, Explorer, Preview, edit, save and sandbox
-    prewarm, scheduled and batch paths do not call it either; it is reached
-    only from interactive node/Workflow execution.
+    starting. Explorer, Preview, edit, save and generic sandbox prewarm also do
+    not install Workflow dependencies. Interactive execution caches the chosen
+    layer on its session; Deployment and Task paths call the uncached wrapper
+    below, which still resolves through the same content-addressed builder.
     """
     requirements = _code_requirements(workflow)
     if not requirements:
@@ -81,15 +81,17 @@ async def prepare_code_pythonpath(
     dependency_key = compute_overlay_key(requirements)
 
     async def _build() -> str | None:
-        built = await ensure_overlay(requirements)
-        if built.status != "ready":
-            detail = built.error_log or f"overlay status is {built.status!r}"
+        built = await _ensure_dependency_overlay(requirements, session=session)
+        if _overlay_value(built, "status") != "ready":
+            detail = _overlay_value(built, "error_log") or (
+                f"overlay status is {_overlay_value(built, 'status')!r}"
+            )
             raise WorkflowSandboxRunError(
                 f"Python dependency preparation failed for {requirements!r}: {detail}"
             )
         # A requirements file containing comments/whitespace only legitimately
         # has no incremental overlay. The platform base remains available.
-        return built.path
+        return _overlay_value(built, "path")
 
     if session is None:
         return await _build()
@@ -112,24 +114,53 @@ async def prepare_code_pythonpath(
         return path
 
 
-async def reuse_code_pythonpath(workflow: dict | None) -> str | None:
-    """Resolve a previously prepared dependency layer without installing.
+def _overlay_value(result, key: str):
+    return result.get(key) if isinstance(result, dict) else getattr(result, key, None)
 
-    Scheduled, batch and deployment-like execution paths are allowed to mount a
-    cached Workflow dependency layer, but only an interactive Workflow-page
-    node/whole-workflow execution may create it.
+
+async def _ensure_dependency_overlay(requirements: str, *, session=None):
+    """Build on sandboxd when remote; keep embedded/test execution local."""
+    if session is not None and getattr(session, "remote", False):
+        manager = getattr(session, "_manager", None)
+        if manager is None:
+            raise WorkflowSandboxRunError(
+                "remote sandbox session has no dependency manager"
+            )
+        return await manager.ensure_workflow_dependencies(requirements)
+    if session is None and config.sandbox_service_mode == "service":
+        from vibecanvas_api.services.sandbox.manager import get_sandbox_manager
+
+        return await get_sandbox_manager().ensure_workflow_dependencies(
+            requirements,
+        )
+    return await ensure_overlay(requirements)
+
+
+async def ensure_code_pythonpath(
+    workflow: dict | None,
+    *,
+    session=None,
+) -> str | None:
+    """Resolve or prepare the dependency layer for an executing Workflow.
+
+    The overlay builder is content-addressed and protected by a per-key file
+    lock, so this is a cache lookup on warm paths and a single shared build on a
+    cold path. Non-interactive execution must be self-contained: a Deployment,
+    Batch or Scheduled Task cannot depend on somebody first opening the
+    Workflow editor after a service or cache restart.
     """
     requirements = _code_requirements(workflow)
     if not requirements:
         return None
-    prepared = await find_ready_overlay(requirements)
-    if prepared.status != "ready":
-        detail = prepared.error_log or f"overlay status is {prepared.status!r}"
-        raise WorkflowSandboxRunError(
-            "Python dependencies are not initialized. Run a node or the workflow "
-            f"once from the Workflow page first: {detail}"
+    prepared = await _ensure_dependency_overlay(requirements, session=session)
+    if _overlay_value(prepared, "status") != "ready":
+        detail = _overlay_value(prepared, "error_log") or (
+            f"overlay status is {_overlay_value(prepared, 'status')!r}"
         )
-    return prepared.path
+        raise WorkflowSandboxRunError(
+            f"Python dependency preparation failed for {requirements!r}: {detail}"
+        )
+    return _overlay_value(prepared, "path")
 
 
 def _merge_stage_extra(run_dir: str, *, code_pythonpath: str | None) -> None:
@@ -351,7 +382,7 @@ async def run_node_once(
     code_pythonpath = (
         await prepare_code_pythonpath(workflow, session=session)
         if install_dependencies
-        else await reuse_code_pythonpath(workflow)
+        else await ensure_code_pythonpath(workflow, session=session)
     )
     if clear_run:
         clear_owned_run = getattr(session, "clear_workflow_run", None)
@@ -456,7 +487,7 @@ async def stream_workflow_job(
     code_pythonpath = (
         await prepare_code_pythonpath(workflow, session=session)
         if install_dependencies
-        else await reuse_code_pythonpath(workflow)
+        else await ensure_code_pythonpath(workflow, session=session)
     )
     if allow_hosts is None:
         from vibecanvas_api.services.sandbox.egress_policy import (

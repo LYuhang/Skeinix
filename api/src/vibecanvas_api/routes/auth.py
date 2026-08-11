@@ -65,7 +65,6 @@ from vibecanvas_api.storage.sync_session import short_admin_session
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _SESSION_TTL = timedelta(days=30)
 _RESET_TTL = timedelta(minutes=30)
-_ACCOUNT_DELETE_GRACE = timedelta(days=7)
 _EXTENSION_EXCHANGE_TTL = timedelta(seconds=60)
 _WEBAUTHN_LOGIN_STEP_UP_TTL = timedelta(minutes=10)
 _TEST_LOGIN = "test"
@@ -1038,16 +1037,35 @@ async def delete_account(
             status.HTTP_400_BAD_REQUEST,
             "Enter the current account email to confirm deletion",
         )
-    async with session_scope() as s:
+    async with session_scope(tenant_id=ctx.tenant_id) as s:
         repo = AuthRepo(s)
         user = await repo.get_user(uuid.UUID(ctx.user_id))
         if user is None:  # authenticated row disappeared between requests
             raise HTTPException(401, "missing or invalid session")
+        blocking = await repo.blocking_owned_organizations(
+            user_id=user.user_id,
+            personal_tenant_id=user.tenant_id,
+        )
+        if blocking:
+            names = ", ".join(name for _tenant_id, name in blocking[:5])
+            suffix = "" if len(blocking) <= 5 else f" and {len(blocking) - 5} more"
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Transfer ownership or delete these organizations before "
+                f"deleting the account: {names}{suffix}",
+            )
+        deletion_mode = app_config.account_deletion_mode
+        purge_after = _now()
+        if deletion_mode == "delayed":
+            purge_after += timedelta(
+                days=app_config.account_deletion_retention_days
+            )
         await repo.request_account_deletion(
             user_id=ctx.user_id,
             tenant_id=user.tenant_id,
             email=ctx.email,
-            purge_after=_now() + _ACCOUNT_DELETE_GRACE,
+            purge_after=purge_after,
+            deletion_mode=deletion_mode,
         )
     await record_auth_audit(
         action=actions.AUTH_ACCOUNT_DELETE_REQUEST,
@@ -1056,7 +1074,7 @@ async def delete_account(
         tenant_id=ctx.tenant_id,
         outcome="success",
         audit_ctx=extract_request_audit_context(request),
-        meta={},
+        meta={"deletion_mode": deletion_mode},
     )
 
 
@@ -1077,7 +1095,13 @@ async def cancel_delete_account(body: CancelDeleteAccountIn, request: Request):
         user_id = user.user_id
         tenant_id = user.tenant_id
         actor_email = user.email
-        await repo.cancel_account_deletion(user.user_id)
+        cancelled = await repo.cancel_account_deletion(user.user_id)
+        if not cancelled:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "This deletion request is immediate or has already started "
+                "and cannot be cancelled",
+            )
     await record_auth_audit(
         action=actions.AUTH_ACCOUNT_DELETE_CANCEL,
         actor_user_id=user_id,

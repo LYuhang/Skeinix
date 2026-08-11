@@ -8,7 +8,18 @@ import { ChatComposer } from '@/components/agent-sidebar/ChatComposer';
 import { useChatStreamStore } from '@/stores/chat-stream';
 import { useAgentSettingsStore } from '@/stores/agent-settings';
 import { useChatAgentSettingsStore } from '@/stores/chat-agent-settings';
+import { useAuthStore } from '@/stores/auth';
+import { chatClientStateKey } from '@/lib/chat/state-key';
 import { server } from '@/__tests__/msw-handlers';
+
+function composerKey(chatId: string): string {
+  return chatClientStateKey({
+    account: useAuthStore.getState().user,
+    scopeId: 'wf_x',
+    surface: 'chat',
+    chatId,
+  });
+}
 
 function renderComposer(chatId: string, showModelSelector = false) {
   const queryClient = new QueryClient({
@@ -33,6 +44,12 @@ describe('ChatComposer Stop', () => {
   beforeEach(() => {
     cancelled = [];
     server.use(
+      http.get('*/api/v1/chats/bootstrap', () => HttpResponse.json({
+        carrier_scope_id: 'wf_x',
+        surface: 'chat',
+        available_commands: [],
+        debug_view_enabled: false,
+      })),
       http.post('*/api/v1/chats/:chatId/active-turn/cancel', ({ params }) => {
         cancelled.push({
           chatId: String(params.chatId),
@@ -333,6 +350,124 @@ describe('ChatComposer Stop', () => {
 
     expect(screen.queryByRole('button', { name: /stop|停止/i })).toBeNull();
     expect(screen.getByRole('button', { name: /send|发送/i })).toBeEnabled();
+  });
+
+  it('moves text and attachments from the composer into the user message before server acceptance', async () => {
+    let releaseRequest: (() => void) | undefined;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    server.use(
+      http.get('*/api/v1/chat-scopes/wf_x/chats/chat_optimistic/state', () =>
+        HttpResponse.json({
+          todo_items: [],
+          background_jobs: [],
+          active_modes: [],
+          mcp_server_ids: [],
+          mcp_config_revision: 0,
+        })),
+      http.post(
+        '*/api/v1/chat-scopes/wf_x/chats/chat_optimistic/messages',
+        async () => {
+          await requestGate;
+          return new HttpResponse('id: 1\nevent: done\ndata: {}\n\n', {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'X-Turn-Id': 'turn_optimistic',
+            },
+          });
+        },
+      ),
+    );
+
+    const attachment = {
+      type: 'file' as const,
+      name: 'customer-feedback.csv',
+      path: '/data/attachments/customer-feedback.csv',
+      content_type: 'text/csv',
+      size_bytes: 128,
+    };
+    const stateKey = composerKey('chat_optimistic');
+    useChatStreamStore.getState().addAttachment(stateKey, attachment);
+    const { container } = renderComposer('chat_optimistic');
+    const input = screen.getByRole('textbox');
+    expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
+      .toHaveLength(1);
+    await userEvent.type(input, 'show this immediately');
+    await userEvent.click(screen.getByRole('button', { name: /send|发送/i }));
+
+    expect(input).toHaveValue('');
+    expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
+      .toHaveLength(0);
+    expect(useChatStreamStore.getState().pendingAttachments[stateKey])
+      .toBeUndefined();
+    expect(useChatStreamStore.getState().runtimes.chat_optimistic.buffer).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'show this immediately',
+          attachments: [attachment],
+        }),
+      ]),
+    );
+    expect(useChatStreamStore.getState().runtimes.chat_optimistic.messages[0])
+      .toMatchObject({
+        role: 'user',
+        content: 'show this immediately',
+        attachments: [attachment],
+      });
+
+    releaseRequest?.();
+    await waitFor(() => {
+      expect(useChatStreamStore.getState().runtimes.chat_optimistic.turnId)
+        .toBe('turn_optimistic');
+    });
+  });
+
+  it('restores text and attachments when the backend rejects the turn before acceptance', async () => {
+    server.use(
+      http.get('*/api/v1/chat-scopes/wf_x/chats/chat_rejected/state', () =>
+        HttpResponse.json({
+          todo_items: [],
+          background_jobs: [],
+          active_modes: [],
+          mcp_server_ids: [],
+          mcp_config_revision: 0,
+        })),
+      http.post(
+        '*/api/v1/chat-scopes/wf_x/chats/chat_rejected/messages',
+        () => HttpResponse.json(
+          { detail: { code: 'chat_run_active' } },
+          { status: 409 },
+        ),
+      ),
+      http.get(
+        '*/api/v1/chats/chat_rejected/turns/by-client-request/:clientRequestId',
+        () => HttpResponse.json({ detail: 'not found' }, { status: 404 }),
+      ),
+    );
+    const attachment = {
+      type: 'file' as const,
+      name: 'support-playbook.md',
+      path: '/data/attachments/support-playbook.md',
+      content_type: 'text/markdown',
+      size_bytes: 256,
+    };
+    const stateKey = composerKey('chat_rejected');
+    useChatStreamStore.getState().addAttachment(stateKey, attachment);
+
+    const { container } = renderComposer('chat_rejected');
+    const input = screen.getByRole('textbox');
+    await userEvent.type(input, 'keep this draft');
+    await userEvent.click(screen.getByRole('button', { name: /send|发送/i }));
+
+    await waitFor(() => {
+      expect(input).toHaveValue('keep this draft');
+      expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]'))
+        .toHaveLength(1);
+    });
+    expect(useChatStreamStore.getState().pendingAttachments[stateKey])
+      .toEqual([attachment]);
   });
 
   it('keeps inline controls transparent while a turn disables them', async () => {

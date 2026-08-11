@@ -101,6 +101,52 @@ describe('chat attachments', () => {
     expect(input).toHaveValue('Review@photo.png ');
   });
 
+  it('serializes a multi-file picker selection and preserves its attachment order', async () => {
+    const { container } = renderComposer();
+    const fileInput = container.querySelector('[data-role="agent-composer-file-input"]') as HTMLInputElement;
+    const firstFile = new File(['first'], 'first.csv', { type: 'text/csv' });
+    const secondFile = new File(['second'], 'second.md', { type: 'text/markdown' });
+    let releaseFirst!: (attachment: {
+      type: 'file';
+      name: string;
+      path: string;
+      content_type: string;
+      size_bytes: number;
+    }) => void;
+
+    uploadChatAttachmentMock
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseFirst = resolve;
+      }))
+      .mockImplementationOnce(async () => ({
+        type: 'file',
+        name: secondFile.name,
+        path: `/data/attachments/${secondFile.name}`,
+        content_type: secondFile.type,
+        size_bytes: secondFile.size,
+      }));
+
+    fireEvent.change(fileInput, { target: { files: [firstFile, secondFile] } });
+    await waitFor(() => expect(uploadChatAttachmentMock).toHaveBeenCalledTimes(1));
+
+    releaseFirst({
+      type: 'file',
+      name: firstFile.name,
+      path: `/data/attachments/${firstFile.name}`,
+      content_type: firstFile.type,
+      size_bytes: firstFile.size,
+    });
+
+    await waitFor(() => {
+      expect(uploadChatAttachmentMock).toHaveBeenCalledTimes(2);
+      expect(container.querySelectorAll('[data-role="agent-composer-attachment-chip"]')).toHaveLength(2);
+    });
+    expect(Object.values(useChatStreamStore.getState().pendingAttachments)
+      .flat()
+      .map((item) => item.name))
+      .toEqual(['first.csv', 'second.md']);
+  });
+
   it('renders commands as ordinary text and emphasizes only durable attachments', () => {
     render(
       <MessageItem

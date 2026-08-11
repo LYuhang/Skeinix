@@ -318,6 +318,64 @@ class LangChainCheckpointStore:
                             (pattern,),
                         )
 
+    async def purge_chats(
+        self,
+        organization_id: str,
+        *,
+        chat_ids: list[str],
+        legacy_thread_ids: list[str] | None = None,
+    ) -> None:
+        """Erase selected user-owned Chat state without deleting an organization.
+
+        Account deletion may retain organization-owned content. Runtime
+        checkpoints remain identity-scoped, so only the deleted user's Chat
+        rows are removed from those organizations.
+        """
+        chats = sorted({str(value) for value in chat_ids if value})
+        threads = sorted({
+            str(value) for value in (legacy_thread_ids or []) if value
+        })
+        if not chats and not threads:
+            return
+        pool = await self._get_pool()
+        async with pool.connection() as conn:
+            async with conn.transaction():
+                for chat_id in chats:
+                    await conn.execute(
+                        "DELETE FROM vc_runtime_checkpoint_writes "
+                        "WHERE organization_id = %s AND chat_id = %s",
+                        (str(organization_id), chat_id),
+                    )
+                    await conn.execute(
+                        "DELETE FROM vc_runtime_checkpoints "
+                        "WHERE organization_id = %s AND chat_id = %s",
+                        (str(organization_id), chat_id),
+                    )
+                tables = await (
+                    await conn.execute(
+                        "SELECT to_regclass('public.checkpoints') AS checkpoints, "
+                        "to_regclass('public.checkpoint_blobs') AS blobs, "
+                        "to_regclass('public.checkpoint_writes') AS writes"
+                    )
+                ).fetchone()
+                if not tables:
+                    return
+                exact_threads = set(threads)
+                for chat_id in chats:
+                    exact_threads.add(f"sub:{chat_id}:%")
+                for thread_id in sorted(exact_threads):
+                    operator = "LIKE" if thread_id.endswith("%") else "="
+                    for table_name, available in (
+                        ("checkpoint_writes", tables.get("writes")),
+                        ("checkpoint_blobs", tables.get("blobs")),
+                        ("checkpoints", tables.get("checkpoints")),
+                    ):
+                        if available:
+                            await conn.execute(
+                                f"DELETE FROM {table_name} WHERE thread_id {operator} %s",
+                                (thread_id,),
+                            )
+
     async def close(self) -> None:
         async with self._pool_lock:
             pool = self._pool

@@ -328,7 +328,8 @@ export OBJECT_STORE_FS_ROOT="${OBJSTORE}"
 export VIBECANVAS_STORAGE_ROOT="${HOME}/.vibecanvas/local_data"
 export MOUNT_PATH=${mount_path_q}
 export MOUNT_SYNC_INTERVAL_SECONDS="${MOUNT_SYNC_INTERVAL_SECONDS:-1.0}"
-export CELERY_QUEUES="interactive,deployments,kb_indexing"
+export CELERY_QUEUES="interactive,deployments,kb_indexing,maintenance"
+export PURGE_WORKER_ENABLED="${PURGE_WORKER_ENABLED:-true}"
 export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 # OPENAI_API_KEY is optional and only used by explicitly configured Agent runtimes.
 # Workflow execution and debugging use the same sandbox manager and session RPC.
@@ -409,6 +410,7 @@ start_redis() {
 start_openfga() {
   local openfga_bin="${OPENFGA_BIN:-$HOME/.cache/vibecanvas/openfga/openfga}"
   local token_file="$RUNDIR/openfga-token"
+  local erasure_password_file="$RUNDIR/openfga-erasure-password"
   local datastore="vibecanvas_openfga"
   if [[ ! -x "$openfga_bin" ]]; then
     "$REPO_ROOT/scripts/security/install_openfga_server.sh" "$openfga_bin"
@@ -416,6 +418,10 @@ start_openfga() {
   if [[ ! -s "$token_file" ]]; then
     openssl rand -hex 32 > "$token_file"
     chmod 600 "$token_file"
+  fi
+  if [[ ! -s "$erasure_password_file" ]]; then
+    openssl rand -hex 32 > "$erasure_password_file"
+    chmod 600 "$erasure_password_file"
   fi
   export OPENFGA_API_TOKEN="${OPENFGA_API_TOKEN:-$(cat "$token_file")}"
   export OPENFGA_API_URL="http://127.0.0.1:${OPENFGA_HTTP_PORT}"
@@ -430,6 +436,12 @@ start_openfga() {
   local datastore_uri="postgres://$(whoami)@127.0.0.1:${PGPORT}/${datastore}?sslmode=disable"
   "$openfga_bin" migrate --datastore-engine postgres \
     --datastore-uri "$datastore_uri" --timeout 30s
+  "$PGBIN/psql" -h localhost -p "$PGPORT" -U "$(whoami)" -d "$datastore" \
+    --set=ON_ERROR_STOP=1 \
+    --set=erasure_database="$datastore" \
+    --set=erasure_password="$(cat "$erasure_password_file")" \
+    --file="$REPO_ROOT/scripts/security/openfga_erasure.sql"
+  export OPENFGA_ERASURE_DATABASE_URL="postgresql://skeinix_openfga_erasure:$(cat "$erasure_password_file")@127.0.0.1:${PGPORT}/${datastore}?sslmode=disable"
   "$VIBECANVAS_PYTHON" "$DAEMONIZER" \
     --pid-file "$RUNDIR/openfga.pid" \
     --log-file "$RUNDIR/openfga.log" -- \
@@ -505,7 +517,7 @@ EOF
   "$VIBECANVAS_PYTHON" "$DAEMONIZER" \
     --pid-file "$RUNDIR/worker.pid" --log-file "$RUNDIR/worker.log" -- \
     "$RUNDIR/run.sh" "$VIBECANVAS_PYTHON" -m celery -A vibecanvas_api.celery_app worker \
-    -Q "${CELERY_QUEUES:-interactive,deployments,kb_indexing}" --concurrency=2
+    -Q "${CELERY_QUEUES:-interactive,deployments,kb_indexing,maintenance}" --concurrency=2
   "$VIBECANVAS_PYTHON" "$DAEMONIZER" \
     --pid-file "$RUNDIR/beat.pid" --log-file "$RUNDIR/beat.log" -- \
     "$RUNDIR/run.sh" "$VIBECANVAS_PYTHON" -m celery -A vibecanvas_api.celery_app beat \

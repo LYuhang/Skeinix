@@ -414,8 +414,29 @@ class PromptNode(BaseNode):
         if stop_event is not None and stop_event.is_set():
             raise RuntimeError("PromptNode cancelled after model call; output discarded.")
 
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise ValueError(
+                "The model returned no text. Increase the node's max_tokens "
+                "or select a model that can complete the requested JSON output."
+            )
+
         try:
             parsed_output = loads(repair_json(raw_output))
-            return parsed_output
         except Exception as e:
             raise ValueError(f"Failed to parse LLM output into a JSON dictionary. Error: {str(e)}\nRaw Model Output:\n{raw_output}")
+
+        if not isinstance(parsed_output, dict):
+            raise ValueError(
+                "The model output must be a JSON object matching the node's "
+                f"declared output fields, but received {type(parsed_output).__name__}."
+            )
+
+        declared_fields = set(getattr(self, "output_fields", {}) or {})
+        missing_fields = sorted(declared_fields.difference(parsed_output))
+        if missing_fields:
+            raise ValueError(
+                "The model output is missing declared field(s): "
+                + ", ".join(missing_fields)
+                + "."
+            )
+        return parsed_output

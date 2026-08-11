@@ -505,6 +505,12 @@ class AccountDeletionRequest(Base):
         PgUUID(as_uuid=True),
         ForeignKey("content_encryption_keys.key_id", ondelete="RESTRICT"),
     )
+    deletion_mode: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="immediate"
+    )
+    frozen_resource_state: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     requested_at: Mapped[datetime] = _ts()
     purge_after: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
@@ -517,6 +523,10 @@ class AccountDeletionRequest(Base):
         CheckConstraint(
             "status IN ('pending','cancelled','purging','purged','failed')",
             name="ck_account_deletion_requests_status",
+        ),
+        CheckConstraint(
+            "deletion_mode IN ('immediate','delayed')",
+            name="ck_account_deletion_requests_mode",
         ),
         Index("ix_account_deletion_due", "status", "purge_after"),
     )

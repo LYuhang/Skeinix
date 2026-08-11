@@ -92,6 +92,8 @@ export interface AuthState {
   logout: () => Promise<void>;
   /** Delete the current account, then clear local auth state. */
   deleteAccount: (email: string) => Promise<void>;
+  /** Cancel a delayed deletion request before the purge worker claims it. */
+  cancelAccountDeletion: (email: string, password: string) => Promise<void>;
   /** Atomically rotate the Session to another active organization. */
   switchOrganization: (organizationId: string) => Promise<void>;
   /** End the active support capability while preserving its parent Web Session. */
@@ -324,6 +326,10 @@ export const useAuthStore = create<AuthState>()(
       await authPost('/api/v1/auth/delete-account', { email });
       set({ token: null, authenticated: false, user: null, sessionAudience: null, privilegedAccess: null, organizationSwitching: false });
       resetAuthScopedClientState();
+    },
+
+    cancelAccountDeletion: async (email, password) => {
+      await authPost('/api/v1/auth/cancel-delete-account', { email, password });
     },
 
     switchOrganization: async (organizationId) => {

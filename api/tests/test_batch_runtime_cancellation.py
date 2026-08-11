@@ -40,7 +40,7 @@ async def test_soft_cancel_wins_at_safe_boundary_and_skips_waiting_rows(monkeypa
     async def _no_dependency_layer(_workflow):
         return None
 
-    monkeypatch.setattr(batch_runtime, "reuse_code_pythonpath", _no_dependency_layer)
+    monkeypatch.setattr(batch_runtime, "ensure_code_pythonpath", _no_dependency_layer)
 
     result = await batch_runtime.run_batch_workflow(
         task_id="task-soft-cancel",
@@ -62,3 +62,8 @@ async def test_soft_cancel_wins_at_safe_boundary_and_skips_waiting_rows(monkeypa
     assert result.summary["can_resume"] is True
     assert [row["status"] for row in result.rows] == ["cancelled", "cancelled"]
     assert all("late business error" not in str(row) for row in result.rows)
+    store = batch_runtime.get_object_store()
+    assert result.summary["artifact_sizes"] == {
+        name: len(store.fetch_bytes(batch_runtime.uri_to_key(uri)))
+        for name, uri in result.artifact_uris.items()
+    }

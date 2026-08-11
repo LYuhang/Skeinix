@@ -808,6 +808,183 @@ class _Channel:
         await self._never.wait()
 
 
+@pytest.mark.asyncio
+async def test_codex_resident_thread_suppresses_repeated_mcp_startup(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+            self.turn_number = 0
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread", "turns": []}}
+            if method == "turn/start":
+                self.turn_number += 1
+                return {"turn": {"id": f"codex-turn-{self.turn_number}"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "mcpServer/startupStatus/updated",
+                "params": {"name": "config", "status": "ready"},
+            }
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "id": f"codex-turn-{self.turn_number}",
+                        "status": "completed",
+                    }
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    resident_threads: dict[str, str] = {}
+    first_channel = _Channel()
+    base_request = dict(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model=_BROKER_MODEL,
+    )
+    await run_codex_turn(
+        first_channel,
+        RuntimeTurnRequest(turn_id="platform-turn-1", **base_request),
+        client=client,
+        close_client=False,
+        resident_threads=resident_threads,
+    )
+
+    second_channel = _Channel()
+    await run_codex_turn(
+        second_channel,
+        RuntimeTurnRequest(
+            turn_id="platform-turn-2",
+            runtime_state_ref="codex-thread",
+            **base_request,
+        ),
+        client=client,
+        close_client=False,
+        resident_threads=resident_threads,
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/start",
+        "turn/start",
+        "turn/start",
+    ]
+    assert any(
+        message.get("event", {}).get("type") == "tool.start"
+        for message in first_channel.sent
+    )
+    assert not any(
+        message.get("event", {}).get("type") in {"tool.start", "tool.end"}
+        for message in second_channel.sent
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_forks_loaded_thread_when_turn_config_changes(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/fork":
+                assert params["threadId"] == "codex-thread-old"
+                assert (
+                    params["config"]["model_provider"]
+                    == "vibecanvas_runtime_model"
+                )
+                return {"thread": {"id": "codex-thread-refreshed"}}
+            if method == "turn/start":
+                assert params["threadId"] == "codex-thread-refreshed"
+                return {"turn": {"id": "codex-turn"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "codex-turn", "status": "completed"}},
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    resident_threads = {"codex-thread-old": "previous-turn-config"}
+    channel = _Channel()
+    await run_codex_turn(
+        channel,
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="platform-turn",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            runtime_state_ref="codex-thread-old",
+            message={"role": "user", "content": "/build create a workflow"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+        resident_threads=resident_threads,
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/fork",
+        "turn/start",
+    ]
+    assert "codex-thread-old" not in resident_threads
+    assert "codex-thread-refreshed" in resident_threads
+    checkpoints = [
+        message["event"]["payload"]
+        for message in channel.sent
+        if message.get("event", {}).get("type") == "checkpoint"
+    ]
+    assert checkpoints == [
+        {
+            "state_ref": "codex-thread-refreshed",
+            "previous_state_ref": "codex-thread-old",
+        }
+    ]
+
+
 class _ApprovalChannel:
     def __init__(self) -> None:
         self.sent: list[dict] = []

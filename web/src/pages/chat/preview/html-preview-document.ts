@@ -23,10 +23,37 @@ function createCspNonce(): string {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+function inertHtmlFile(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  parsed.querySelectorAll('script, iframe, object, embed').forEach((element) => element.remove());
+  parsed.querySelectorAll('meta[http-equiv]').forEach((element) => {
+    const directive = element.getAttribute('http-equiv')?.trim().toLowerCase();
+    if (directive === 'refresh' || directive === 'content-security-policy') {
+      element.remove();
+    }
+  });
+  parsed.querySelectorAll('*').forEach((element) => {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+      if (
+        name.startsWith('on')
+        || name === 'srcdoc'
+        || (/^(?:href|src|action|formaction|poster|xlink:href)$/i.test(name)
+          && /^javascript\s*:/i.test(value))
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+  return `<!doctype html>${parsed.documentElement.outerHTML}`;
+}
+
 export function buildFilePreviewHtmlDocument(
   html: string,
   session: PreviewResourceSessionV1,
 ): string {
+  const inertHtml = inertHtmlFile(html);
   const mounts = [...session.resourceMounts]
     .map((mount) => ({
       pathPrefix: mount.pathPrefix.replace(/\/*$/, '/'),
@@ -108,6 +135,5 @@ export function buildFilePreviewHtmlDocument(
 })();
 </script>`;
   const head = /<head(?:\s[^>]*)?>/i;
-  if (head.test(html)) return html.replace(head, (match) => `${match}${bootstrap}`);
-  return `<!doctype html><html><head>${bootstrap}</head><body>${html}</body></html>`;
+  return inertHtml.replace(head, (match) => `${match}${bootstrap}`);
 }

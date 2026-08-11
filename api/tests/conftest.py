@@ -201,10 +201,22 @@ def _find_test_pg_ctl() -> str:
     )
 
 
-# port=None lets pytest-postgresql choose an available local port.
+# port=None lets pytest-postgresql choose an available local port. WSL hosts
+# with a mirrored Windows/VPN network can make port-for's localhost probe hang;
+# CI or a developer may pin an isolated port without changing the fixture.
+_TEST_POSTGRESQL_PORT = os.environ.get("SKEINIX_TEST_PG_PORT", "").strip()
 postgresql_proc = factories.postgresql_proc(
     executable=_find_test_pg_ctl(),
-    port=None,
+    # 127.0.0.1 may be intercepted by a mirrored Windows VPN and leave a
+    # closed-port probe in SYN_SENT until timeout. Another loopback address is
+    # still local-only but fails/accepts immediately on both Linux and WSL.
+    host=os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2"),
+    port=int(_TEST_POSTGRESQL_PORT) if _TEST_POSTGRESQL_PORT else None,
+    unixsocketdir=os.environ.get("SKEINIX_TEST_PG_SOCKET_DIR", "/tmp"),
+    postgres_options=(
+        "-c listen_addresses="
+        + os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2")
+    ),
 )
 
 

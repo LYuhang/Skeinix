@@ -1,0 +1,23 @@
+# Reviewed Python productivity baseline available to every Agent and Workflow
+# sandbox. Keep direct requirements exact; regenerate requirements-sandbox.txt
+# with the command recorded in that lock file after reviewing upgrades.
+beautifulsoup4==4.14.3
+httpx==0.28.1
+jsonlines==4.0.0
+lxml==6.1.1
+markdown==3.10.2
+matplotlib==3.10.8
+networkx==3.6.1
+numpy==2.4.4
+openpyxl==3.1.5
+pandas==3.0.3
+pillow==12.3.0
+pypdf==6.15.0
+python-docx==1.2.0
+python-pptx==1.0.2
+pyyaml==6.0.3
+reportlab==4.5.1
+requests==2.34.2
+seaborn==0.13.2
+tabulate==0.9.0
+xlsxwriter==3.2.9

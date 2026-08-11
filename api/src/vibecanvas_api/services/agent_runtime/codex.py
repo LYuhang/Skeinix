@@ -1596,16 +1596,40 @@ async def run_codex_turn(
         )
 
         phase_started = perf_counter()
+        resident_state_config = (
+            resident_threads.get(request.runtime_state_ref)
+            if request.runtime_state_ref and resident_threads is not None
+            else None
+        )
+        reused_resident_thread = bool(
+            request.runtime_state_ref
+            and resident_state_config == resident_config
+        )
         if (
             request.runtime_state_ref
-            and resident_threads is not None
-            and resident_threads.get(request.runtime_state_ref) == resident_config
+            and resident_state_config == resident_config
         ):
             # The app-server already owns this live thread and its MCP clients.
             # Starting the next Turn directly avoids re-reading the native
             # transcript and re-running MCP startup on every user message.
             thread_id = request.runtime_state_ref
             thread = {"id": thread_id}
+        elif request.runtime_state_ref and resident_state_config is not None:
+            # A running app-server thread keeps the MCP clients it was opened
+            # with. ``thread/resume`` rejoins that live thread, so newly
+            # activated slash-command MCPs (for example /build after an
+            # ordinary Turn) would not become model-visible. Forking copies the
+            # completed conversation history into a new native thread while
+            # applying the current Turn's exact, least-privilege MCP config.
+            opened = await client.request(
+                "thread/fork",
+                {"threadId": request.runtime_state_ref, **common},
+                timeout_s=45.0,
+            )
+            thread = opened.get("thread")
+            thread_id = str(thread.get("id") if isinstance(thread, dict) else "")
+            if thread_id and resident_threads is not None:
+                resident_threads.pop(request.runtime_state_ref, None)
         elif request.runtime_state_ref:
             opened = await client.request(
                 "thread/resume",
@@ -1682,7 +1706,13 @@ async def run_codex_turn(
                 },
             },
         )
-        await emit("checkpoint", {"state_ref": thread_id})
+        checkpoint_payload = {"state_ref": thread_id}
+        if (
+            request.runtime_state_ref
+            and request.runtime_state_ref != thread_id
+        ):
+            checkpoint_payload["previous_state_ref"] = request.runtime_state_ref
+        await emit("checkpoint", checkpoint_payload)
 
         async for message in client.messages():
             method = str(message.get("method") or "")
@@ -1990,11 +2020,20 @@ async def run_codex_turn(
 
             if method == "mcpServer/startupStatus/updated":
                 server_name = str(params.get("name") or "MCP server")[:100]
+                native_status = str(params.get("status") or "starting")
+                # Codex may re-announce the already-live MCP clients at the
+                # beginning of every turn. Keep failures visible, but do not
+                # replay successful startup cards when this turn reused the
+                # same resident thread and unchanged MCP configuration.
+                if reused_resident_thread and native_status not in {
+                    "failed",
+                    "cancelled",
+                }:
+                    continue
                 native_item_id = "mcp-startup:" + uuid.uuid5(
                     uuid.NAMESPACE_URL,
                     f"vibecanvas:codex-mcp-startup:{thread_id}:{server_name}",
                 ).hex[:16]
-                native_status = str(params.get("status") or "starting")
                 item = {
                     "id": native_item_id,
                     "type": "mcpToolCall",

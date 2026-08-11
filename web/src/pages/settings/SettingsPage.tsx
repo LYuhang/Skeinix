@@ -70,6 +70,7 @@ import { ExtensionSettingsPanel } from '@/pages/settings/ExtensionSettingsPanel'
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { organizationsQueryKey } from '@/lib/api/organization-query-keys';
 import { listOrganizations } from '@/lib/api/organizations';
+import { getApiBase } from '@/lib/base-path';
 
 interface LanguageOption {
   value: Locale;
@@ -82,6 +83,25 @@ const LANGUAGES: LanguageOption[] = [
 ];
 
 const DEFAULT_TAB = 'preferences';
+
+interface AccountDeletionPolicy {
+  account_deletion_mode: 'immediate' | 'delayed';
+  account_deletion_retention_days: number;
+}
+
+async function getAccountDeletionPolicy(): Promise<AccountDeletionPolicy> {
+  const response = await fetch(`${getApiBase()}/api/v1/public-config`);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = await response.json() as Partial<AccountDeletionPolicy>;
+  return {
+    account_deletion_mode:
+      payload.account_deletion_mode === 'delayed' ? 'delayed' : 'immediate',
+    account_deletion_retention_days:
+      typeof payload.account_deletion_retention_days === 'number'
+        ? payload.account_deletion_retention_days
+        : 14,
+  };
+}
 
 /**
  * Timezone preference card. A grouped <Select> of curated, readable IANA
@@ -596,6 +616,14 @@ function DeleteAccountCard() {
   const [email, setEmail] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const policy = useQuery({
+    queryKey: ['public-config', 'account-deletion'],
+    queryFn: getAccountDeletionPolicy,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const delayed = policy.data?.account_deletion_mode === 'delayed';
+  const retentionDays = policy.data?.account_deletion_retention_days ?? 14;
 
   const expectedEmail = user?.email ?? '';
   const emailMatches =
@@ -605,7 +633,18 @@ function DeleteAccountCard() {
     setSubmitting(true);
     try {
       await deleteAccount(email.trim());
-      toast.success(t('account_delete_success', 'Account deletion requested'));
+      toast.success(
+        delayed
+          ? t(
+              'account_delete_success_delayed',
+              `Account locked. Deletion is scheduled in ${retentionDays} days.`,
+              { days: retentionDays },
+            )
+          : t(
+              'account_delete_success_immediate',
+              'Account locked and permanent deletion started.',
+            ),
+      );
       navigate('/login', { replace: true });
     } catch (err) {
       const message =
@@ -628,9 +667,21 @@ function DeleteAccountCard() {
             {t('account_delete_title', 'Delete account')}
           </h3>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {delayed
+              ? t(
+                  'account_delete_desc_delayed',
+                  `Your account and personal services are locked immediately. Permanent deletion starts after ${retentionDays} days unless you cancel from the sign-in page.`,
+                  { days: retentionDays },
+                )
+              : t(
+                  'account_delete_desc_immediate',
+                  'Your account and personal services are locked immediately, then permanent deletion begins. This cannot be cancelled.',
+                )}
+          </p>
+          <p className="mt-2 max-w-2xl text-xs text-muted-foreground">
             {t(
-              'account_delete_desc',
-              'Permanently delete your account, workflows, chats, API keys, storage files, and credentials.',
+              'account_delete_organization_policy',
+              'Personal chats, workflows, tasks, API keys, files, credentials, and Runtime state are removed. Content owned by an organization remains and is attributed to Deleted user. You must transfer ownership before deleting the sole Owner of an organization.',
             )}
           </p>
         </div>
@@ -669,10 +720,16 @@ function DeleteAccountCard() {
               {t('account_delete_confirm_title', 'Delete this account?')}
             </DialogTitle>
             <DialogDescription>
-              {t(
-                'account_delete_confirm_desc',
-                'This permanently removes your account data and cannot be undone.',
-              )}
+              {delayed
+                ? t(
+                    'account_delete_confirm_desc_delayed',
+                    `Access stops now. You can cancel from the sign-in page during the ${retentionDays}-day retention period.`,
+                    { days: retentionDays },
+                  )
+                : t(
+                    'account_delete_confirm_desc_immediate',
+                    'Access stops now and permanent deletion starts immediately. This cannot be undone.',
+                  )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -692,7 +749,9 @@ function DeleteAccountCard() {
             >
               {submitting
                 ? t('account_delete_deleting', 'Deleting...')
-                : t('account_delete_confirm_button', 'Delete permanently')}
+                : delayed
+                  ? t('account_delete_confirm_button_delayed', 'Lock and schedule deletion')
+                  : t('account_delete_confirm_button_immediate', 'Delete permanently')}
             </Button>
           </DialogFooter>
         </DialogContent>

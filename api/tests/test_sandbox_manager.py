@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from vibecanvas_api.config import config
 from vibecanvas_api.services.sandbox.gvisor import ServeSnapshot
 from vibecanvas_api.services.sandbox.manager import SandboxManager, SandboxSession
 from vibecanvas_api.services.sandbox.session_lifecycle import (
@@ -14,6 +16,46 @@ from vibecanvas_api.services.sandbox.session_lifecycle import (
     SnapshotKind,
     validate_lifecycle_transition,
 )
+
+
+@pytest.mark.asyncio
+async def test_purge_user_storage_removes_daemon_owned_runtime_trees(
+    tmp_path,
+    monkeypatch,
+):
+    user_id = str(uuid.uuid4())
+    personal_tenant_id = str(uuid.uuid4())
+    shared_tenant_id = str(uuid.uuid4())
+    other_user_id = str(uuid.uuid4())
+    roots = [tmp_path / name for name in ("agent", "overlay", "vfs")]
+    monkeypatch.setattr(config, "agent_runtime_root", str(roots[0]))
+    monkeypatch.setattr(config, "agent_overlay_root", str(roots[1]))
+    monkeypatch.setattr(config, "vfs_volume_root", str(roots[2]))
+    for root in roots:
+        personal_user = root / personal_tenant_id / user_id
+        personal_user.mkdir(parents=True)
+        (personal_user / "secret").write_text("erase", encoding="utf-8")
+        shared_user = root / shared_tenant_id / user_id
+        shared_user.mkdir(parents=True)
+        (shared_user / "secret").write_text("erase", encoding="utf-8")
+        retained_user = root / shared_tenant_id / other_user_id
+        retained_user.mkdir(parents=True)
+        (retained_user / "keep").write_text("retain", encoding="utf-8")
+
+    manager = SandboxManager(max_resident=1, idle_ttl_s=60)
+    removed = await manager.purge_user_storage(
+        user_id,
+        [personal_tenant_id, shared_tenant_id],
+        personal_tenant_id,
+    )
+
+    assert removed is True
+    for root in roots:
+        assert not (root / personal_tenant_id).exists()
+        assert not (root / shared_tenant_id / user_id).exists()
+        assert (root / shared_tenant_id / other_user_id / "keep").read_text() == (
+            "retain"
+        )
 
 
 @pytest.mark.asyncio
@@ -86,6 +128,11 @@ async def test_base_fileop_prewarm_uses_no_resident_or_user_session(tmp_path):
     assert session["tenant_id"] == "00000000-0000-0000-0000-000000000000"
     assert session.get("user_id") is None
     assert session.get("runtime_dir") is None
+    request = observed["request"]
+    assert isinstance(request, dict)
+    command = str(request["command"])
+    assert '["bs4", "docx", "httpx"' in command
+    assert "('bs4', 'docx', 'httpx'" not in command
     assert observed["stopped"] is True
     assert not os.path.exists(str(observed["root"]))
 

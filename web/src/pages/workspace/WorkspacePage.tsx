@@ -340,12 +340,24 @@ export function WorkspacePage() {
             </ManagementToolbar>
 
             {/* Table — the scroll region. Capped to the available height so the
-                pagination bar below never scrolls away with the rows. */}
+                pagination bar below never scrolls away with the rows. The
+                percentage columns adapt to the available width; low-priority
+                metadata disappears before the workflow name becomes cramped. */}
             <div
-              className="surface-panel app-scrollbar min-h-0 flex-1 overflow-y-auto rounded-lg"
+              className="surface-panel app-scrollbar min-h-0 flex-1 overflow-auto rounded-lg"
               data-testid="wf-table-scroll"
             >
-              <table className="w-full text-left text-ui" data-testid="wf-table">
+              <table
+                className="w-full table-fixed text-left text-ui"
+                data-testid="wf-table"
+              >
+                <colgroup>
+                  <col className="w-[50%] xl:w-[38%]" />
+                  <col className="w-[12%] xl:w-[10%]" />
+                  <col className="w-[20%] xl:w-[15%]" />
+                  <col className="hidden w-[18%] xl:table-column" />
+                  <col className="w-[18%] xl:w-[19%]" />
+                </colgroup>
                 <thead className="sticky top-0 z-10 border-b bg-muted/70 text-xs font-medium text-muted-foreground">
                   <tr>
                     <th className="py-2.5 pl-4 pr-3 font-medium">
@@ -365,7 +377,7 @@ export function WorkspacePage() {
                     <th className="px-3 py-2.5 font-medium">
                       {t('workspace.col_sandbox', 'Sandbox')}
                     </th>
-                    <th className="hidden px-3 py-2.5 font-medium sm:table-cell">
+                    <th className="hidden px-3 py-2.5 font-medium xl:table-cell">
                       <button
                         type="button"
                         data-testid="wf-sort-updated"

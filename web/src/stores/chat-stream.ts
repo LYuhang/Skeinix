@@ -95,6 +95,7 @@ export interface StreamUiMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  attachments?: Attachment[];
   tool_calls: StreamToolCall[];
   artifact?: Record<string, unknown> | null;
   /**
@@ -227,6 +228,7 @@ export interface ChatStreamState {
   consumeDraft: () => void;
   setComposerInput: (chatId: string, value: string) => void;
   addAttachment: (chatId: string, a: Attachment) => void;
+  setAttachments: (chatId: string, attachments: Attachment[]) => void;
   removeAttachmentAt: (chatId: string, idx: number) => void;
   clearAttachments: (chatId: string) => void;
   reset: () => void;
@@ -541,6 +543,7 @@ function applyLegacyChunk(messages: StreamUiMessage[], chunk: StreamChunk): Stre
       id: `${chunk.role}:${messages.length}:${chunk.content}`,
       role: chunk.role,
       content: chunk.content,
+      attachments: chunk.attachments,
       tool_calls: [],
       artifact: chunk.artifact,
     });
@@ -684,6 +687,7 @@ export const useChatStreamStore = create<ChatStreamState>()(
           if (a.role !== b.role || a.content !== b.content) return false;
           if ((a.tool_call_id ?? '') !== (b.tool_call_id ?? '')) return false;
           return (
+            JSON.stringify(a.attachments ?? null) === JSON.stringify(b.attachments ?? null) &&
             JSON.stringify(a.tool_calls ?? null) === JSON.stringify(b.tool_calls ?? null) &&
             JSON.stringify(a.artifact ?? null) === JSON.stringify(b.artifact ?? null)
           );
@@ -852,6 +856,23 @@ export const useChatStreamStore = create<ChatStreamState>()(
           MAX_PENDING_ATTACHMENT_CHATS,
         ),
       })),
+
+    setAttachments: (chatId, attachments) =>
+      set((s) => {
+        if (attachments.length === 0) {
+          const next = { ...s.pendingAttachments };
+          delete next[chatId];
+          return { pendingAttachments: next };
+        }
+        return {
+          pendingAttachments: retainRecordValue(
+            s.pendingAttachments,
+            chatId,
+            attachments,
+            MAX_PENDING_ATTACHMENT_CHATS,
+          ),
+        };
+      }),
 
     removeAttachmentAt: (chatId, idx) =>
       set((s) => ({

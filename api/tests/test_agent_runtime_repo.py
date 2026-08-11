@@ -184,7 +184,9 @@ async def test_langchain_conversation_clock_is_fixed_across_resume(pg_engine) ->
 
 
 @pytest.mark.asyncio
-async def test_codex_thread_ref_is_written_once_and_rejects_forks(pg_engine) -> None:
+async def test_codex_thread_ref_rotates_only_with_matching_previous_ref(
+    pg_engine,
+) -> None:
     tenant_id, user_id = await _seed(pg_engine)
     chat_id = f"runtime_codex_{uuid.uuid4().hex[:8]}"
     await _insert_chat(tenant_id, user_id, chat_id)
@@ -204,10 +206,23 @@ async def test_codex_thread_ref_is_written_once_and_rejects_forks(pg_engine) -> 
 
     async with session_scope(tenant_id=tenant_id) as session:
         repo = AgentRuntimeRepo(session, user_id)
+        rotated = await repo.set_runtime_state_ref(
+            chat_id,
+            runtime_type="codex",
+            runtime_session_id=binding["runtime_session_id"],
+            state_ref="codex-thread-2",
+            previous_state_ref="codex-thread-1",
+        )
+        assert rotated is not None
+        assert rotated["runtime_state_ref"] == "codex-thread-2"
+
+    async with session_scope(tenant_id=tenant_id) as session:
+        repo = AgentRuntimeRepo(session, user_id)
         with pytest.raises(ValueError, match="runtime state ref conflict"):
             await repo.set_runtime_state_ref(
                 chat_id,
                 runtime_type="codex",
                 runtime_session_id=binding["runtime_session_id"],
-                state_ref="codex-thread-2",
+                state_ref="codex-thread-3",
+                previous_state_ref="codex-thread-1",
             )

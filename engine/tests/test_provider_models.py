@@ -268,6 +268,50 @@ def test_openai_no_proxy_omits_http_client(monkeypatch):
     assert "http_client" not in captured["ctor"]
 
 
+def test_openai_reports_error_shaped_success_response(monkeypatch):
+    class _Resp:
+        choices = [None]
+        model_extra = {
+            "error": {
+                "code": "provider_unavailable",
+                "message": "No provider was available",
+            }
+        }
+
+    class _Client:
+        def __init__(self, **kw):
+            pass
+
+        chat = _t.SimpleNamespace(
+            completions=_t.SimpleNamespace(create=lambda **kw: _Resp())
+        )
+
+    monkeypatch.setattr("openai.OpenAI", _Client, raising=False)
+    model = custom_llms.OpenAIModel("m", "k", "https://example.test/v1")
+
+    with pytest.raises(RuntimeError, match="No provider was available"):
+        model(_convo(), {})
+
+
+def test_openai_missing_message_has_actionable_error(monkeypatch):
+    class _Resp:
+        choices = [_t.SimpleNamespace(message=None)]
+
+    class _Client:
+        def __init__(self, **kw):
+            pass
+
+        chat = _t.SimpleNamespace(
+            completions=_t.SimpleNamespace(create=lambda **kw: _Resp())
+        )
+
+    monkeypatch.setattr("openai.OpenAI", _Client, raising=False)
+    model = custom_llms.OpenAIModel("m", "k", "https://example.test/v1")
+
+    with pytest.raises(RuntimeError, match="without a message"):
+        model(_convo(), {})
+
+
 def test_azure_proxy_passes_http_client(monkeypatch):
     captured = {}
 

@@ -695,6 +695,13 @@ export function routeAgentSignalWith(
       // state and must not affect rendering.
       return;
     }
+    case 'USAGE': {
+      // Provider token accounting is a valid terminal-adjacent telemetry
+      // frame. Usage is persisted by the backend; Chat presentation does not
+      // need to mutate, and treating it as unknown only pollutes the browser
+      // console during otherwise successful Turns.
+      return;
+    }
     default: {
       console.warn('[sse] unknown event', event, payload);
     }

@@ -1056,7 +1056,7 @@ async def test_codenode_declared_lib_imports_from_overlay(
     event loop, but the runner provisions via ``asyncio.run`` from a worker
     thread (cross-loop). So we BUILD the overlay HERE (in-loop, real pip,
     cached) and hand the resulting ``EnsureResult`` back from a patched
-    ``runner_mod.find_ready_overlay`` — the build + bind + import-from-overlay are
+    ``runner_mod.ensure_overlay`` — the build + bind + import-from-overlay are
     all REAL; only the (already-proven elsewhere) DB cache-lookup is bypassed."""
     from unittest.mock import AsyncMock
 
@@ -1078,7 +1078,7 @@ async def test_codenode_declared_lib_imports_from_overlay(
     # Hand the pre-built result back from the runner's ensure_overlay (avoids the
     # cross-loop DB hit; the bind + import-from-overlay below are still real).
     monkeypatch.setattr(
-        runner_mod, "find_ready_overlay",
+        runner_mod, "ensure_overlay",
         AsyncMock(return_value=built))
 
     tenant, user, wf_id = await _seed_committed_wf(

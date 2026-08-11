@@ -72,6 +72,21 @@ vi.mock('@/lib/api/deployments', () => ({
   testInvoke: vi.fn(),
 }));
 
+vi.mock('@/lib/api/queries/workflow', () => ({
+  useWorkflow: () => ({
+    data: {
+      workflow: {
+        node_1: {
+          node_type: 'StartNode',
+          input_fields: {
+            analysis_focus: { type: 'string' },
+          },
+        },
+      },
+    },
+  }),
+}));
+
 import { DeploymentDetailPage } from '@/pages/deployments/DeploymentDetailPage';
 
 const testI18n = i18n.createInstance();
@@ -151,5 +166,21 @@ describe('<DeploymentDetailPage>', () => {
     expect(
       await screen.findByRole('button', { name: /rotate api key/i }),
     ).toBeInTheDocument();
+  });
+
+  it('uses the workflow StartNode fields in code examples and test inputs', async () => {
+    const user = userEvent.setup();
+    renderAt(DEP_ID);
+
+    await screen.findByText('API bot');
+    await user.click(screen.getByRole('tab', { name: /^Code examples$/i }));
+    expect(screen.getByTestId('deployment-code-curl')).toHaveTextContent(
+      '"analysis_focus":"<analysis_focus>"',
+    );
+
+    await user.click(screen.getByRole('tab', { name: /^Test$/i }));
+    expect(screen.getByRole('textbox', { name: 'Inputs (JSON)' })).toHaveValue(
+      '{\n  "analysis_focus": "<analysis_focus>"\n}',
+    );
   });
 });

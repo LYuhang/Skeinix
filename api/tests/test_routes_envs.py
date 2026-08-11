@@ -67,7 +67,10 @@ async def test_ensure_route_rejects_without_creating_build(client, pg_engine):
         "/api/v1/envs/ensure", json={"requirements": reqs}, headers=_auth(tok)
     )
     assert r.status_code == 409, r.text
-    assert "Workflow page" in r.json()["detail"]
+    assert r.json()["detail"] == (
+        "dependencies are prepared by sandboxd only when an authorized "
+        "Workflow, Task, or Deployment execution starts"
+    )
     key = compute_overlay_key(reqs)
     maker = async_sessionmaker(pg_engine, expire_on_commit=False)
     async with maker() as s:

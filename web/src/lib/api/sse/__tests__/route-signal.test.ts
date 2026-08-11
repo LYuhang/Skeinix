@@ -266,6 +266,23 @@ describe('routeAgentSignalWith', () => {
     expect(client.invalidateQueries).not.toHaveBeenCalled();
   });
 
+  it('accepts USAGE as a telemetry frame without warning or mutating Chat', () => {
+    const client = makeClient();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    useChatStreamStore.getState().beginTurn('chat_y', 'turn_42');
+
+    routeAgentSignalWith(client, 'USAGE', {
+      model: 'gpt-test',
+      prompt_tokens: 10,
+      completion_tokens: 2,
+    }, ctx);
+
+    expect(useChatStreamStore.getState().state).toBe('streaming');
+    expect(client.invalidateQueries).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('accepts HITL_REQUIRED as a control-plane frame', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 

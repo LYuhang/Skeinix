@@ -37,6 +37,34 @@ def _parse_extra_body(config: Dict[str, Any]) -> Optional[dict]:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _openai_completion_text(response: Any) -> str:
+    """Return completion text or raise a useful provider-shape error.
+
+    Some OpenAI-compatible gateways can answer with HTTP 200 while carrying an
+    error-shaped body (or ``choices: [null]``). Indexing that response directly
+    hides the provider failure behind ``'NoneType' object is not subscriptable``.
+    Keep the workflow error actionable without echoing request data or secrets.
+    """
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices or choices[0] is None:
+        extra = getattr(response, "model_extra", None)
+        error = getattr(response, "error", None)
+        if error is None and isinstance(extra, dict):
+            error = extra.get("error")
+        if isinstance(error, dict):
+            detail = error.get("message") or error.get("code")
+        else:
+            detail = getattr(error, "message", None) or str(error or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Provider returned no completion choices{suffix}")
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise RuntimeError("Provider returned a completion without a message")
+    content = getattr(message, "content", None)
+    return content if isinstance(content, str) else ""
+
+
 class OpenAIModel(BaseLLM):
     """OpenAI-compatible API model.
 
@@ -103,7 +131,7 @@ class OpenAIModel(BaseLLM):
         if stop_event is not None and stop_event.is_set():
             raise RuntimeError("LLM call cancelled after completion")
 
-        return response.choices[0].message.content or ""
+        return _openai_completion_text(response)
 
 
 class AzureOpenAIModel(BaseLLM):

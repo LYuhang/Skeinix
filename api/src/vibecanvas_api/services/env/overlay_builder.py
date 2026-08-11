@@ -1,10 +1,10 @@
 """Content-addressed CodeNode library-overlay builder.
 
-Builds a declared dep-set into a cached, shared directory **host-side** (never
-inside a run sandbox), idempotently. New builds are initiated only while the
-Workflow page is initializing an execution sandbox for a node or whole-workflow
-run. Non-interactive consumers may reuse an already-ready layer, but must not
-trigger package installation themselves.
+Builds a declared dep-set into a cached, shared directory on the sandbox node
+(never inside a run sandbox), idempotently. Every execution surface may ensure
+its exact layer through sandboxd's narrow control-plane method, so a Deployment
+or Task self-heals after a cold cache instead of depending on a manual editor
+run.
 
 The overlay is keyed by a sha256 content-address (``compute_overlay_key``) of
 the declared requirements, so identical dep-sets across tenants/workflows share
@@ -228,9 +228,8 @@ async def ensure_overlay(requirements: str | None) -> EnsureResult:
 async def find_ready_overlay(requirements: str | None) -> EnsureResult:
     """Look up a prepared overlay without installing or mutating build state.
 
-    Deployment and other non-Workflow-page invocation paths use this read-only
-    lookup.  A missing/unfinished layer is reported as ``unavailable`` so those
-    paths fail clearly instead of unexpectedly running pip during a request.
+    Administrative/status callers use this read-only lookup when they must not
+    trigger a build. Execution paths use ``ensure_overlay`` through sandboxd.
     """
     key = compute_overlay_key(requirements)
     if not parse_install_specs(requirements):

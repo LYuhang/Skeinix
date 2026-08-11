@@ -38,7 +38,7 @@ from vibecanvas_api.services.run_workspace import RunWorkspace
 from vibecanvas_api.services.llm_credentials_inject import (
     inject_into_run_context_sync,
 )
-from vibecanvas_api.services.env.overlay_builder import find_ready_overlay
+from vibecanvas_api.services.env.overlay_builder import ensure_overlay
 from vibecanvas_api.services.sandbox import (
     EngineNeedsHostNode,
     SandboxUnavailable,
@@ -117,10 +117,10 @@ def run_workflow_sandboxed_sync(
     )
     run_id = run_id or uuid4().hex
 
-    # Deployment/non-interactive invocation may only CONSUME an overlay that a
-    # Workflow-page node/whole-workflow execution already prepared. It must not
-    # run pip during an invocation request. A missing layer is terminal and the
-    # message tells the operator how to initialize it through the supported UI.
+    # Every executing surface is self-contained. The content-addressed overlay
+    # builder is a fast lookup on warm paths and performs one lock-protected
+    # build on cold paths, so Deployment/Task execution never relies on a user
+    # first opening the Workflow editor after a restart or cache replacement.
     settings = (workflow_dict.get("__meta__") or {}).get("settings") or {}
     requirements = settings.get("code_requirements")
     if config.sandbox_service_mode == "service":
@@ -176,13 +176,12 @@ def run_workflow_sandboxed_sync(
         )
     lib_overlay: str | None = None
     if isinstance(requirements, str) and requirements.strip():
-        prepared = asyncio.run(find_ready_overlay(requirements.strip()))
+        prepared = asyncio.run(ensure_overlay(requirements.strip()))
         if prepared.status != "ready":
             detail = prepared.error_log or f"overlay status is {prepared.status!r}"
             raise RuntimeError(
-                "workflow dependency environment is not initialized; run a "
-                "node or the workflow once from the Workflow page before "
-                f"invoking it here ({requirements.strip()!r}: {detail})"
+                "workflow dependency preparation failed "
+                f"({requirements.strip()!r}: {detail})"
             )
         lib_overlay = prepared.path
 

@@ -83,10 +83,13 @@ _MANAGER_METHODS = {
     "status",
     "close_session",
     "close_tenant",
+    "close_user",
+    "purge_user_storage",
     "invalidate_codex_account_sessions",
     "mirror_vfs_write",
     "sweep_idle",
     "run_mcp_probe",
+    "ensure_workflow_dependencies",
     "run_workflow_once",
 }
 
@@ -404,7 +407,7 @@ class RemoteSandboxManager:
         declared = kwargs.get("timeout_s", kwargs.get("timeout", 0))
         if isinstance(declared, (int, float)) and declared > 0:
             return max(float(declared) + 30.0, 60.0)
-        if method == "run_workflow_once":
+        if method in {"ensure_workflow_dependencies", "run_workflow_once"}:
             return max(float(config.sandbox_service_operation_timeout_s), 60.0)
         return 600.0
 
@@ -569,6 +572,24 @@ class RemoteSandboxManager:
     async def close_tenant(self, tenant_id: str, *, reason: str = "tenant_purge") -> int:
         return int(await self._manager_call("close_tenant", tenant_id, reason=reason))
 
+    async def close_user(self, user_id: str, *, reason: str = "account_purge") -> int:
+        return int(await self._manager_call("close_user", user_id, reason=reason))
+
+    async def purge_user_storage(
+        self,
+        user_id: str,
+        tenant_ids: list[str],
+        personal_tenant_id: str,
+    ) -> bool:
+        return bool(
+            await self._manager_call(
+                "purge_user_storage",
+                user_id,
+                tenant_ids,
+                personal_tenant_id,
+            )
+        )
+
     async def invalidate_codex_account_sessions(self, tenant_id: str, user_id: str) -> int:
         return int(await self._manager_call(
             "invalidate_codex_account_sessions", tenant_id, user_id,
@@ -603,6 +624,11 @@ class RemoteSandboxManager:
 
     async def run_workflow_once(self, **kwargs: Any) -> dict:
         return await self._manager_call("run_workflow_once", **kwargs)
+
+    async def ensure_workflow_dependencies(self, requirements: str) -> dict:
+        return await self._manager_call(
+            "ensure_workflow_dependencies", requirements,
+        )
 
     async def drain_background_closes(self) -> None:
         await self._manager_call("drain_background_closes")

@@ -10,7 +10,7 @@
  *
  */
 import { memo } from 'react';
-import { CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
+import { CheckCircle2, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { Markdown } from './Markdown';
@@ -201,26 +201,6 @@ function MessageItemComponent({
               {message.content}
             </Markdown>
           ))}
-        {!isUser && streaming ? (
-          <span
-            className={cn(
-              'mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground',
-              !hasContent && 'mt-0',
-            )}
-            data-role="agent-streaming-indicator"
-            role="status"
-            aria-label={t('agent.still_working', 'Agent is still working')}
-            title={t('agent.still_working', 'Agent is still working')}
-          >
-            <Loader2
-              className="h-3.5 w-3.5 animate-spin text-state-running motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-            <span className="sr-only">
-              {t('agent.still_working', 'Agent is still working')}
-            </span>
-          </span>
-        ) : null}
       </div>
       {!compact && isUser && <MessageAvatar label={userInitial} tone="user" />}
     </div>

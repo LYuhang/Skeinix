@@ -132,6 +132,16 @@ class ChatRepo:
         - ``chat_id`` is non-empty.
         - ``major_version`` >= 1 (the chats table enforces ``major_version > 0``).
         """
+        # A new Chat can be materialized by several entry points (the first
+        # attachment, an explicit sandbox warm-up, or the first Turn). Multiple
+        # files are also allowed in one composer selection. Serialize that
+        # first-create decision across API workers so concurrent requests see
+        # the row created by the winner instead of racing into the primary-key
+        # constraint and leaking a 500 to the user.
+        await self._s.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"chat-create:{chat_id}"},
+        )
         existing = (await self._s.execute(
             select(
                 Chat.creator_user_id,
