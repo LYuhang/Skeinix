@@ -170,28 +170,7 @@ extension instead. The agent uses tools to build a Workflow, which the user can
 inspect and refine on the canvas. The Workflow can then run directly, through a
 batch or scheduled Task, or as a Deployment that external systems can call.
 
-```mermaid
-flowchart TB
-    G["💡 Describe a goal"]
-    B["🌐 Start from the browser extension<br/>for signed-in websites"]
-    C["💬 Collaborate with the Agent in Chat"]
-    A["🤖 Agent uses tools<br/>to build an executable solution"]
-    W["🧩 Inspect and refine<br/>the Workflow on the canvas"]
-    R{"Choose how to run"}
-    N["▶️ Run now"]
-    T["⏱️ Run in a batch or on a schedule"]
-    D["🚀 Publish as an API or webhook"]
-    O["📦 Review outputs and failures"]
-    E["🔌 Connect external systems"]
-
-    G --> C
-    B --> C
-    C --> A --> W --> R
-    R -->|Run| N --> O
-    R -->|Task| T --> O
-    R -->|Deployment| D --> E
-    O -.->|Refine| C
-```
+![Skeinix usage flow](docs/assets/usage-flow.svg)
 
 The diagram shows a common path, not a set of mandatory dependencies. A Workflow
 can be tested directly on the canvas or handed to a Task for batch or scheduled

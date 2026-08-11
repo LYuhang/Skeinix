@@ -130,28 +130,7 @@ cd Skeinix
 
 用户通常从 Chat 开始，通过对话说明需求；需要操作已登录的网页时，也可以从浏览器扩展发起对话。Agent 会根据目标调用工具并构建 Workflow，用户可以在画布上继续检查和调整。Workflow 随后可以直接运行，也可以通过 Task 执行批处理或定时任务；验证通过后，再通过 Deployment 发布给外部系统调用。
 
-```mermaid
-flowchart TB
-    G["💡 描述目标"]
-    B["🌐 操作已登录网页时<br/>从浏览器扩展开始"]
-    C["💬 在 Chat 中与 Agent 协作"]
-    A["🤖 Agent 调用工具<br/>构建可执行方案"]
-    W["🧩 在画布中检查并完善 Workflow"]
-    R{"选择运行方式"}
-    N["▶️ 立即运行"]
-    T["⏱️ 批量或定时运行"]
-    D["🚀 发布为 API 或 Webhook"]
-    O["📦 查看输出与异常"]
-    E["🔌 接入外部系统"]
-
-    G --> C
-    B --> C
-    C --> A --> W --> R
-    R -->|Run| N --> O
-    R -->|Task| T --> O
-    R -->|Deployment| D --> E
-    O -.->|继续完善| C
-```
+![Skeinix 使用流程](docs/assets/usage-flow.zh-CN.svg)
 
 图中展示的是一条典型使用路径，而不是模块之间的强制依赖关系。Workflow 可以在画布中直接试运行，也可以交给 Task 执行批量或定时任务；发布后，外部调用和定时计划能够继续触发新的 Run 和 Task，无需重复最初的构建对话。
 
