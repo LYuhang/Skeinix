@@ -1500,6 +1500,8 @@
   "agent_settings.subtitle": "设置新对话的默认参数；首次发送后，每个对话会保留自己的 Runtime 配置。",
   "agent_settings.api": "API 凭据",
   "agent_settings.inline_model": "模型",
+  "agent_settings.codex_account_models": "OpenAI 账号",
+  "agent_settings.codex_api_models": "OpenAI API",
   "agent_settings.chat_locked": "{{value}} · 已绑定到当前对话",
   "approval_mode.label": "授权类型",
   "approval_mode.agent": "智能授权",
@@ -1525,8 +1527,9 @@
   "settings_runtime_saving": "正在保存…",
   "settings_runtime_saved": "默认 Runtime 已更新",
   "settings_runtime_codex_unavailable": "Codex — Adapter 尚未安装",
-  "settings_codex_connection": "Codex 连接",
-  "settings_codex_connection_desc": "可使用 ChatGPT 账号或 OpenAI 兼容 API；已有对话仍保留创建时绑定的 Runtime。",
+  "settings_codex_connection": "Codex 账号",
+  "settings_codex_connection_desc": "连接 Codex 使用的 OpenAI 账号。API Key 在独立页面管理，模型在新建对话时选择。",
+  "settings_codex_account_disabled": "当前部署未启用 OpenAI 账号登录。你仍可使用在 API Key 页面配置的 Codex API 模型。",
   "settings_codex_account_tab": "OpenAI 账号",
   "settings_codex_api_tab": "OpenAI API",
   "settings_codex_account_help": "使用一次性设备码登录，无需配置公网回调地址。",
@@ -2484,7 +2487,7 @@
   ,"settings_runtime_error": "无法更新 Agent Runtime 设置"
   ,"settings_runtime_error_hint": "请检查连接和 Runtime 配置，然后重试。"
   ,"settings_codex_connection_error": "无法更新 Codex 连接"
-  ,"settings_codex_connection_error_hint": "请检查所选账号或 API 设置，然后重试。"
+  ,"settings_codex_connection_error_hint": "请检查 OpenAI 账号连接，然后重试。"
   ,"tasks.load_error_hint": "请检查网络连接，然后重新加载任务列表。"
   ,"taskDetail.loadErrorHint": "请返回任务列表，或重新尝试加载此任务。"
   ,"taskDetail.taskId": "任务 ID"

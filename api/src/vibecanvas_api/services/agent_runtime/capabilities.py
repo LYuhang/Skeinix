@@ -65,11 +65,6 @@ def _normalized_provider(provider: str) -> str:
     return provider.strip().lower().replace("-", "_")
 
 
-def _runtime_scope(row: Mapping[str, Any]) -> str:
-    """Read a credential's Runtime owner with a safe legacy default."""
-    return str(row.get("runtime_scope") or RuntimeType.LANGCHAIN.value).strip()
-
-
 def _langchain_efforts(provider: str) -> list[RuntimeReasoningEffortOption]:
     normalized = provider.strip().lower().replace("-", "_")
     if normalized not in {"openai", "azure", "azure_openai"}:
@@ -98,8 +93,6 @@ def langchain_capabilities(
             default_reasoning_effort=None,
         ))
     for row in credential_rows:
-        if _runtime_scope(row) != RuntimeType.LANGCHAIN.value:
-            continue
         credential_id = str(row.get("id") or "").strip()
         model_name = str(row.get("model_name") or "").strip()
         provider = str(row.get("provider") or "").strip()
@@ -200,8 +193,6 @@ async def codex_capabilities(
                 default_reasoning_effort=None,
             ))
     for row in credential_rows if "personal_api" in allowed_auth else ():
-        if _runtime_scope(row) != RuntimeType.CODEX.value:
-            continue
         credential_id = str(row.get("id") or "").strip()
         model_name = str(row.get("model_name") or "").strip()
         provider = _normalized_provider(str(row.get("provider") or ""))

@@ -49,7 +49,6 @@ import {
   getAgentRuntimeSettings,
   disconnectCodexAccount,
   getCodexAccountStatus,
-  selectCodexManagedProfile,
   setDefaultAgentRuntime,
   setPreferredTimezone,
   startCodexDeviceLogin,
@@ -58,7 +57,6 @@ import {
   type CodexAccountStatus,
   type CodexDeviceLogin,
 } from '@/lib/api/agent-runtime';
-import { createLlmCredential } from '@/lib/api/llm-credentials';
 import {
   codexAccountUsageQueryKey,
   runtimeCapabilitiesPrefix,
@@ -290,7 +288,6 @@ function AgentRuntimePanel() {
       && available.has('codex') ? (
         <CodexConnectionsPanel
           settings={settings}
-          onSettingsChange={setSettings}
         />
       ) : null}
     </>
@@ -299,10 +296,8 @@ function AgentRuntimePanel() {
 
 function CodexConnectionsPanel({
   settings,
-  onSettingsChange,
 }: {
   settings: AgentRuntimeSettings;
-  onSettingsChange: (settings: AgentRuntimeSettings) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -311,18 +306,8 @@ function CodexConnectionsPanel({
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [apiForm, setApiForm] = useState({
-    name: '',
-    baseUrl: '',
-    model: '',
-    apiKey: '',
-  });
   const authMethods = new Set(settings.codex_auth_methods ?? []);
-  const managedProfiles = settings.codex_managed_profiles ?? [];
   const chatgptAllowed = authMethods.has('chatgpt');
-  const managedAllowed = authMethods.has('managed_api') && managedProfiles.length > 0;
-  const personalAllowed = authMethods.has('personal_api');
-  const apiAllowed = managedAllowed || personalAllowed;
 
   useEffect(() => {
     if (!chatgptAllowed) return undefined;
@@ -388,73 +373,22 @@ function CodexConnectionsPanel({
     }
   };
 
-  const chooseManagedProfile = async (profileId: string) => {
-    setBusy(true);
-    setError('');
-    try {
-      onSettingsChange(await selectCodexManagedProfile(profileId));
-      await queryClient.invalidateQueries({ queryKey: runtimeCapabilitiesPrefix });
-      toast.success(t('settings_codex_api_selected', 'Company API selected'));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const savePersonalApi = async () => {
-    if (!apiForm.name.trim() || !apiForm.model.trim() || !apiForm.apiKey) return;
-    setBusy(true);
-    setError('');
-    try {
-      await createLlmCredential({
-        name: apiForm.name.trim(),
-        provider: 'openai',
-        runtime_scope: 'codex',
-        model_name: apiForm.model.trim(),
-        api_url: apiForm.baseUrl.trim() || null,
-        api_key: apiForm.apiKey,
-      });
-      setApiForm({ name: '', baseUrl: '', model: '', apiKey: '' });
-      await queryClient.invalidateQueries({ queryKey: runtimeCapabilitiesPrefix });
-      toast.success(t('settings_codex_api_saved', 'OpenAI API saved'));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <section className="border-b border-edge-subtle py-5" data-testid="codex-connections-panel">
       <div className="max-w-[65ch]">
         <h3 className="text-sm font-medium">
-          {t('settings_codex_connection', 'Codex connection')}
+          {t('settings_codex_connection', 'Codex account')}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {t('settings_codex_connection_desc', 'Use a ChatGPT account or an OpenAI-compatible API. Existing chats keep their runtime binding.')}
+          {t('settings_codex_connection_desc', 'Connect the OpenAI account used by Codex. API keys are managed separately, and models are selected when you start a chat.')}
         </p>
       </div>
 
-      {!chatgptAllowed && !apiAllowed ? (
+      {!chatgptAllowed ? (
         <p className="mt-3 text-sm text-muted-foreground">
-          {t('settings_codex_no_connection_methods', 'No Codex connection methods are enabled for this deployment.')}
+          {t('settings_codex_account_disabled', 'OpenAI account sign-in is disabled for this deployment. You can still use Codex API models configured under API Keys.')}
         </p>
-      ) : <Tabs defaultValue={chatgptAllowed ? 'account' : 'api'} className="mt-4">
-        <TabsList className={`grid w-full max-w-md ${chatgptAllowed && apiAllowed ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          {chatgptAllowed ? (
-            <TabsTrigger value="account">
-              {t('settings_codex_account_tab', 'OpenAI account')}
-            </TabsTrigger>
-          ) : null}
-          {apiAllowed ? (
-            <TabsTrigger value="api">
-              {t('settings_codex_api_tab', 'OpenAI API')}
-            </TabsTrigger>
-          ) : null}
-        </TabsList>
-
-        {chatgptAllowed ? <TabsContent value="account" className="mt-4 max-w-xl">
+      ) : <div className="mt-4 max-w-xl">
           <p className="text-sm text-muted-foreground">
             {t('settings_codex_account_help', 'Sign in with a one-time device code. No public callback URL is required.')}
           </p>
@@ -502,71 +436,7 @@ function CodexConnectionsPanel({
               {busy ? t('settings_codex_connecting', 'Connecting…') : t('settings_codex_sign_in', 'Sign in with OpenAI')}
             </Button>
           )}
-        </TabsContent> : null}
-
-        {apiAllowed ? <TabsContent value="api" className="mt-4 max-w-xl space-y-5">
-          {managedAllowed ? <div>
-            <Label htmlFor="codex-managed-api">
-              {t('settings_codex_managed_api', 'Company-managed API')}
-            </Label>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('settings_codex_managed_api_help', 'Operations defines these connections at deployment. Only the name is visible here; URL and key remain on the server.')}
-            </p>
-            {managedProfiles.length > 0 ? (
-              <Select
-                value={settings.codex_managed_profile_id ?? undefined}
-                onValueChange={(value) => void chooseManagedProfile(value)}
-                disabled={busy}
-              >
-                <SelectTrigger id="codex-managed-api" className="mt-3" data-testid="codex-managed-api-select">
-                  <SelectValue placeholder={t('settings_codex_managed_api_placeholder', 'Select a company API')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {managedProfiles.map((profile) => (
-                    <SelectItem key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <p className="mt-3 rounded-md border border-dashed border-edge-subtle px-3 py-2 text-sm text-muted-foreground">
-                {t('settings_codex_no_managed_api', 'No company API has been configured by operations.')}
-              </p>
-            )}
-          </div> : null}
-
-          {personalAllowed ? <div className={managedAllowed ? 'border-t border-edge-subtle pt-5' : undefined}>
-            <h4 className="text-sm font-medium">
-              {t('settings_codex_personal_api', 'Personal or temporary API')}
-            </h4>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('settings_codex_personal_api_help', 'Add an OpenAI-compatible endpoint. The key is encrypted, write-only, and never returned to the browser.')}
-            </p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <Label htmlFor="codex-api-name">{t('credentials.name', 'Name')}</Label>
-                <Input id="codex-api-name" value={apiForm.name} onChange={(event) => setApiForm((value) => ({ ...value, name: event.target.value }))} placeholder="My OpenAI" />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="codex-api-model">{t('credentials.model', 'Model')}</Label>
-                <Input id="codex-api-model" value={apiForm.model} onChange={(event) => setApiForm((value) => ({ ...value, model: event.target.value }))} placeholder="gpt-5.2-codex" />
-              </div>
-              <div className="grid gap-1.5 sm:col-span-2">
-                <Label htmlFor="codex-api-url">{t('credentials.api_url', 'Base URL')}</Label>
-                <Input id="codex-api-url" type="url" value={apiForm.baseUrl} onChange={(event) => setApiForm((value) => ({ ...value, baseUrl: event.target.value }))} placeholder="https://api.openai.com/v1" />
-              </div>
-              <div className="grid gap-1.5 sm:col-span-2">
-                <Label htmlFor="codex-api-key">{t('credentials.api_key', 'API key')}</Label>
-                <Input id="codex-api-key" type="password" autoComplete="new-password" value={apiForm.apiKey} onChange={(event) => setApiForm((value) => ({ ...value, apiKey: event.target.value }))} />
-              </div>
-            </div>
-            <Button type="button" size="sm" className="mt-3" disabled={busy || !apiForm.name.trim() || !apiForm.model.trim() || !apiForm.apiKey} onClick={() => void savePersonalApi()}>
-              {t('settings_codex_save_api', 'Save API connection')}
-            </Button>
-          </div> : null}
-        </TabsContent> : null}
-      </Tabs>}
+        </div>}
 
       <Dialog
         open={disconnectOpen}
@@ -599,7 +469,7 @@ function CodexConnectionsPanel({
         <ActionableError
           className="mt-3"
           title={t('settings_codex_connection_error', 'Could not update the Codex connection')}
-          description={t('settings_codex_connection_error_hint', 'Review the selected account or API settings, then try again.')}
+          description={t('settings_codex_connection_error_hint', 'Review the OpenAI account connection, then try again.')}
           technicalDetails={error}
           technicalDetailsLabel={t('common.technicalDetails', 'Technical details')}
         />

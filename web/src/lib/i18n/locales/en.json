@@ -1500,6 +1500,8 @@
   "agent_settings.subtitle": "Set defaults for new conversations. Each conversation keeps its Runtime configuration after the first message.",
   "agent_settings.api": "API credential",
   "agent_settings.inline_model": "Model",
+  "agent_settings.codex_account_models": "OpenAI account",
+  "agent_settings.codex_api_models": "OpenAI API",
   "agent_settings.chat_locked": "{{value}} · Fixed for this chat",
   "approval_mode.label": "Authorization",
   "approval_mode.agent": "Smart approval",
@@ -1525,8 +1527,9 @@
   "settings_runtime_saving": "Saving…",
   "settings_runtime_saved": "Default runtime updated",
   "settings_runtime_codex_unavailable": "Codex — adapter not installed",
-  "settings_codex_connection": "Codex connection",
-  "settings_codex_connection_desc": "Use a ChatGPT account or an OpenAI-compatible API. Existing chats keep their runtime binding.",
+  "settings_codex_connection": "Codex account",
+  "settings_codex_connection_desc": "Connect the OpenAI account used by Codex. API keys are managed separately, and models are selected when you start a chat.",
+  "settings_codex_account_disabled": "OpenAI account sign-in is disabled for this deployment. You can still use Codex API models configured under API Keys.",
   "settings_codex_account_tab": "OpenAI account",
   "settings_codex_api_tab": "OpenAI API",
   "settings_codex_account_help": "Sign in with a one-time device code. No public callback URL is required.",
@@ -2484,7 +2487,7 @@
   ,"settings_runtime_error": "Could not update Agent runtime settings"
   ,"settings_runtime_error_hint": "Check the connection and runtime configuration, then try again."
   ,"settings_codex_connection_error": "Could not update the Codex connection"
-  ,"settings_codex_connection_error_hint": "Review the selected account or API settings, then try again."
+  ,"settings_codex_connection_error_hint": "Review the OpenAI account connection, then try again."
   ,"tasks.load_error_hint": "Check your connection, then reload the task list."
   ,"taskDetail.loadErrorHint": "Return to the task list or try loading this task again."
   ,"taskDetail.taskId": "Task ID"

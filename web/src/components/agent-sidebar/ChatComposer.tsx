@@ -43,7 +43,9 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -57,7 +59,7 @@ import {
 import { runAgentTurn } from '@/lib/api/sse/run-agent-turn';
 import type { HitlContinueControl } from '@/lib/api/sse/agent-stream';
 import { useAgentRuntimeCapabilities } from '@/lib/api/queries/agent-runtime';
-import type { AgentRuntimeCapabilities } from '@/lib/api/agent-runtime';
+import type { AgentRuntimeCapabilities, RuntimeModelOption } from '@/lib/api/agent-runtime';
 import type { AgentSettings, ApprovalMode, ReasoningEffort } from '@/stores/agent-settings';
 import {
   getChatAgentSettings,
@@ -1460,6 +1462,22 @@ function InlineAgentModelPicker({
   const selectedModel = capabilities?.models.find(
     (model) => model.id === selectedValue,
   );
+  const modelOptions = capabilities?.models ?? [];
+  const codexAccountModels = capabilities?.runtime_type === 'codex'
+    ? modelOptions.filter((model) => model.id.startsWith('codex:account:'))
+    : [];
+  const codexApiModels = capabilities?.runtime_type === 'codex'
+    ? modelOptions.filter((model) => !model.id.startsWith('codex:account:'))
+    : [];
+  const renderModelOption = (model: RuntimeModelOption) => (
+    <SelectItem
+      key={model.id}
+      value={model.id}
+      title={`${model.label}${model.provider ? ` (${model.provider})` : ''}`}
+    >
+      {model.label}{model.provider ? ` (${model.provider})` : ''}
+    </SelectItem>
+  );
   const selectedModelLabel = selectedMissing
     ? `${effectiveModelId} (${t('agent_settings.unavailable', 'unavailable')})`
     : selectedModel
@@ -1502,15 +1520,26 @@ function InlineAgentModelPicker({
             {effectiveModelId} ({t('agent_settings.unavailable', 'unavailable')})
           </SelectItem>
         ) : null}
-        {(capabilities?.models ?? []).map((model) => (
-          <SelectItem
-            key={model.id}
-            value={model.id}
-            title={`${model.label}${model.provider ? ` (${model.provider})` : ''}`}
-          >
-            {model.label}{model.provider ? ` (${model.provider})` : ''}
-          </SelectItem>
-        ))}
+        {capabilities?.runtime_type === 'codex' ? (
+          <>
+            {codexAccountModels.length > 0 ? (
+              <SelectGroup>
+                <SelectLabel>
+                  {t('agent_settings.codex_account_models', 'OpenAI account')}
+                </SelectLabel>
+                {codexAccountModels.map(renderModelOption)}
+              </SelectGroup>
+            ) : null}
+            {codexApiModels.length > 0 ? (
+              <SelectGroup>
+                <SelectLabel>
+                  {t('agent_settings.codex_api_models', 'OpenAI API')}
+                </SelectLabel>
+                {codexApiModels.map(renderModelOption)}
+              </SelectGroup>
+            ) : null}
+          </>
+        ) : modelOptions.map(renderModelOption)}
         {loading ? (
           <SelectItem value="__loading__" disabled>
             {t('agent_settings.loading_models', 'Loading models…')}

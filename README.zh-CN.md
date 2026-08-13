@@ -132,7 +132,7 @@ cd Skeinix
 
 2. **连接模型或账户。** 根据所选 Runtime 完成相应配置：
    - 使用 **LangChain** 时，从侧栏进入 **API 凭据**页面，添加一项凭据并填写模型提供商、模型名称和 API Key。当前支持 OpenAI、Azure OpenAI、Anthropic、Google Gemini 以及自定义提供商。
-   - 使用 **Codex** 时，留在 **Settings → Agent Runtime → Codex connection**。可以通过设备验证码登录 OpenAI 账户，也可以选择 **OpenAI API**，连接部署方提供的企业 API，或添加个人的 OpenAI 兼容 API。
+   - 使用 **Codex** 时，可以进入 **Settings → Agent Runtime → Codex account**，通过设备验证码登录 OpenAI 账户；也可以从侧栏进入 **API 凭据**页面，添加 OpenAI 或 Azure OpenAI 凭据。兼容的已保存模型会自动显示在 Codex 模型选择器的 **OpenAI API** 分组中。部署方统一配置的 API 模型无需添加个人凭据即可显示。
 
    实际可用的连接方式取决于部署配置。保存后的 API Key 会加密存储，并且只能写入，无法再从应用中读取。
 

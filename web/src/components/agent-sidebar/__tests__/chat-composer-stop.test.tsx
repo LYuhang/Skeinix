@@ -113,6 +113,52 @@ describe('ChatComposer Stop', () => {
     expect(screen.queryByText(/Runtime default/i)).toBeNull();
   });
 
+  it('groups Codex account and API models in the composer picker', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
+        protocol_version: 2,
+        runtime_type: 'codex',
+        runtime_available: true,
+        authenticated: true,
+        source: 'test-codex-connections',
+        models: [
+          {
+            id: 'codex:account:gpt-5.6-sol',
+            label: 'GPT-5.6-Sol',
+            description: 'Connected OpenAI account',
+            provider: 'chatgpt',
+            is_default: true,
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          },
+          {
+            id: 'codex:credential:11111111-1111-4111-8111-111111111111',
+            label: 'Production OpenAI',
+            description: 'openai · gpt-5.2-codex',
+            provider: 'openai',
+            is_default: false,
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          },
+        ],
+        default_model_id: 'codex:account:gpt-5.6-sol',
+        error_code: null,
+        chat_configuration_locked: false,
+        bound_agent_settings: null,
+      })),
+    );
+
+    renderComposer('chat_codex_model_groups', true);
+    const picker = await screen.findByRole('combobox', { name: 'Model' });
+    await user.click(picker);
+
+    expect(screen.getByText('OpenAI account')).toBeInTheDocument();
+    expect(screen.getByText('OpenAI API')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /GPT-5.6-Sol/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Production OpenAI/ })).toBeInTheDocument();
+  });
+
   it('preserves an unavailable explicit API instead of switching to another one', async () => {
     const unavailableId = 'langchain:credential:22222222-2222-4222-8222-222222222222';
     const otherId = 'langchain:credential:33333333-3333-4333-8333-333333333333';

@@ -70,11 +70,6 @@ vi.mock('@/lib/api/agent-runtime', () => ({
   })),
   startCodexDeviceLogin: vi.fn(),
   disconnectCodexAccount: vi.fn(),
-  selectCodexManagedProfile: vi.fn(),
-}));
-
-vi.mock('@/lib/api/llm-credentials', () => ({
-  createLlmCredential: vi.fn(),
 }));
 
 vi.mock('@/lib/api/mfa', () => ({
@@ -191,13 +186,15 @@ describe('<SettingsPage> tab shell', () => {
     expect(trigger).toHaveAttribute('data-state', 'active');
   });
 
-  it('offers account and API connection choices for Codex', async () => {
+  it('keeps Codex account login in Settings and moves API setup elsewhere', async () => {
     renderAt('/settings?tab=runtime');
 
     expect(await screen.findByText('Codex')).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: /openai account/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /openai api/i })).toBeInTheDocument();
+    expect(await screen.findByText('Codex account')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in with openai/i })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /openai api/i })).toBeNull();
+    expect(screen.queryByLabelText(/api key/i)).toBeNull();
+    expect(screen.getByText(/api keys are managed separately/i)).toBeInTheDocument();
   });
 
   it('shows polled account activity and remaining rate-limit capacity after connection', async () => {
@@ -250,10 +247,10 @@ describe('<SettingsPage> tab shell', () => {
     });
     renderAt('/settings?tab=runtime');
 
-    expect(await screen.findByRole('tab', { name: /openai api/i })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: /openai account/i })).toBeNull();
+    expect(await screen.findByText(/openai account sign-in is disabled/i)).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /openai api/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /sign in with openai/i })).toBeNull();
-    expect(screen.queryByText(/personal or temporary api/i)).toBeNull();
+    expect(screen.getByText(/configured under api keys/i)).toBeInTheDocument();
   });
 
   it('does not render runtime types disabled by deployment policy', async () => {

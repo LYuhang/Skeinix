@@ -161,10 +161,12 @@ Open <http://localhost:9001> after startup verification succeeds.
    - For **LangChain**, open **API Key** from the sidebar, add a credential, and
      enter its provider, model name, and API key. OpenAI, Azure OpenAI,
      Anthropic, Google Gemini, and custom providers are supported.
-   - For **Codex**, remain in **Settings → Agent runtime → Codex connection**.
-     Sign in with an OpenAI account using the device code, or select **OpenAI
-     API** and configure an available company-managed or personal
-     OpenAI-compatible API connection.
+   - For **Codex**, either open **Settings → Agent runtime → Codex account** and
+     sign in with an OpenAI account using the device code, or open **API Key**
+     from the sidebar and add an OpenAI or Azure OpenAI credential. Compatible
+     saved models appear automatically under **OpenAI API** in the Codex model
+     picker. Deployment-managed API models may already be available without a
+     personal key.
 
    The available connection methods depend on the deployment configuration.
    Stored API keys are encrypted and write-only: they cannot be read back from

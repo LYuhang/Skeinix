@@ -147,23 +147,23 @@ async def test_codex_catalog_uses_only_responses_compatible_host_broker_models(
 
 
 @pytest.mark.asyncio
-async def test_runtime_catalogs_never_share_saved_credentials(monkeypatch):
-    langchain_id = uuid.uuid4()
-    codex_id = uuid.uuid4()
+async def test_runtime_catalogs_filter_shared_credentials_by_compatibility(monkeypatch):
+    openai_id = uuid.uuid4()
+    anthropic_id = uuid.uuid4()
     rows = [
         {
-            "id": langchain_id,
-            "name": "LangChain API",
+            "id": openai_id,
+            "name": "Shared OpenAI API",
             "provider": "openai",
             "runtime_scope": "langchain",
-            "model_name": "langchain-model",
+            "model_name": "gpt-shared",
         },
         {
-            "id": codex_id,
-            "name": "Codex API",
-            "provider": "openai",
+            "id": anthropic_id,
+            "name": "Anthropic API",
+            "provider": "anthropic",
             "runtime_scope": "codex",
-            "model_name": "codex-model",
+            "model_name": "claude-shared",
         },
     ]
     monkeypatch.setattr(capabilities_module.config.agent, "model", "")
@@ -178,8 +178,9 @@ async def test_runtime_catalogs_never_share_saved_credentials(monkeypatch):
     codex = await codex_capabilities(rows, auth_methods=["personal_api"])
 
     assert [model.id for model in langchain.models] == [
-        f"{LANGCHAIN_CREDENTIAL_PREFIX}{langchain_id}",
+        f"{LANGCHAIN_CREDENTIAL_PREFIX}{openai_id}",
+        f"{LANGCHAIN_CREDENTIAL_PREFIX}{anthropic_id}",
     ]
     assert [model.id for model in codex.models] == [
-        f"{CODEX_CREDENTIAL_PREFIX}{codex_id}",
+        f"{CODEX_CREDENTIAL_PREFIX}{openai_id}",
     ]
