@@ -159,6 +159,74 @@ describe('ChatComposer Stop', () => {
     expect(screen.getByRole('option', { name: /Production OpenAI/ })).toBeInTheDocument();
   });
 
+  it('locks the server-bound Runtime model and connection after the first turn', async () => {
+    const accountModelId = 'codex:account:gpt-5.6-sol';
+    const apiModelId = 'codex:credential:11111111-1111-4111-8111-111111111111';
+    server.use(
+      http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
+        protocol_version: 2,
+        runtime_type: 'codex',
+        runtime_available: true,
+        authenticated: true,
+        source: 'test-bound-codex-connection',
+        models: [
+          {
+            id: accountModelId,
+            label: 'GPT-5.6-Sol',
+            description: 'Connected OpenAI account',
+            provider: 'chatgpt',
+            is_default: true,
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          },
+          {
+            id: apiModelId,
+            label: 'Production OpenAI',
+            description: 'openai · gpt-5.2-codex',
+            provider: 'openai',
+            is_default: false,
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          },
+        ],
+        default_model_id: accountModelId,
+        error_code: null,
+        chat_configuration_locked: true,
+        bound_agent_settings: {
+          model_id: accountModelId,
+          temperature: null,
+          max_tokens: null,
+          timeout: null,
+          reasoning_effort: null,
+        },
+      })),
+    );
+
+    const { container } = renderComposer('chat_bound_codex_model', true);
+    const picker = await screen.findByRole('combobox', { name: 'Model' });
+
+    await waitFor(() => {
+      expect(picker).toBeDisabled();
+      expect(picker).toHaveAttribute('title', expect.stringMatching(/Fixed for this chat/i));
+      expect(
+        useChatAgentSettingsStore.getState().entries.chat_bound_codex_model,
+      ).toMatchObject({
+        locked: true,
+        settings: { modelId: accountModelId },
+      });
+    });
+
+    useChatAgentSettingsStore.getState().set('chat_bound_codex_model', {
+      modelId: apiModelId,
+    });
+
+    expect(
+      useChatAgentSettingsStore.getState().entries.chat_bound_codex_model?.settings.modelId,
+    ).toBe(accountModelId);
+    expect(container.querySelector('[data-role="chat-model-select"]'))
+      .toHaveTextContent('GPT-5.6-Sol');
+  });
+
   it('preserves an unavailable explicit API instead of switching to another one', async () => {
     const unavailableId = 'langchain:credential:22222222-2222-4222-8222-222222222222';
     const otherId = 'langchain:credential:33333333-3333-4333-8333-333333333333';
