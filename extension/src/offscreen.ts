@@ -11,7 +11,7 @@ import { WsClient } from "./shared/ws-client";
 import { browserWsProtocols } from "./shared/browser-ws-auth";
 
 interface OpenWsMsg {
-  type: "OPEN_WS";
+  type: "OPEN_WS_INTERNAL";
   wsBase: string;
   token: string;
   browser: string;
@@ -41,6 +41,7 @@ type OffscreenMsg =
   | { type?: undefined };
 
 let client: WsClient | null = null;
+let clientKey = "";
 
 // Keep the service worker alive while this (persistent) offscreen document
 // exists, so the SW-held chrome.debugger session isn't released by SW eviction
@@ -76,7 +77,7 @@ chrome.runtime.onMessage.addListener(
   (msg: unknown, _sender, sendResponse: (r: unknown) => void) => {
     const m = msg as OffscreenMsg | null;
 
-    if (m?.type === "OPEN_WS") {
+    if (m?.type === "OPEN_WS_INTERNAL") {
       // Guard a missing/relative wsBase: without an absolute ws(s):// base the
       // URL would resolve against chrome-extension:// and `new WebSocket` throws
       // "scheme … not allowed". Bail loudly instead of crashing the handler.
@@ -93,9 +94,15 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: false, error: "invalid browser WebSocket authentication" });
         return true;
       }
+      const nextKey = JSON.stringify([url, protocols]);
+      if (client && clientKey === nextKey && client.isActive()) {
+        sendResponse({ ok: true, reused: true });
+        return false;
+      }
       // Exactly one socket per attached browser.
       client?.disconnect();
       client = new WsClient(url, protocols);
+      clientKey = nextKey;
       client.onOpen(() => chrome.runtime.sendMessage({ type: "WS_OPEN" }));
       client.onClose(() => chrome.runtime.sendMessage({ type: "WS_CLOSED" }));
       client.onAuthRequired(() =>
@@ -109,7 +116,9 @@ chrome.runtime.onMessage.addListener(
           { type: "PLAYWRIGHT_RELAY_FRAME", env },
           (relayRaw) => {
             if (chrome.runtime.lastError) return;
-            if (typeof relayRaw === "string") client?.sendRaw(relayRaw);
+            if (typeof relayRaw === "string" && !client?.sendRaw(relayRaw)) {
+              console.warn("[offscreen] dropped Playwright relay response without an active socket");
+            }
           },
         );
       });
@@ -126,14 +135,15 @@ chrome.runtime.onMessage.addListener(
 
     if (m?.type === "WS_SEND") {
       // The SW pushes a pre-encoded frame (e.g. a tab event) to the backend.
-      client?.sendRaw(m.raw);
-      sendResponse({ ok: Boolean(client) });
+      const accepted = client?.sendRaw(m.raw) === true;
+      sendResponse({ ok: accepted });
       return false;
     }
 
     if (m?.type === "CLOSE_WS") {
       client?.disconnect();
       client = null;
+      clientKey = "";
       sendResponse({ ok: true });
       return false;
     }

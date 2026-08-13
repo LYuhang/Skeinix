@@ -126,4 +126,60 @@ describe("Playwright relay dispatch", () => {
 
     expect(relay).toHaveBeenCalledOnce();
   });
+
+  it("queues relay responses while the socket is connecting and flushes on open", () => {
+    const sent: string[] = [];
+    class FakeWebSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static instance: FakeWebSocket;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      readyState = FakeWebSocket.CONNECTING;
+      constructor() {
+        FakeWebSocket.instance = this;
+      }
+      close() {}
+      send(raw: string) {
+        sent.push(raw);
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const client = new WsClient("wss://app.example/api/v1/browser/ws");
+    client.connect();
+
+    expect(client.sendRaw("relay-response")).toBe(true);
+    expect(sent).toEqual([]);
+
+    FakeWebSocket.instance.readyState = FakeWebSocket.OPEN;
+    FakeWebSocket.instance.onopen?.();
+    expect(sent).toEqual(["relay-response"]);
+  });
+
+  it("does not resurrect a disconnected client from an old reconnect timer", () => {
+    vi.useFakeTimers();
+    class FakeWebSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static instances: FakeWebSocket[] = [];
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      readyState = FakeWebSocket.CONNECTING;
+      constructor() {
+        FakeWebSocket.instances.push(this);
+      }
+      close() {}
+      send() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const client = new WsClient("wss://app.example/api/v1/browser/ws");
+    client.connect();
+    FakeWebSocket.instances[0].onclose?.({ code: 1006 } as CloseEvent);
+    client.disconnect();
+    vi.runAllTimers();
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
 });

@@ -25,9 +25,12 @@ function corr(): string {
 }
 
 export class WsClient {
+  private static readonly MAX_PENDING_FRAMES = 256;
   private ws: WebSocket | null = null;
   private attempt = 0;
   private closed = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFrames: string[] = [];
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private openCbs: (() => void)[] = [];
   private closeCbs: ((event: CloseEvent) => void)[] = [];
@@ -62,6 +65,13 @@ export class WsClient {
   }
 
   connect(): void {
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING ||
+        this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
     this.closed = false;
     const ws = new WebSocket(this.url, [...this.protocols]);
     this.ws = ws;
@@ -76,6 +86,8 @@ export class WsClient {
       this.heartbeat = setInterval(() => {
         this.ping({ type: "keepalive" });
       }, 15_000);
+      const pending = this.pendingFrames.splice(0);
+      for (const raw of pending) ws.send(raw);
       for (const cb of this.openCbs) cb();
     };
 
@@ -94,6 +106,7 @@ export class WsClient {
     };
 
     ws.onclose = (event: CloseEvent) => {
+      if (this.ws === ws) this.ws = null;
       this.stopHeartbeat();
       if (this.closed) return; // intentional close: do not reconnect
       for (const cb of this.closeCbs) cb(event);
@@ -106,16 +119,35 @@ export class WsClient {
         return;
       }
       const delay = backoffMs(this.attempt++);
-      setTimeout(() => this.connect(), delay); // reconnect; host re-drives state
+      this.clearReconnectTimer();
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (!this.closed) this.connect();
+      }, delay); // reconnect; host re-drives state
     };
+  }
+
+  /** Whether this client still owns a live, connecting, or backoff transport. */
+  isActive(): boolean {
+    return !this.closed;
   }
 
   /** Stop reconnecting and drop the socket. */
   disconnect(): void {
     this.closed = true;
     this.stopHeartbeat();
-    this.ws?.close();
+    this.clearReconnectTimer();
+    this.pendingFrames = [];
+    const ws = this.ws;
     this.ws = null;
+    ws?.close();
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   private stopHeartbeat(): void {
@@ -144,7 +176,19 @@ export class WsClient {
    * extension never constructs Agent run state, so this remains a thin
    * passthrough to the socket.
    */
-  sendRaw(raw: string): void {
-    this.ws?.send(raw);
+  sendRaw(raw: string): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(raw);
+      return true;
+    }
+    if (this.closed) return false;
+    // Playwright can answer an initialization request while the replacement
+    // socket is still handshaking. Preserve that response instead of throwing
+    // InvalidStateError and forcing the server-side MCP to wait for its timeout.
+    if (this.pendingFrames.length >= WsClient.MAX_PENDING_FRAMES) {
+      this.pendingFrames.shift();
+    }
+    this.pendingFrames.push(raw);
+    return true;
   }
 }

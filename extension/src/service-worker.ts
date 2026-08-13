@@ -1064,7 +1064,10 @@ chrome.runtime.onMessage.addListener(
         const browser = o.browser || (await getStableBrowserId());
         binding.browser_id = browser;
         const opened = await chrome.runtime.sendMessage({
-          type: "OPEN_WS",
+          // Internal-only name prevents the offscreen document from racing the
+          // public iframe OPEN_WS broadcast before this worker has validated
+          // and completed its transport configuration.
+          type: "OPEN_WS_INTERNAL",
           // The embed's relay often omits wsBase → fall back to the handoff's
           // stored value, then to the baked WS_BASE (a COLD entry-B open has
           // neither) so the offscreen never builds a relative (chrome-
