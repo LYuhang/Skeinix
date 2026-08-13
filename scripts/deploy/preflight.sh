@@ -65,6 +65,12 @@ if [[ "$bind_address" == "0.0.0.0" || "$bind_address" == "::" ]]; then
   fail "wildcard network binding is not allowed by the local-server entrypoint"
 fi
 
+internal_bind_address="$(env_value VIBECANVAS_INTERNAL_BIND_ADDRESS)"
+internal_bind_address="${internal_bind_address:-127.0.0.1}"
+if [[ "$internal_bind_address" == "0.0.0.0" || "$internal_bind_address" == "::" ]]; then
+  fail "wildcard internal service binding is not allowed by the local-server entrypoint"
+fi
+
 if [[ -r /proc/sys/kernel/unprivileged_userns_clone ]] &&
    [[ "$(< /proc/sys/kernel/unprivileged_userns_clone)" == "0" ]]; then
   fail "kernel.unprivileged_userns_clone=0; workflow gVisor sandboxes cannot start"
@@ -76,3 +82,4 @@ VIBECANVAS_ENV_FILE="$ENV_FILE" \
 echo "preflight=pass"
 echo "env_file=$ENV_FILE"
 echo "bind_address=$bind_address"
+echo "internal_bind_address=$internal_bind_address"

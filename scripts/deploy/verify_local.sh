@@ -15,9 +15,11 @@ env_value() {
 }
 
 bind_address="$(env_value VIBECANVAS_BIND_ADDRESS)"
+internal_bind_address="$(env_value VIBECANVAS_INTERNAL_BIND_ADDRESS)"
 http_port="$(env_value VIBECANVAS_HTTP_PORT)"
 api_port="$(env_value VIBECANVAS_API_PORT)"
 bind_address="${bind_address:-127.0.0.1}"
+internal_bind_address="${internal_bind_address:-127.0.0.1}"
 http_port="${http_port:-9001}"
 api_port="${api_port:-8000}"
 
@@ -25,7 +27,7 @@ VIBECANVAS_ENV_FILE="$ENV_FILE" \
   docker compose --env-file "$ENV_FILE" ps
 
 web_health="http://$bind_address:$http_port/healthz"
-api_health="http://$bind_address:$api_port/healthz"
+api_health="http://$internal_bind_address:$api_port/healthz"
 
 # Deployment verification must reach the loopback-published containers even on
 # developer machines with HTTP(S)_PROXY/ALL_PROXY configured globally.

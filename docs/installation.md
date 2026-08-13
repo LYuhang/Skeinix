@@ -32,6 +32,26 @@ traffic.
 Docker installation does not require Python, Node.js, or pnpm on the host. All
 application dependencies are built into the project images.
 
+#### Fresh Ubuntu server
+
+On a fresh Ubuntu host, install Docker Engine and Compose from Docker's official
+APT repository. Follow the current [Docker Engine installation guide](https://docs.docker.com/engine/install/ubuntu/),
+including its repository-signing and package-installation steps. Ensure the
+login user can run `docker info` and `docker compose version` without `sudo`
+before starting Skeinix; after adding the user to the `docker` group, sign out
+and start a new SSH session so the membership takes effect.
+
+For Ubuntu 24.04 (Noble) on amd64, the repository also provides
+[`install_docker_ubuntu.sh`](../scripts/install_docker_ubuntu.sh). After cloning
+Skeinix, run the script as the normal login user; it configures Docker's signed
+APT repository, installs Engine, Buildx, and Compose, and verifies a rootful
+daemon. Start a new login session before continuing with the commands below.
+
+For a long first build over SSH, use a persistent terminal such as `tmux` or
+`screen`, or arrange for the command to continue after a connection loss. The
+launcher is idempotent and can be run again if an interrupted client did not
+leave a build process running.
+
 ### Install and start
 
 Clone the repository and start the stack:
@@ -79,6 +99,53 @@ Edit `.env`, then start the stack:
 If `.env` already exists, the initializer preserves its contents. Do not delete
 or regenerate an environment file after storing data: it contains encryption
 keys required to read the existing object store.
+
+#### Remote server deployment
+
+The public URL is the only browser-facing build parameter. The launcher derives
+the canonical Host and CORS Origin, enables secure cookies for HTTPS, and
+compiles the same URL into the extension package. On a cloud VM, also provide
+the private interface address used behind the provider's public-IP NAT:
+
+```bash
+./scripts/deploy/local_server.sh up \
+  --public-url https://skeinix.example.com \
+  --bind-address 10.0.0.4
+```
+
+The command persists the derived settings in `.env`; subsequent `up` and
+`restart` commands do not need the options. Passing a new `--public-url` updates
+the derived settings without regenerating secrets or persistent data. Because
+the origin is compiled into the MV3 manifest, download the extension again
+after changing the URL.
+
+Point the domain's DNS record at the public IP and terminate HTTPS at a trusted
+reverse proxy. Forward the proxy to the private Web entry point on port `9001`.
+For example, a minimal Caddy site block is:
+
+```caddyfile
+skeinix.example.com {
+  reverse_proxy 10.0.0.4:9001
+}
+```
+
+Allow inbound TCP `80` for certificate issuance and redirect, and `443` for
+application traffic. Do not expose `8000`, `5432`, `6379`, `8080`, `2112`, or
+`9100`; the launcher keeps these control-plane ports on loopback. After HTTPS is
+working, the cloud firewall does not need to expose `9001` publicly.
+
+For short-lived evaluation without a purchased domain, an IP-encoded hostname
+such as `203-0-113-20.sslip.io` can resolve to the corresponding public IP. This
+depends on the third-party [sslip.io service](https://sslip.io/) and is not a
+substitute for deployment-owned DNS.
+
+Plain HTTP by public IP can evaluate the main application, but Chrome will not
+retain the extension's partitioned session on an insecure public origin.
+Extension sign-in, WebAuthn, passkeys, and other secure-context browser features
+require trusted HTTPS outside `localhost`. Do not weaken the extension cookie
+attributes to bypass this browser boundary. Production deployments have
+additional infrastructure requirements described in the
+[production deployment guide](../DEPLOY.md).
 
 ### Manage the stack
 
@@ -182,7 +249,7 @@ After the stack is healthy:
 
 1. open <http://localhost:9001>;
 2. create a user account or sign in;
-3. open **Settings → Runtime**;
+3. open **Settings → Agent Runtime**;
 4. add a supported model provider or connect a Codex account; and
 5. start a Chat or create a Workflow.
 
@@ -207,23 +274,35 @@ package.
 
 ## Common configuration
 
-Docker reads `.env`; native installation reads `.env.launch.local`. Restart the
-affected services after changing either file. The full configuration template
-is documented inline in [`.env.example`](../.env.example).
+Docker reads `.env`; native installation reads `.env.launch.local`. For Docker,
+prefer the deployment options over editing related variables individually:
 
-The following settings are the ones most commonly changed for a local
-installation:
+| Deployment input | Local default | Purpose |
+| --- | --- | --- |
+| `--public-url URL` | `http://localhost:9001` | Sets the browser-visible URL and derives Host, CORS, secure-cookie, and extension build settings |
+| `--bind-address ADDRESS` | `127.0.0.1` | Publishes only the Web entry point on one exact host interface; use the VM private IP behind cloud NAT |
+
+The derived values are persisted in `.env`. Most deployments should not set
+`WEB_ALLOWED_HOSTS`, `VIBECANVAS_API_CORS_ORIGINS`,
+`WEB_SESSION_COOKIE_SECURE`, `VIBECANVAS_EXTENSION_WEB_BASE`, or
+`VIBECANVAS_EXTENSION_ALLOWED_ORIGINS` separately. They remain available as
+advanced overrides for deployments with multiple reviewed public entries.
+
+The following runtime settings are occasionally changed independently:
 
 | Variable | Local default | Purpose |
 | --- | --- | --- |
-| `VIBECANVAS_PUBLIC_URL` | `http://localhost:9001` | Browser-visible application URL used by links, authentication callbacks, and the extension build |
-| `VIBECANVAS_BIND_ADDRESS` | `127.0.0.1` | Address used for published Docker ports; keep loopback unless direct LAN access is intentional |
 | `VIBECANVAS_HTTP_PORT` | `9001` | Web application port |
-| `VIBECANVAS_API_PORT` | `8000` | Direct API port used for health checks and development diagnostics |
 | `OBJECT_STORE_PROVIDER` | `filesystem` | Local file-backed object storage; production deployments normally use `s3` |
 | `SANDBOX_EGRESS_MODE` | `proxy` | Routes sandbox HTTP(S) and WebSocket traffic through the controlled egress proxy |
 | `SANDBOX_EGRESS_POLICY` | `public` | Controls whether sandboxes may reach public destinations, an allowlist, or platform services only |
 | `MOUNT_PATH` | (empty string) | Optional trusted host directory exposed through each user's isolated `/mount` path |
+
+Keep `VIBECANVAS_INTERNAL_BIND_ADDRESS` at its `127.0.0.1` default. It protects
+API diagnostics, databases, authorization services, queues, and metrics from
+being published with the Web entry point. The full advanced template is
+documented inline in [`.env.example`](../.env.example). Restart the affected
+services after changing configuration.
 
 Keep generated passwords, signing keys, browser token secrets, and encryption
 keys out of Git, shell history, logs, and issue reports. Back up secret material
@@ -246,10 +325,10 @@ ssh -N -L 9001:127.0.0.1:9001 user@server
 Keep the command running and open <http://localhost:9001> on the local machine.
 No listener or origin setting needs to change for this method.
 
-For direct access over a trusted LAN, bind Docker to one exact private address
-and set `VIBECANVAS_PUBLIC_URL` to the matching origin. Do not use `0.0.0.0` or
-`::`; the local preflight check rejects wildcard bindings. Native deployments
-must also list the exact host and browser origin in `.env.launch.local`.
+For direct access over a trusted LAN, pass the matching HTTP URL and one exact
+private address to `--public-url` and `--bind-address`. Do not use `0.0.0.0` or
+`::`; the launcher rejects wildcard bindings. Native deployments must list the
+exact host and browser origin in `.env.launch.local`.
 
 Internet-facing access requires HTTPS, a trusted reverse proxy, explicit host
 and origin allowlists, firewall policy, and production secret management. Use
@@ -330,7 +409,7 @@ The verification steps are implemented in
 | A service port is already in use | Change the corresponding `VIBECANVAS_*_PORT` value in `.env`. When changing the Web port, update `VIBECANVAS_PUBLIC_URL` as well. |
 | `sandbox_prewarm` or checkpoint/restore fails | Inspect the `sandboxd` logs. Confirm that the active Docker kernel permits privileged containers and the configured gVisor platform. |
 | Native startup reports a missing `.venv` | Run `./scripts/bootstrap_native_linux.sh --prepare-only`, then retry. |
-| The application opens but Chat cannot start | Configure a model under **Settings → Runtime**, then inspect the API logs for provider or credential errors. |
+| The application opens but Chat cannot start | Configure a model under **Settings → Agent Runtime**, then inspect the API logs for provider or credential errors. |
 | The extension cannot connect | Download the package from the current deployment again and confirm that `VIBECANVAS_PUBLIC_URL` matches the URL opened in Chrome. |
 | Account deletion reports an OpenFGA erasure configuration error | For custom infrastructure, provision the scoped OpenFGA change-feed erasure function and set `OPENFGA_ERASURE_DATABASE_URL`. Compose and the native launcher configure it automatically. See [Security and data lifecycle](security-and-data-lifecycle.md#account-deletion). |
 

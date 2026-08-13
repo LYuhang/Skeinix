@@ -46,6 +46,11 @@
 > change before the first stable release. Browser automation remains
 > experimental.
 
+> [!NOTE]
+> **Live Demo:** [Try Skeinix](https://20-55-50-206.sslip.io/). This public
+> instance is provided for testing only; service availability and stability
+> are not guaranteed.
+
 ## Overview
 
 Skeinix is an open-source platform for turning an agent conversation into a
@@ -103,6 +108,19 @@ The launcher generates local secrets, builds the services, waits for their
 health checks, and verifies the deployment. The first build can take several
 minutes.
 
+For a remote server, provide the browser-visible HTTPS URL and the VM's private
+interface. The launcher derives the Host, CORS, secure-cookie, and extension
+build settings:
+
+```bash
+./scripts/deploy/local_server.sh up \
+  --public-url https://skeinix.example.com \
+  --bind-address 10.0.0.4
+```
+
+Terminate TLS at a reverse proxy and forward it to port `9001`. See
+[remote server deployment](docs/installation.md#remote-server-deployment).
+
 #### Native Linux or WSL
 
 Use the native bootstrap when developing on Debian, Ubuntu, or WSL:
@@ -119,6 +137,7 @@ guidance, see the [installation guide](docs/installation.md).
 | Action | Docker Compose | Native Linux/WSL |
 | --- | --- | --- |
 | Start | `./scripts/deploy/local_server.sh up` | `./launch.sh start` |
+| Configure a remote URL | `./scripts/deploy/local_server.sh init --public-url https://skeinix.example.com --bind-address 10.0.0.4` | Edit `.env.launch.local` |
 | Stop | `./scripts/deploy/local_server.sh stop` | `./launch.sh stop` |
 | Restart | `./scripts/deploy/local_server.sh restart` | `./launch.sh restart` |
 | Status | `./scripts/deploy/local_server.sh status` | `./launch.sh status` |

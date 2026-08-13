@@ -42,6 +42,9 @@
 > [!IMPORTANT]
 > Skeinix 目前处于 Alpha 阶段。Agent、工作流、存储、权限控制、部署和沙盒等核心服务已经实现，但 API 与数据模型在首个稳定版本发布前仍可能调整。浏览器自动化功能尚处于实验阶段。
 
+> [!NOTE]
+> **在线体验：**[访问 Skeinix Demo](https://20-55-50-206.sslip.io/)。该公开实例仅供测试使用，服务的可用性与稳定性无法保证。
+
 ## 项目简介
 
 Skeinix 是一个将 Agent 对话转化为可执行工作流的开源平台。只需在 Chat 中描述目标，Agent 就会直接构建或修改可视化画布中的工作流图，而不是另外生成一份与实际执行脱节的建议或示意图。工作流的结构、版本、运行记录、输出和异常信息在整个过程中始终可见。
@@ -86,6 +89,16 @@ cd Skeinix
 
 启动脚本会自动生成本地密钥、构建各项服务、等待健康检查完成，并验证部署结果。首次构建通常需要几分钟。
 
+在远程服务器上安装时，只需提供浏览器实际访问的 HTTPS URL 和虚拟机私网地址。启动脚本会自动生成 Host、CORS、安全 Cookie 和扩展编译配置：
+
+```bash
+./scripts/deploy/local_server.sh up \
+  --public-url https://skeinix.example.com \
+  --bind-address 10.0.0.4
+```
+
+请在反向代理中终止 TLS，并将请求转发到 `9001` 端口。完整说明见[远程服务器部署](docs/installation.md#remote-server-deployment)。
+
 #### 原生 Linux 或 WSL
 
 在 Debian、Ubuntu 或 WSL 环境中进行开发时，可使用原生环境初始化脚本：
@@ -101,6 +114,7 @@ cd Skeinix
 | 操作 | Docker Compose | 原生 Linux/WSL |
 | --- | --- | --- |
 | 启动 | `./scripts/deploy/local_server.sh up` | `./launch.sh start` |
+| 配置远程 URL | `./scripts/deploy/local_server.sh init --public-url https://skeinix.example.com --bind-address 10.0.0.4` | 编辑 `.env.launch.local` |
 | 停止 | `./scripts/deploy/local_server.sh stop` | `./launch.sh stop` |
 | 重启 | `./scripts/deploy/local_server.sh restart` | `./launch.sh restart` |
 | 查看状态 | `./scripts/deploy/local_server.sh status` | `./launch.sh status` |

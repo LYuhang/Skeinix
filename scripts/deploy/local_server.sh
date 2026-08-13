@@ -6,6 +6,74 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 ENV_FILE="${VIBECANVAS_ENV_FILE:-$REPO_ROOT/.env}"
 PREFLIGHT="$REPO_ROOT/scripts/deploy/preflight.sh"
 VERIFY="$REPO_ROOT/scripts/deploy/verify_local.sh"
+ACTION="up"
+REQUESTED_PUBLIC_URL=""
+REQUESTED_BIND_ADDRESS=""
+POSITIONAL_ARGS=()
+
+usage() {
+  cat >&2 <<EOF
+usage: $0 [command] [options]
+
+commands:
+  init | up | start | restart | preflight | verify | status | logs [service]
+  stop | down | config
+
+deployment options for init/up/start/restart:
+  --public-url URL       Browser-visible HTTP(S) URL. Host, CORS, cookie, and
+                         extension build settings are derived automatically.
+  --bind-address ADDRESS Exact host interface used for the Web entry point.
+                         Use the VM private IP behind cloud NAT; never 0.0.0.0.
+EOF
+}
+
+parse_arguments() {
+  if [[ $# -gt 0 && "$1" != --* ]]; then
+    ACTION="$1"
+    shift
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --public-url)
+        [[ $# -ge 2 ]] || { echo "ERROR: --public-url requires a value" >&2; exit 2; }
+        REQUESTED_PUBLIC_URL="$2"
+        shift 2
+        ;;
+      --bind-address)
+        [[ $# -ge 2 ]] || { echo "ERROR: --bind-address requires a value" >&2; exit 2; }
+        REQUESTED_BIND_ADDRESS="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        POSITIONAL_ARGS+=("$@")
+        break
+        ;;
+      --*)
+        echo "ERROR: unknown option: $1" >&2
+        usage
+        exit 2
+        ;;
+      *)
+        POSITIONAL_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+  if [[ -n "$REQUESTED_PUBLIC_URL$REQUESTED_BIND_ADDRESS" ]]; then
+    case "$ACTION" in
+      init|up|start|restart) ;;
+      *)
+        echo "ERROR: deployment options are supported only by init, up, start, and restart" >&2
+        exit 2
+        ;;
+    esac
+  fi
+}
 
 random_hex() {
   openssl rand -hex "${1:-32}"
@@ -42,6 +110,80 @@ env_has_nonempty_value() {
   ' "$ENV_FILE"
 }
 
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $1 == key { sub(/^[^=]*=/, ""); value = $0 }
+    END { print value }
+  ' "$ENV_FILE"
+}
+
+parse_public_url() {
+  local value="${1%/}"
+  if [[ ! "$value" =~ ^(https?)://(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.-]+)(:([0-9]{1,5}))?(/[^?#[:space:]]*)?$ ]]; then
+    echo "ERROR: public URL must be an absolute HTTP(S) URL without credentials, query, or fragment: $1" >&2
+    exit 2
+  fi
+  PUBLIC_SCHEME="${BASH_REMATCH[1]}"
+  PUBLIC_HOST="${BASH_REMATCH[2]}"
+  PUBLIC_PORT="${BASH_REMATCH[4]}"
+  PUBLIC_PATH="${BASH_REMATCH[5]}"
+  if [[ -n "$PUBLIC_PORT" ]] && (( PUBLIC_PORT < 1 || PUBLIC_PORT > 65535 )); then
+    echo "ERROR: public URL port must be between 1 and 65535" >&2
+    exit 2
+  fi
+  PUBLIC_HOST="${PUBLIC_HOST#[}"
+  PUBLIC_HOST="${PUBLIC_HOST%]}"
+  PUBLIC_ORIGIN="${PUBLIC_SCHEME}://${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+  PUBLIC_URL="${PUBLIC_ORIGIN}${PUBLIC_PATH%/}"
+}
+
+validate_requested_config() {
+  if [[ -n "$REQUESTED_PUBLIC_URL" ]]; then
+    parse_public_url "$REQUESTED_PUBLIC_URL"
+  fi
+  if [[ -n "$REQUESTED_BIND_ADDRESS" ]]; then
+    if [[ "$REQUESTED_BIND_ADDRESS" == "0.0.0.0" || "$REQUESTED_BIND_ADDRESS" == "::" ]]; then
+      echo "ERROR: --bind-address must be one exact host interface, not a wildcard" >&2
+      exit 2
+    fi
+    if [[ "$REQUESTED_BIND_ADDRESS" == *[[:space:]/]* ]]; then
+      echo "ERROR: --bind-address must be an address, not a CIDR or list" >&2
+      exit 2
+    fi
+  fi
+}
+
+apply_public_url_config() {
+  parse_public_url "$1"
+  set_env_value VIBECANVAS_PUBLIC_URL "$PUBLIC_URL"
+  set_env_value WEB_ALLOWED_HOSTS "$PUBLIC_HOST"
+  set_env_value VIBECANVAS_API_CORS_ORIGINS "$PUBLIC_ORIGIN"
+  set_env_value VIBECANVAS_EXTENSION_WEB_BASE "$PUBLIC_URL"
+  set_env_value VIBECANVAS_EXTENSION_ALLOWED_ORIGINS "$PUBLIC_URL"
+  if [[ "$PUBLIC_SCHEME" == "https" ]]; then
+    set_env_value WEB_SESSION_COOKIE_SECURE true
+  else
+    set_env_value WEB_SESSION_COOKIE_SECURE false
+  fi
+}
+
+backfill_public_url_config() {
+  local value
+  value="$(env_value VIBECANVAS_PUBLIC_URL)"
+  [[ -n "$value" ]] || return
+  parse_public_url "$value"
+  ensure_env_value WEB_ALLOWED_HOSTS "$PUBLIC_HOST"
+  ensure_env_value VIBECANVAS_API_CORS_ORIGINS "$PUBLIC_ORIGIN"
+  ensure_env_value VIBECANVAS_EXTENSION_WEB_BASE "$PUBLIC_URL"
+  ensure_env_value VIBECANVAS_EXTENSION_ALLOWED_ORIGINS "$PUBLIC_URL"
+  if [[ "$PUBLIC_SCHEME" == "https" ]]; then
+    ensure_env_value WEB_SESSION_COOKIE_SECURE true
+  else
+    ensure_env_value WEB_SESSION_COOKIE_SECURE false
+  fi
+}
+
 ensure_env_value() {
   local key="$1"
   local value="$2"
@@ -51,6 +193,7 @@ ensure_env_value() {
 }
 
 backfill_env() {
+  ensure_env_value VIBECANVAS_INTERNAL_BIND_ADDRESS "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}"
   ensure_env_value POSTGRES_PASSWORD "$(random_hex 24)"
   ensure_env_value VIBECANVAS_APP_PASSWORD "$(random_hex 24)"
   ensure_env_value VIBECANVAS_MIGRATOR_PASSWORD "$(random_hex 24)"
@@ -74,6 +217,7 @@ backfill_env() {
   ensure_env_value SANDBOX_TYPE rootful-snapshot
   ensure_env_value SANDBOX_EGRESS_MODE "${SANDBOX_EGRESS_MODE:-proxy}"
   ensure_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"
+  backfill_public_url_config
 }
 
 initialize_env() {
@@ -84,14 +228,24 @@ initialize_env() {
   if [[ -e "$ENV_FILE" ]]; then
     chmod 600 "$ENV_FILE"
     backfill_env
+    if [[ -n "$REQUESTED_BIND_ADDRESS" ]]; then
+      set_env_value VIBECANVAS_BIND_ADDRESS "$REQUESTED_BIND_ADDRESS"
+    fi
+    if [[ -n "$REQUESTED_PUBLIC_URL" ]]; then
+      apply_public_url_config "$REQUESTED_PUBLIC_URL"
+    fi
     echo "existing env preserved; missing settings initialized: $ENV_FILE"
+    if [[ -n "$REQUESTED_PUBLIC_URL" ]]; then
+      echo "public deployment settings derived from: $PUBLIC_URL"
+    fi
     return
   fi
 
   install -m 600 "$REPO_ROOT/.env.example" "$ENV_FILE"
-  set_env_value VIBECANVAS_BIND_ADDRESS "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}"
+  set_env_value VIBECANVAS_BIND_ADDRESS "${REQUESTED_BIND_ADDRESS:-${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}}"
+  set_env_value VIBECANVAS_INTERNAL_BIND_ADDRESS "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}"
   set_env_value VIBECANVAS_HTTP_PORT "${VIBECANVAS_HTTP_PORT:-9001}"
-  set_env_value VIBECANVAS_PUBLIC_URL "${VIBECANVAS_PUBLIC_URL:-http://localhost:${VIBECANVAS_HTTP_PORT:-9001}}"
+  apply_public_url_config "${REQUESTED_PUBLIC_URL:-${VIBECANVAS_PUBLIC_URL:-http://localhost:${VIBECANVAS_HTTP_PORT:-9001}}}"
   set_env_value POSTGRES_PASSWORD "$(random_hex 24)"
   set_env_value VIBECANVAS_APP_PASSWORD "$(random_hex 24)"
   set_env_value VIBECANVAS_MIGRATOR_PASSWORD "$(random_hex 24)"
@@ -117,6 +271,7 @@ initialize_env() {
   set_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"
 
   echo "created $ENV_FILE with mode 0600"
+  echo "public deployment settings derived from: $PUBLIC_URL"
   echo "optional: edit model credentials in $ENV_FILE before first AI request"
 }
 
@@ -151,7 +306,10 @@ start_stack() {
   VIBECANVAS_ENV_FILE="$ENV_FILE" bash "$VERIFY"
 }
 
-case "${1:-up}" in
+parse_arguments "$@"
+validate_requested_config
+
+case "$ACTION" in
   init)
     initialize_env
     ;;
@@ -173,7 +331,7 @@ case "${1:-up}" in
     compose ps
     ;;
   logs)
-    compose logs -f "${@:2}"
+    compose logs -f "${POSITIONAL_ARGS[@]}"
     ;;
   stop|down)
     compose down
@@ -182,7 +340,7 @@ case "${1:-up}" in
     compose config
     ;;
   *)
-    echo "usage: $0 {init|preflight|up|restart|verify|status|logs [service]|stop|config}" >&2
+    usage
     exit 2
     ;;
 esac

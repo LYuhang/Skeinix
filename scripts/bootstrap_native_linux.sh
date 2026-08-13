@@ -90,7 +90,7 @@ fi
 }
 if ! skeinix-playwright-mcp --version 2>/dev/null | grep -q "${PLAYWRIGHT_MCP_VERSION}"; then
   sudo npm install --global --ignore-scripts --no-audit --no-fund \
-    "$ROOT_DIR/api/playwright-runtime"
+    "$REPO_ROOT/api/playwright-runtime"
 fi
 skeinix-playwright-mcp --version | grep -q "${PLAYWRIGHT_MCP_VERSION}" || {
   echo "ERROR: expected Playwright MCP ${PLAYWRIGHT_MCP_VERSION}" >&2

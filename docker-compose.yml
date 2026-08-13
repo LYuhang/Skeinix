@@ -15,7 +15,7 @@ services:
       VIBECANVAS_MIGRATOR_PASSWORD: ${VIBECANVAS_MIGRATOR_PASSWORD:-vc_migrator}
       VIBECANVAS_MAINTENANCE_PASSWORD: ${VIBECANVAS_MAINTENANCE_PASSWORD:-vc_maintenance}
     ports:
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_POSTGRES_PORT:-5432}:5432"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -33,7 +33,7 @@ services:
   redis:
     image: valkey/valkey:9.1.1-alpine3.24@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328
     ports:
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_REDIS_PORT:-6379}:6379"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_REDIS_PORT:-6379}:6379"
     volumes:
       # Keep Valkey persistence separate from legacy Redis volumes. Redis 7.4
       # can write RDB v12 files, which Valkey cannot import directly.
@@ -113,8 +113,8 @@ services:
       OPENFGA_LOG_FORMAT: json
       OPENFGA_LOG_LEVEL: info
     ports:
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_PORT:-8080}:8080"
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_METRICS_PORT:-2112}:2112"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_PORT:-8080}:8080"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_OPENFGA_METRICS_PORT:-2112}:2112"
     depends_on:
       openfga_migrate:
         condition: service_completed_successfully
@@ -344,7 +344,7 @@ services:
       context: .
       dockerfile: api/Dockerfile
     ports:
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_API_PORT:-8000}:8000"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_API_PORT:-8000}:8000"
     user: "10001:10001"
     env_file:
       - ${VIBECANVAS_ENV_FILE:-.env}
@@ -357,7 +357,7 @@ services:
       OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN:-vibecanvas-openfga-development-only-key}
       OPENFGA_BOOTSTRAP_CONFIG_FILE: /run/vibecanvas-openfga/config.json
       PLATFORM_MCP_INTERNAL_BASE_URL: ${PLATFORM_MCP_INTERNAL_BASE_URL:-http://api:8000}
-      VIBECANVAS_API_CORS_ORIGINS: http://localhost,http://localhost:5173
+      VIBECANVAS_API_CORS_ORIGINS: ${VIBECANVAS_API_CORS_ORIGINS:-http://localhost,http://localhost:5173}
       WEB_SESSION_COOKIE_ENABLED: ${WEB_SESSION_COOKIE_ENABLED:-true}
       EXTENSION_SCOPED_TOKEN_ENABLED: ${EXTENSION_SCOPED_TOKEN_ENABLED:-true}
       DISTRIBUTED_AUTH_RATE_LIMIT_ENABLED: ${DISTRIBUTED_AUTH_RATE_LIMIT_ENABLED:-true}
@@ -477,7 +477,7 @@ services:
     tmpfs:
       - /tmp/prom_multiproc:rw,uid=10001,gid=10001,mode=0700
     ports:
-      - "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_WORKER_METRICS_PORT:-9100}:9100"
+      - "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VIBECANVAS_WORKER_METRICS_PORT:-9100}:9100"
     volumes:
       - object_store_data:/var/lib/vibecanvas/objectstore
       - lib_overlay_data:/var/lib/vibecanvas/lib-overlay
