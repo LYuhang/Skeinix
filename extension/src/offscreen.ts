@@ -3,11 +3,9 @@
  * the backend WebSocket, because a persistent socket must outlive the MV3
  * service worker (which Chrome evicts when idle).
  *
- * It does NOT run CDP: `chrome.debugger` is unavailable in offscreen documents —
- * command execution runs in the SERVICE WORKER. On an inbound command frame the
- * offscreen relays the envelope to the SW (`RUN_COMMAND`) and sends the SW's
- * observation back over the WS. The SW can also push pre-encoded frames (e.g.
- * tab events) to the WS via `WS_SEND`.
+ * It does NOT run CDP: `chrome.debugger` is unavailable in offscreen documents.
+ * Official Playwright relay frames are forwarded to the service worker, while
+ * lifecycle events travel in the other direction through `WS_SEND`.
  */
 import { WsClient } from "./shared/ws-client";
 import { browserWsProtocols } from "./shared/browser-ws-auth";
@@ -29,7 +27,18 @@ interface WsSendMsg {
 interface CloseWsMsg {
   type: "CLOSE_WS";
 }
-type OffscreenMsg = OpenWsMsg | PingMsg | WsSendMsg | CloseWsMsg | { type?: undefined };
+interface ClipboardWriteMsg {
+  type: "CLIPBOARD_WRITE";
+  text: string;
+  html: string;
+}
+type OffscreenMsg =
+  | OpenWsMsg
+  | PingMsg
+  | WsSendMsg
+  | CloseWsMsg
+  | ClipboardWriteMsg
+  | { type?: undefined };
 
 let client: WsClient | null = null;
 
@@ -95,14 +104,14 @@ chrome.runtime.onMessage.addListener(
       client.onEcho((echo) =>
         chrome.runtime.sendMessage({ type: "WS_ECHO", echo }),
       );
-      // Command execution lives in the service worker (chrome.debugger is there,
-      // not here). Relay each inbound command frame to the SW and send its
-      // observation back over the WS. The host strips media bytes → VFS paths.
-      client.onCommand((env) => {
-        chrome.runtime.sendMessage({ type: "RUN_COMMAND", env }, (obsRaw) => {
-          if (chrome.runtime.lastError) return; // SW gone; nothing to send back
-          if (typeof obsRaw === "string") client?.sendRaw(obsRaw);
-        });
+      client.onPlaywrightRelay((env) => {
+        chrome.runtime.sendMessage(
+          { type: "PLAYWRIGHT_RELAY_FRAME", env },
+          (relayRaw) => {
+            if (chrome.runtime.lastError) return;
+            if (typeof relayRaw === "string") client?.sendRaw(relayRaw);
+          },
+        );
       });
       client.connect();
       sendResponse({ ok: true });
@@ -127,6 +136,36 @@ chrome.runtime.onMessage.addListener(
       client = null;
       sendResponse({ ok: true });
       return false;
+    }
+
+    if (m?.type === "CLIPBOARD_WRITE") {
+      // Write-only bridge for one native rich-text paste transaction. The
+      // extension never reads or returns the user's previous clipboard.
+      void (async () => {
+        try {
+          // Offscreen documents cannot become the focused document required by
+          // navigator.clipboard.write(). The extension clipboard permission
+          // does, however, allow the native copy command. Supplying both MIME
+          // flavors in the copy event avoids depending on a DOM selection or
+          // focus state (both are unreliable in a hidden offscreen document).
+          const onCopy = (event: ClipboardEvent) => {
+            event.preventDefault();
+            event.clipboardData?.setData("text/plain", m.text);
+            event.clipboardData?.setData("text/html", m.html);
+          };
+          document.addEventListener("copy", onCopy, { once: true });
+          const copied = document.execCommand("copy");
+          document.removeEventListener("copy", onCopy);
+          if (!copied) throw new Error("native clipboard copy command was rejected");
+          sendResponse({ ok: true });
+        } catch (error) {
+          sendResponse({
+            ok: false,
+            error: String((error as Error)?.message || error),
+          });
+        }
+      })();
+      return true;
     }
 
     return false;

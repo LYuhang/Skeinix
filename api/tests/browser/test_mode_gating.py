@@ -1,7 +1,7 @@
 from vibecanvas_api.agents.tools import build_tools
-from vibecanvas_api.services.platform_mcp.browser_tools import BROWSER_TOOLS
+from vibecanvas_api.browser.playwright_contract import PLAYWRIGHT_AGENT_TOOL_SET
 
-_BROWSER_NAMES = {t.name for t in BROWSER_TOOLS}
+_BROWSER_NAMES = set(PLAYWRIGHT_AGENT_TOOL_SET)
 
 
 def _names(tools):

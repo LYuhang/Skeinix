@@ -12,6 +12,7 @@ PREPARE_ONLY=0
 UV_VERSION="${UV_VERSION:-0.11.32}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.147.0}"
+PLAYWRIGHT_MCP_VERSION="${PLAYWRIGHT_MCP_VERSION:-0.0.79}"
 
 usage() {
   cat <<'EOF'
@@ -72,7 +73,7 @@ else
   echo "[2/7] Reusing compatible Node.js $(node --version)"
 fi
 
-echo "[3/7] Installing the project-pinned pnpm and Codex CLI"
+echo "[3/7] Installing the project-pinned pnpm, Codex CLI, and Playwright MCP"
 if command -v corepack >/dev/null; then
   sudo corepack enable
   corepack prepare pnpm@10.34.4 --activate
@@ -85,6 +86,14 @@ if [[ "$(codex --version 2>/dev/null || true)" != "codex-cli ${CODEX_CLI_VERSION
 fi
 [[ "$(codex --version)" == "codex-cli ${CODEX_CLI_VERSION}" ]] || {
   echo "ERROR: expected codex-cli ${CODEX_CLI_VERSION}, got $(codex --version 2>/dev/null || echo missing)" >&2
+  exit 1
+}
+if ! skeinix-playwright-mcp --version 2>/dev/null | grep -q "${PLAYWRIGHT_MCP_VERSION}"; then
+  sudo npm install --global --ignore-scripts --no-audit --no-fund \
+    "$ROOT_DIR/api/playwright-runtime"
+fi
+skeinix-playwright-mcp --version | grep -q "${PLAYWRIGHT_MCP_VERSION}" || {
+  echo "ERROR: expected Playwright MCP ${PLAYWRIGHT_MCP_VERSION}" >&2
   exit 1
 }
 

@@ -12,6 +12,14 @@ artifacts.
 
 Notable license choices in the current dependency graph include:
 
+- `@playwright/mcp` and its pinned `playwright` / `playwright-core` runtime are
+  distributed under Apache-2.0. The browser extension's CDP browser model and
+  relay data plane are adapted from Microsoft Playwright commit
+  `680e5ad5894a54bba9e4ed8a311fd2aee388137d`; the adapted source files retain
+  the Microsoft copyright and Apache-2.0 notice. Skeinix changes only the
+  transport, browser-window scope, and extension integration; the official
+  Playwright MCP continues to own locator, snapshot, waiting, and action
+  semantics.
 - The Docker stack uses Valkey, a Redis-protocol-compatible datastore released
   under the BSD 3-Clause license, instead of Redis releases under RSALv2/SSPLv1.
 - `elkjs` is available under `EPL-2.0 OR GPL-3.0-or-later`; Skeinix uses it

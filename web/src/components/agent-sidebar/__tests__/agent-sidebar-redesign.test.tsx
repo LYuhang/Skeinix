@@ -26,6 +26,12 @@ vi.mock('@/lib/api/queries/chats', () => ({
   fetchChatHistoryPage: (...a: unknown[]) => fetchHistoryPageMock(...a),
   useChatHistory: (...a: unknown[]) => historyMock(...a),
   useChatSessions: (...a: unknown[]) => sessionsMock(...a),
+  useChatWorkspace: (chatId: string | null) => ({
+    data: chatId
+      ? { chat_id: chatId, workspace_scope_id: `__chatws_test_${chatId}` }
+      : undefined,
+    isLoading: false,
+  }),
   useChatBootstrap: () => ({
     data: { available_commands: [] },
     isLoading: false,
@@ -1055,31 +1061,66 @@ describe('AgentChatSidebar redesign', () => {
       isLoading: false,
       isFetched: true,
     });
+    const persistedHistory = {
+      data: {
+        items: [
+          { id: 'old-user', role: 'user', content: 'previous request' },
+          { id: 'old-agent', role: 'assistant', content: 'previous answer' },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    const disabledHistory = { data: undefined, isLoading: false, isError: false };
     historyMock.mockImplementation(
-      (_scopeId: string, chatId: string | null) => chatId
-        ? {
-            data: {
-              items: [
-                { id: 'old-user', role: 'user', content: 'previous request' },
-                { id: 'old-agent', role: 'assistant', content: 'previous answer' },
-              ],
-            },
-            isLoading: false,
-            isError: false,
-          }
-        : { data: undefined, isLoading: false, isError: false },
+      (_scopeId: string, chatId: string | null) =>
+        chatId ? persistedHistory : disabledHistory,
     );
-    useChatStreamStore.getState().beginTurn('c1', '');
-    useChatStreamStore.getState().appendChunk(
-      { role: 'user', content: 'follow-up request' },
-      'c1',
-    );
-
     render(<AgentChatSidebar />, { wrapper: SidebarWrapper });
+    expect(screen.getByText('previous request')).toBeInTheDocument();
+    expect(screen.getByText('previous answer')).toBeInTheDocument();
+
+    act(() => {
+      useChatStreamStore.getState().beginTurn('c1', '');
+      useChatStreamStore.getState().appendChunk(
+        { role: 'user', content: 'follow-up request' },
+        'c1',
+      );
+    });
 
     expect(screen.getByText('previous request')).toBeInTheDocument();
     expect(screen.getByText('previous answer')).toBeInTheDocument();
     expect(screen.getByText('follow-up request')).toBeInTheDocument();
+  });
+
+  it('excludes the active Turn from Sidepanel history while SSE owns its live projection', () => {
+    useUIStore.setState({
+      lastActiveWorkflowId: 'wf',
+      activeChatIds: { chat: null, browser: 'browser-active' },
+    });
+    sessionsMock.mockReturnValue({
+      data: { items: [{ chat_id: 'browser-active', chat_context: 'Browser run' }] },
+      isLoading: false,
+      isFetched: true,
+    });
+    historyMock.mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+      isError: false,
+    });
+    useChatStreamStore.getState().beginTurn('browser-active', 'turn-live');
+
+    render(
+      <AgentChatSidebar embedded chatSurface="browser" />,
+      { wrapper: SidebarWrapper },
+    );
+
+    expect(historyMock).toHaveBeenCalledWith(
+      'wf',
+      'browser-active',
+      true,
+      'turn-live',
+    );
   });
 
   it('loads browser messages older than a tool-heavy tail instead of hiding prior turns', async () => {

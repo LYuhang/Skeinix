@@ -1,37 +1,21 @@
-/**
- * Dedicated renderings for `browser_*` tools. Dispatched from `ToolCallBlock`
- * when `call.name` starts with
- * `browser_`; falls back to the generic `EnvelopeView` for anything it does
- * not specialise.
+/** Presentation for the reviewed official Playwright MCP `browser_*` surface.
  *
- * Envelope shape (api/.../tools/browser_tools.py + _envelope.py):
- *   { status, error, abstract, output } where `output` is the raw observation
- *   dict the command returned, e.g.
- *     - navigate    → { ok, data: { final_url, title } }
- *     - snapshot    → { ok, data: { text, elements, … } }
- *     - read_text   → { ok, data: { text } }
- *     - read_fields → { ok, data: { fields: { name: value } } }
- *     - screenshot  → { ok, media: [ { path } ] }   (VFS PATH, never bytes)
- *     - get_image   → { ok, media: [ { path } ] }
- *     - click/type/submit/… → { ok, … }   (the acted element + post-condition
- *       live in the CALL ARGUMENTS — handle/selector + purpose/expect — not the
- *       result, so we read them from `arguments`).
- *
- * Media is rendered from the VFS path via `useSignedMediaSrc` — the SAME signed-
- * URL path the canvas template preview uses (`POST /vfs/sign` → a short-lived
- * `<img src>`-able URL). We NEVER read bytes inline (design global constraint).
+ * The upstream server returns standard MCP content. This component deliberately
+ * knows nothing about Skeinix's retired Browser MCP envelope or old custom tool
+ * vocabulary. A historical envelope falls back to the generic envelope renderer
+ * in `ToolCallBlock`; it cannot select this presenter or execute anything.
  */
 import { useTranslation } from 'react-i18next';
 import { ExternalLink } from 'lucide-react';
 import { useSignedMediaSrc } from '@/pages/canvas/nodes/template-preview-media';
-import { EnvelopeView } from './EnvelopeView';
-import type { ToolEnvelope, ToolEnvelopeOutput } from './parseEnvelope';
+import { UniversalToolResult } from './UniversalToolResult';
+import type { UniversalToolResultValue } from './parseStandardToolResult';
 
 export interface BrowserToolViewProps {
   /** Tool name (e.g. `browser_navigate`). */
   toolName: string;
-  /** Parsed result envelope. */
-  envelope: ToolEnvelope;
+  /** Protocol-preserving result emitted by official Playwright MCP. */
+  standardResult: UniversalToolResultValue;
   /** Raw `arguments` JSON string (acted element / purpose / expect live here). */
   arguments?: string;
   /** VFS scope id used to sign chat workspace media (`/data/browser-media/...`). */
@@ -46,25 +30,6 @@ function asString(x: unknown): string | undefined {
   return typeof x === 'string' && x.length > 0 ? x : undefined;
 }
 
-/** Pull `output.data` (the per-command observation payload) as a record. */
-function readData(output: ToolEnvelopeOutput | undefined): Record<string, unknown> {
-  const data = (output as Record<string, unknown> | undefined)?.data;
-  return isRecord(data) ? data : {};
-}
-
-/** Pull the first `output.media[].path` (the screenshot/image VFS path). */
-function readMediaPath(output: ToolEnvelopeOutput | undefined): string | undefined {
-  const media = (output as Record<string, unknown> | undefined)?.media;
-  if (!Array.isArray(media)) return undefined;
-  for (const m of media) {
-    if (isRecord(m)) {
-      const p = asString(m.path);
-      if (p) return p;
-    }
-  }
-  return undefined;
-}
-
 /** Parse the call `arguments` JSON (fail-soft → {}). */
 function parseArgs(raw: string | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -74,6 +39,48 @@ function parseArgs(raw: string | undefined): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function standardText(value: UniversalToolResultValue | null | undefined): string {
+  if (!value) return '';
+  return value.content
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text as string)
+    .join('\n');
+}
+
+/** Only VFS paths under the browser-media output root are renderable. The
+ * official server reports output-dir files as Markdown links such as
+ * `browser-media/page.png`; call arguments may contain the absolute
+ * `/data/browser-media/page.png` requested by the Agent. */
+function normalizeBrowserMediaPath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let path = value.trim().replace(/^file:\/\//, '').split(/[?#]/, 1)[0];
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    return undefined;
+  }
+  if (path.startsWith('browser-media/')) path = `/data/${path}`;
+  else if (path.startsWith('data/browser-media/')) path = `/${path}`;
+  if (!path.startsWith('/data/browser-media/')) return undefined;
+  if (path.includes('\\') || path.includes('\0')) return undefined;
+  const parts = path.split('/');
+  if (parts.some((part) => part === '.' || part === '..')) return undefined;
+  if (!/\.(?:png|jpe?g|webp)$/i.test(path)) return undefined;
+  return path;
+}
+
+function officialPlaywrightScreenshotPath(
+  result: UniversalToolResultValue | null | undefined,
+  args: Record<string, unknown>,
+): string | undefined {
+  const text = standardText(result);
+  const markdownTarget = Array.from(text.matchAll(/\]\(([^)]+)\)/g))
+    .map((match) => normalizeBrowserMediaPath(match[1]))
+    .find(Boolean);
+  if (markdownTarget) return markdownTarget;
+  return normalizeBrowserMediaPath(asString(args.filename));
 }
 
 /** Small labelled key/value row used by the structured renderings. */
@@ -124,39 +131,20 @@ function MediaImage({ path, wfId, alt }: { path: string; wfId?: string; alt: str
 
 export function BrowserToolView({
   toolName,
-  envelope,
+  standardResult,
   arguments: rawArgs,
   wfId,
 }: BrowserToolViewProps) {
   const { t } = useTranslation();
-
-  // Error envelopes reuse the generic ErrorCard via EnvelopeView (it short-
-  // circuits on status === 'error'), so soft-errors (no_browser, browser_error)
-  // get the consistent "ask the agent to fix" affordance.
-  if (envelope.status === 'error') {
-    return (
-      <EnvelopeView
-        output={envelope.output}
-        abstract={envelope.abstract}
-        status={envelope.status}
-        wfId={wfId}
-        error={envelope.error}
-        toolName={toolName}
-      />
-    );
-  }
-
-  const data = readData(envelope.output);
   const args = parseArgs(rawArgs);
+  const protocolText = standardText(standardResult);
 
   switch (toolName) {
     // ── Navigation: final URL + resolved title ────────────────────────────
     case 'browser_navigate': {
-      const finalUrl = asString(data.final_url) ?? asString(args.url);
-      const title = asString(data.title);
+      const finalUrl = asString(args.url);
       return (
         <div className="space-y-1" data-role="browser-navigate">
-          {title && <KeyValue label={t('browser.title', 'Title')}>{title}</KeyValue>}
           {finalUrl && (
             <KeyValue label={t('browser.url', 'URL')}>
               <a
@@ -170,22 +158,18 @@ export function BrowserToolView({
               </a>
             </KeyValue>
           )}
-          {!title && !finalUrl && (
-            <div className="text-xs text-muted-foreground">{envelope.abstract}</div>
-          )}
+          {protocolText && <BoundedText title={t('tool.output', 'Output')} text={protocolText} />}
         </div>
       );
     }
 
     // ── Pixels: signed <img> from the media VFS path ─────────────────────
     // browser_take_screenshot covers both whole-page and per-element capture
-    // (the latter via its optional `handle`, folding the old browser_get_image).
+    // through the upstream target argument.
     case 'browser_take_screenshot': {
-      const path = readMediaPath(envelope.output);
+      const path = officialPlaywrightScreenshotPath(standardResult, args);
       if (!path) {
-        return (
-          <div className="text-xs text-muted-foreground">{envelope.abstract}</div>
-        );
+        return <UniversalToolResult value={standardResult} wfId={wfId} />;
       }
       return (
         <div className="space-y-1" data-role="browser-media">
@@ -198,9 +182,8 @@ export function BrowserToolView({
     }
 
     // ── Page reads: collapsible text / fields ────────────────────────────
-    case 'browser_snapshot':
-    case 'browser_read_text': {
-      const text = asString(data.text);
+    case 'browser_snapshot': {
+      const text = protocolText || undefined;
       if (text) {
         return (
           <BoundedText
@@ -209,43 +192,17 @@ export function BrowserToolView({
           />
         );
       }
-      // Snapshot may carry a structured tree with no flat `text` — fall through
-      // to the generic envelope view so the JSON is still inspectable.
-      break;
-    }
-
-    case 'browser_read_fields': {
-      const fields = isRecord(data.fields) ? data.fields : undefined;
-      if (fields) {
-        const entries = Object.entries(fields);
-        return (
-          <div className="space-y-1" data-role="browser-fields">
-            {entries.length === 0 && (
-              <div className="text-xs text-muted-foreground">
-                {t('browser.no_fields', 'No fields read.')}
-              </div>
-            )}
-            {entries.map(([name, value]) => (
-              <KeyValue key={name} label={name}>
-                {typeof value === 'string' ? value : JSON.stringify(value)}
-              </KeyValue>
-            ))}
-          </div>
-        );
-      }
       break;
     }
 
     // ── Actions: acted element + expected post-condition ─────────────────
     case 'browser_click':
-    case 'browser_submit':
     case 'browser_type':
-    case 'browser_fill':
     case 'browser_select_option':
     case 'browser_press_key': {
       const acted =
-        asString(args.handle) ??
-        asString(args.selector) ??
+        asString(args.target) ??
+        asString(args.element) ??
         asString(args.key) ??
         asString(args.option);
       const purpose = asString(args.purpose);
@@ -259,7 +216,7 @@ export function BrowserToolView({
           {purpose && <KeyValue label={t('browser.purpose', 'Purpose')}>{purpose}</KeyValue>}
           {expect && <KeyValue label={t('browser.expect', 'Expect')}>{expect}</KeyValue>}
           {!hasAny && (
-            <div className="text-xs text-muted-foreground">{envelope.abstract}</div>
+            <UniversalToolResult value={standardResult} wfId={wfId} />
           )}
         </div>
       );
@@ -269,15 +226,5 @@ export function BrowserToolView({
       break;
   }
 
-  // Anything not specialised above → the generic envelope renderer.
-  return (
-    <EnvelopeView
-      output={envelope.output}
-      abstract={envelope.abstract}
-      status={envelope.status}
-      wfId={wfId}
-      error={envelope.error}
-      toolName={toolName}
-    />
-  );
+  return <UniversalToolResult value={standardResult} wfId={wfId} />;
 }

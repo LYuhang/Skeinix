@@ -111,6 +111,29 @@ async def test_broker_close_idempotent():
         await broker.close()  # idempotent — no raise.
 
 
+@pytest.mark.asyncio
+async def test_broker_health_rejects_peer_eof_before_next_send():
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, "health", "bus.sock")
+        broker = BusBroker(sock)
+        await broker.start()
+        _reader, writer = await asyncio.open_unix_connection(sock)
+        await broker.wait_connected()
+        assert broker.is_connected() is True
+
+        writer.close()
+        await writer.wait_closed()
+        for _ in range(50):
+            if not broker.is_connected():
+                break
+            await asyncio.sleep(0.01)
+
+        assert broker.is_connected() is False
+        with pytest.raises(ConnectionError, match="not writable"):
+            await broker.send({"type": "runtime_request"})
+        await broker.close()
+
+
 # --------------------------------------------------------------------------- #
 # Route branch — flag OFF (regression) / flag ON (sandbox branch)
 # --------------------------------------------------------------------------- #

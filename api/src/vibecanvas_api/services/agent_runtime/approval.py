@@ -12,16 +12,21 @@ from typing import Any, Literal
 
 
 PRE_TOOL_APPROVAL_TOOLS: frozenset[str] = frozenset({
-    "browser_session_status",
     "browser_navigate",
-    "browser_tab",
+    "browser_navigate_back",
+    "browser_close",
+    "browser_resize",
+    "browser_tabs",
     "browser_click",
+    "browser_drag",
+    "browser_hover",
     "browser_type",
+    "browser_fill_form",
+    "browser_file_upload",
+    "browser_handle_dialog",
+    "browser_drop",
     "browser_select_option",
     "browser_press_key",
-    "browser_fetch_resource",
-    "browser_start_session",
-    "browser_end_session",
     "task_create_scheduled_run",
     "task_update_scheduled_run",
     "task_delete_scheduled_run",
@@ -40,10 +45,10 @@ def is_pre_tool_approval_candidate(
     """Return whether a tool call belongs to the platform approval surface."""
     if tool_name not in PRE_TOOL_APPROVAL_TOOLS:
         return False
-    if tool_name == "browser_tab":
-        # Listing or inspecting tabs is read-only. Switching focus, closing a
-        # tab, or adopting a user tab changes the controlled browser state.
-        return str(arguments.get("action") or "") in {"switch", "close", "use"}
+    if tool_name == "browser_tabs":
+        # Listing is read-only. New/select/close changes the visible controlled
+        # browser state and therefore remains part of the approval surface.
+        return str(arguments.get("action") or "") in {"new", "select", "close"}
     return True
 
 

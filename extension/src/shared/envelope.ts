@@ -6,8 +6,8 @@
  *   { v: 1, kind, id, channel, transport, data, producer }
  *
  * `data` and `producer` default to `null` (the wire form of Python's `None`).
- * Ping, command, and observation traffic share this envelope and WebSocket
- * client.
+ * Ping, lifecycle-event, and Playwright-relay traffic share this envelope and
+ * WebSocket client.
  */
 
 export type Envelope = {

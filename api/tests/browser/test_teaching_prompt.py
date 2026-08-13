@@ -1,46 +1,80 @@
-"""The /browser command context — the v1 control-only BROWSER block. Per single-
-source-of-truth it states the control + safety discipline and names NO tools
-(the browser_* tools self-describe via their docstrings)."""
-from vibecanvas_api.agents.commands import command_context_for
+"""Contract tests for the Playwright-backed /browser instruction block."""
+
+from vibecanvas_api.agents.commands import COMMAND_MODES, command_context_for
 from vibecanvas_api.agents.prompts.compose import build_system_prompt
+from vibecanvas_api.browser.playwright_contract import (
+    PLAYWRIGHT_AGENT_TOOLS,
+    PLAYWRIGHT_AUDITED_UPSTREAM_TOOLS,
+    PLAYWRIGHT_FORBIDDEN_TOOLS,
+)
 
 
-def _bsp(mode="chat"):
-    modes = {"browser"} if mode == "browser" else set()
-    return build_system_prompt(modes)
+def _system_prompt(mode: str = "chat") -> str:
+    return build_system_prompt({"browser"} if mode == "browser" else set())
 
 
-def _browser_context():
-    return command_context_for("browser")
+def test_browser_prompt_teaches_official_playwright_contract() -> None:
+    prompt = command_context_for("browser")
+    assert "## Browser mode" in prompt
+    assert "official Playwright MCP" in prompt
+    assert "Observe → act → verify" in prompt
+    assert "browser_snapshot" in prompt
+    assert "exact target refs" in prompt
+    assert "post-action page snapshot" in prompt
+    assert "browser_file_upload" in prompt
+    assert "file-chooser modal" in prompt
+    assert "signed expiring CDN URL" in prompt
+    assert "Reopen or reload" in prompt
 
 
-def test_browser_prompt_has_control_discipline():
-    p = _browser_context()
-    assert "## Browser mode" in p
-    assert "See before you act" in p                  # observe-before-act
-    assert "ONE action at a time" in p                # serial / dependent actions
-    assert "EXPECT" in p                              # wait-for post-condition
-    assert "STOP" in p                                 # instant-halt awareness
-    # shared addressing background is explained (tab id + element handle)
-    assert "tab id" in p and "handle" in p
-    # single source of truth: the control block names no browser_* tools
-    assert "browser_snapshot" not in p
+def test_browser_prompt_does_not_teach_legacy_browser_protocol() -> None:
+    prompt = command_context_for("browser")
+    for legacy_name in (
+        "browser_start_session",
+        "browser_session_status",
+        "browser_read_text",
+        "browser_query",
+        "browser_get_html",
+        "browser_insert_rich_text",
+        "browser_replace_rich_text",
+        "browser_upload_file",
+    ):
+        assert legacy_name not in prompt
+        assert legacy_name not in COMMAND_MODES["browser"].tools
+    assert "element handle" not in prompt.lower()
+    assert "stable tab id" not in prompt.lower()
 
 
-def test_browser_prompt_has_recovery_discipline():
-    """An error/empty result is a signal to retry differently, not to stop."""
-    p = _browser_context()
-    assert "Recover, don't quit" in p                  # persistence section present
-    assert "no result captured" in p                   # empty-read recovery named
-    assert "press Enter" in p                           # typed-but-no-nav recovery
-    # don't bail after the first error — only stop when genuinely blocked
-    assert "before giving up" in p
-    assert "never stop silently after a single error" in p
+def test_browser_command_exports_exact_reviewed_playwright_surface() -> None:
+    assert COMMAND_MODES["browser"].tools == list(PLAYWRIGHT_AGENT_TOOLS)
+    assert PLAYWRIGHT_FORBIDDEN_TOOLS.isdisjoint(COMMAND_MODES["browser"].tools)
+    assert len(PLAYWRIGHT_AUDITED_UPSTREAM_TOOLS) == 24
+    assert set(PLAYWRIGHT_AGENT_TOOLS) | PLAYWRIGHT_FORBIDDEN_TOOLS == (
+        PLAYWRIGHT_AUDITED_UPSTREAM_TOOLS
+    )
+    assert {
+        "browser_handle_dialog",
+        "browser_resize",
+        "browser_close",
+    }.issubset(PLAYWRIGHT_AGENT_TOOLS)
+    assert {
+        "browser_reload",
+        "browser_press_sequentially",
+        "browser_mouse_wheel",
+    }.isdisjoint(PLAYWRIGHT_AGENT_TOOLS)
 
 
-def test_chat_prompt_has_no_browser_section():
-    assert "## Browser mode" not in _bsp("chat")
+def test_browser_prompt_has_fail_closed_safety_and_recovery() -> None:
+    prompt = command_context_for("browser")
+    assert "do not replay a write blindly" in prompt
+    assert "unrestricted upstream evaluate/run-code tools are intentionally unavailable" in prompt
+    assert "credentials, CAPTCHA, payment, publication" in prompt
+    assert "Never adopt another tab, window, Chat, or user's browser" in prompt
 
 
-def test_active_browser_does_not_change_system_prompt():
-    assert _bsp("browser") == _bsp("chat")
+def test_chat_prompt_has_no_browser_section() -> None:
+    assert "## Browser mode" not in _system_prompt("chat")
+
+
+def test_active_browser_does_not_change_base_system_prompt() -> None:
+    assert _system_prompt("browser") == _system_prompt("chat")

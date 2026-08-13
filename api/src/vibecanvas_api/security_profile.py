@@ -412,11 +412,6 @@ def production_security_issues(
         "plaintext Agent Debug/Inspector must be disabled",
     )
     require(
-        not config.browser_debug_send,
-        "debug.browser_send_forbidden",
-        "browser debug-send must be disabled",
-    )
-    require(
         not config.sandbox_debug_execute_enabled,
         "debug.sandbox_execute_forbidden",
         "sandbox debug-execute must be disabled",

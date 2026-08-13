@@ -71,7 +71,6 @@ backfill_env() {
   ensure_env_value CODEX_RUNTIME_AUTH_METHODS chatgpt,managed_api,personal_api
   ensure_env_value CODEX_MANAGED_APIS_JSON '[]'
   ensure_env_value AGENT_DEBUG_VIEW_ENABLED false
-  ensure_env_value BROWSER_DEBUG_SEND false
   ensure_env_value SANDBOX_TYPE rootful-snapshot
   ensure_env_value SANDBOX_EGRESS_MODE "${SANDBOX_EGRESS_MODE:-proxy}"
   ensure_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"
@@ -113,7 +112,6 @@ initialize_env() {
   set_env_value CODEX_RUNTIME_AUTH_METHODS chatgpt,managed_api,personal_api
   set_env_value CODEX_MANAGED_APIS_JSON '[]'
   set_env_value AGENT_DEBUG_VIEW_ENABLED false
-  set_env_value BROWSER_DEBUG_SEND false
   set_env_value SANDBOX_TYPE rootful-snapshot
   set_env_value SANDBOX_EGRESS_MODE "${SANDBOX_EGRESS_MODE:-proxy}"
   set_env_value SANDBOX_EGRESS_POLICY "${SANDBOX_EGRESS_POLICY:-public}"

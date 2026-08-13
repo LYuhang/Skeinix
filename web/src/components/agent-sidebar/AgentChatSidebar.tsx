@@ -46,6 +46,7 @@ import {
   fetchChatHistory,
   fetchChatHistoryPage,
   useChatHistory,
+  useChatWorkspace,
   useChatSessions,
 } from '@/lib/api/queries/chats';
 import { queryClient } from '@/app/query-client';
@@ -134,6 +135,21 @@ export function AgentChatSidebar({
   const selectedChatIsPersisted =
     !!activeChatId &&
     sessionItems.some((s) => s.chat_id === activeChatId);
+  // Side-panel browser media is persisted in the canonical Chat workspace,
+  // never in the synthetic browser carrier scope (`lastWfId`). Keep the same
+  // VFS identity contract as ChatPage so signed screenshots and other Agent
+  // files render after streaming, history reloads, and extension reconnects.
+  const workspace = useChatWorkspace(
+    selectedChatIsPersisted ? activeChatId : null,
+  );
+  const workspaceScopeId = selectedChatIsPersisted
+    ? (workspace.data?.workspace_scope_id ?? '')
+    : '';
+  const activeProjectionTurnId = useChatStreamStore((state) => {
+    if (!activeChatId) return null;
+    const runtime = state.runtimes[activeChatId];
+    return runtime?.projectionActive ? runtime.turnId : null;
+  });
   const selectedSession = activeChatId
     ? sessionItems.find((s) => s.chat_id === activeChatId)
     : undefined;
@@ -153,24 +169,24 @@ export function AgentChatSidebar({
   const selectedHistory = useChatHistory(
     lastWfId,
     selectedChatIsPersisted ? activeChatId : null,
-    selectedChatIsPersisted,
+    selectedChatIsPersisted && activeProjectionTurnId !== '',
+    activeProjectionTurnId || null,
   );
   const selectedHistoryKey = lastWfId && activeChatId
     ? `${lastWfId}:${activeChatId}`
     : '';
   const [historyWindows, setHistoryWindows] = useState<Record<string, ChatHistoryWindow>>({});
-  useEffect(() => {
-    if (!selectedHistoryKey || !selectedHistory.data) return;
-    const page = selectedHistory.data;
-    setHistoryWindows((current) => retainSidebarHistoryWindow(
-      current,
-      selectedHistoryKey,
-      mergeHistoryWindow(current[selectedHistoryKey], page),
-    ));
-  }, [selectedHistory.data, selectedHistoryKey]);
-  const selectedHistoryWindow = selectedHistoryKey
-    ? historyWindows[selectedHistoryKey]
-    : undefined;
+  // The query page is render-derived state. Keep only pages explicitly loaded
+  // by the user's "earlier messages" action in local state, then merge the
+  // live query result during render. This avoids an effect-driven extra render
+  // while preserving the same bounded per-Chat history window.
+  const selectedHistoryWindow = useMemo(() => {
+    if (!selectedHistoryKey) return undefined;
+    const retained = historyWindows[selectedHistoryKey];
+    return selectedHistory.data
+      ? mergeHistoryWindow(retained, selectedHistory.data)
+      : retained;
+  }, [historyWindows, selectedHistory.data, selectedHistoryKey]);
   const olderHistoryLoadingRef = useRef(false);
   const [olderHistoryLoading, setOlderHistoryLoading] = useState(false);
   const hasOlderHistory = !!selectedHistoryWindow && selectedHistoryWindow.offset > 0;
@@ -182,7 +198,11 @@ export function AgentChatSidebar({
     try {
       const limit = Math.min(CHAT_INITIAL_HISTORY_LIMIT, selectedHistoryWindow.offset);
       const offset = Math.max(0, selectedHistoryWindow.offset - limit);
-      const page = await fetchChatHistoryPage(lastWfId, activeChatId, { limit, offset });
+      const page = await fetchChatHistoryPage(lastWfId, activeChatId, {
+        limit,
+        offset,
+        ...(activeProjectionTurnId ? { beforeTurnId: activeProjectionTurnId } : {}),
+      });
       setHistoryWindows((current) => retainSidebarHistoryWindow(
         current,
         selectedHistoryKey,
@@ -192,7 +212,13 @@ export function AgentChatSidebar({
       olderHistoryLoadingRef.current = false;
       setOlderHistoryLoading(false);
     }
-  }, [activeChatId, lastWfId, selectedHistoryKey, selectedHistoryWindow]);
+  }, [
+    activeChatId,
+    activeProjectionTurnId,
+    lastWfId,
+    selectedHistoryKey,
+    selectedHistoryWindow,
+  ]);
   const historyReady =
     !selectedChatIsPersisted ||
       selectedHistory.data !== undefined ||
@@ -508,6 +534,7 @@ export function AgentChatSidebar({
       <div className="flex min-h-0 flex-1 flex-col">
         <ChatMessageList
           wfId={lastWfId}
+          vfsScopeId={workspaceScopeId || undefined}
           activeChatId={activeChatId}
           surface={chatSurface}
           compact={embedded}

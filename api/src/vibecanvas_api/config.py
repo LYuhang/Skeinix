@@ -1202,12 +1202,6 @@ class AppConfig:
             or raw.get("browser_extension_id")
             or "mkfldhmlgdbpmhplaphhcfcdcoaakcik"
         ).strip()
-        # DEV-ONLY: enable POST /api/v1/browser/debug/send (push a single command
-        # to a connected extension) for manual acceptance. Off by default;
-        # set BROWSER_DEBUG_SEND=1 to enable.
-        self.browser_debug_send: bool = str(
-            os.environ.get("BROWSER_DEBUG_SEND") or raw.get("browser_debug_send") or ""
-        ).lower() in ("1", "true", "yes")
         # Sharing is an independent product gate; authorization itself is
         # always enforced by the pinned OpenFGA model.
         self.resource_sharing_enabled: bool = _as_bool(

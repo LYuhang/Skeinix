@@ -45,4 +45,21 @@ describe('SSEStatusBanner retry protocol', () => {
       approvalMode: 'always_allow',
     });
   });
+
+  it('does not describe a Runtime failure as a reconnection failure', () => {
+    const store = useChatStreamStore.getState();
+    store.beginTurn('chat_failed', 'turn_failed');
+    store.setState('failed', 'chat_failed');
+
+    render(
+      <SSEStatusBanner
+        wfId="scope_1"
+        activeChatId="chat_failed"
+        runTurn={runAgentTurnMock}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent(/agent run failed/i);
+    expect(screen.getByRole('status')).not.toHaveTextContent(/connection interrupted/i);
+  });
 });

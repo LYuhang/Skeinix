@@ -176,3 +176,38 @@ def test_encrypted_runtime_volume_ignores_symlink_without_reading_target(tmp_pat
     assert provider.sync(volume) == 0
     assert store.list_keys(f"{volume.storage_prefix}/") == []
     store.release_materialized_prefix(volume.storage_prefix or "", volume.path)
+
+
+def test_encrypted_runtime_volume_tolerates_file_removed_after_manifest(
+    monkeypatch,
+    tmp_path,
+):
+    store = FilesystemObjectStore(
+        root=str(tmp_path / "cipher"),
+        materialized_root=str(tmp_path / "materialized"),
+        master_key=b"R" * 32,
+    )
+    provider = EncryptedObjectStoreChatRuntimeVolumeProvider(store)
+    volume = provider.ensure(
+        tenant_id="tenant",
+        user_id="user",
+        chat_scope_id="chat",
+    )
+    durable = Path(volume.path, "thread.jsonl")
+    durable.write_text("keep", encoding="utf-8")
+    transient = Path(volume.path, ".codex", "shell_snapshots", "turn.sh")
+    transient.parent.mkdir(parents=True)
+    transient.write_text("temporary", encoding="utf-8")
+    regular_files = provider._regular_files
+
+    def remove_transient_after_manifest(root: str) -> dict[str, str]:
+        files = regular_files(root)
+        transient.unlink()
+        return files
+
+    monkeypatch.setattr(provider, "_regular_files", remove_transient_after_manifest)
+
+    assert provider.sync(volume) == 1
+    keys = store.list_keys(f"{volume.storage_prefix}/")
+    assert keys == [f"{volume.storage_prefix}/thread.jsonl"]
+    store.release_materialized_prefix(volume.storage_prefix or "", volume.path)

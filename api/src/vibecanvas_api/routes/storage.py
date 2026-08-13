@@ -1054,6 +1054,9 @@ async def mkdir_storage(
     replaced = await VfsRepo(session, object_store=get_object_store()).upsert_artifact_bytes(
         wf_id=resolved.scope_id, tenant=auth.tenant_id, path=marker, data=b"",
         content_type="application/x-directory")
+    await get_sandbox_manager().mirror_vfs_write(
+        auth.tenant_id, resolved.scope_id, marker, b"",
+    )
     return StorageWriteOut(
         path=_clean_logical_path(body.path), size_bytes=0,
         content_type="application/x-directory", replaced=replaced,
@@ -1098,6 +1101,9 @@ async def delete_storage(
         wf_id=resolved.scope_id, tenant=auth.tenant_id, path=marker)
     if deleted == 0:
         raise HTTPException(status_code=404, detail="storage_path_not_found")
+    await get_sandbox_manager().mirror_vfs_delete(
+        auth.tenant_id, resolved.scope_id, resolved.vfs_path,
+    )
     return StorageDeleteOut(
         deleted=deleted,
         access=access_from_decision(decision) if decision else None,
@@ -1163,6 +1169,9 @@ async def rename_storage(
             if "not found" in str(e):
                 raise HTTPException(status_code=404, detail="storage_path_not_found")
             raise HTTPException(status_code=400, detail="invalid_path")
+    await get_sandbox_manager().mirror_vfs_rename(
+        auth.tenant_id, old.scope_id, old.vfs_path, new.vfs_path,
+    )
     return StorageRenameOut(
         path=_clean_logical_path(body.new_path),
         access=access_from_decision(decision) if decision else None,

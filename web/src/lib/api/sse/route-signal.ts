@@ -320,9 +320,9 @@ const VFS_MUTATING_TOOLS = new Set([
  *
  * When this chat UI runs framed inside the extension side panel (`/embed`),
  * the island overlay needs to reflect the agent's CHAT-driven phase
- * (thinking / non-browser-tool / streaming / ready). The browser-tool phase
- * is known to the extension directly from `RUN_COMMAND`; the rest is known
- * ONLY here, on the chat SSE — so we relay it up to the shell:
+ * (thinking / browser-tool / non-browser-tool / streaming / ready). These
+ * product phases are known here on the chat SSE, while the Playwright relay is
+ * deliberately only a CDP data plane, so we relay them up to the shell:
  *
  *   iframe → window.parent.postMessage → shell → SW → islandState.
  *

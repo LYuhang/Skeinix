@@ -902,6 +902,66 @@ describe('ToolCallBlock name dispatch', () => {
     expect(document.querySelector('[data-role="subagent-card"]')).toBeNull();
     expect(document.querySelector('[data-role="terminal-block"]')).toBeInTheDocument();
   });
+
+  it('renders an official Playwright screenshot from its durable VFS path', async () => {
+    let signedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/v1/vfs/sign', async ({ request }) => {
+        signedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          url: '/api/v1/vfs/raw?path=sidepanel.png&sig=test',
+          expires_at: 2_000_000_000,
+        });
+      }),
+    );
+    render(
+      <ToolCallBlock
+        autoExpand
+        vfsScopeId="chat-workspace-1"
+        call={{
+          id: 'browser-shot-1',
+          name: 'browser_take_screenshot',
+          arguments: JSON.stringify({
+            filename: '/data/browser-media/sidepanel.png',
+            fullPage: true,
+            type: 'png',
+          }),
+          result: JSON.stringify({
+            content: [{
+              type: 'text',
+              text: '### Result\n- [Screenshot of full page](browser-media/sidepanel.png)',
+            }],
+            structuredContent: null,
+          }),
+          status: 'done',
+          invocation: {
+            schemaVersion: 1,
+            invocationId: 'browser-shot-1',
+            runtime: { type: 'codex' },
+            origin: {
+              kind: 'platform_mcp',
+              serverName: 'browser',
+              serverLabel: 'browser',
+              toolName: 'browser_take_screenshot',
+              qualifiedName: 'browser_take_screenshot',
+            },
+            capability: 'browser',
+            name: 'browser_take_screenshot',
+            status: 'success',
+            input: {},
+          },
+        }}
+      />,
+      { wrapper: QueryWrapper },
+    );
+
+    const image = await screen.findByRole('img', { name: 'browser_take_screenshot' });
+    expect(image).toHaveAttribute('src', expect.stringContaining('/api/v1/vfs/raw'));
+    expect(signedBody).toEqual({
+      path: '/data/browser-media/sidepanel.png',
+      wf_id: 'chat-workspace-1',
+    });
+  });
 });
 
 describe('InteractiveArtifactBlock HITL behavior', () => {
@@ -1906,7 +1966,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
           artifact_id: 'ia_approval',
           status: 'pending',
           hitl_type: 'pre_tool_approval',
-          title: 'Approve browser_fetch_resource',
+          title: 'Approve browser_network_request',
           prompt_text: 'The agent wants to save a private PDF.',
           ui_payload_json: {},
           ui_projection_event_json: {},
@@ -1927,7 +1987,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
           artifact_id: 'ia_approval',
           status: 'approved',
           hitl_type: 'pre_tool_approval',
-          title: 'Approve browser_fetch_resource',
+          title: 'Approve browser_network_request',
           prompt_text: 'The agent wants to save a private PDF.',
           ui_payload_json: {},
           ui_projection_event_json: {},
@@ -1944,7 +2004,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       <InteractiveArtifactBlock
         call={{
           id: 'tc_fetch',
-          name: 'browser_fetch_resource',
+          name: 'browser_network_request',
           arguments: '{"url":"https://example.test/private.pdf"}',
           result: '',
           status: 'running',
@@ -1956,12 +2016,12 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
                 kind: 'interactive_artifact',
                 artifact_id: 'ia_approval',
                 hitl_request_id: 'hitl_approval',
-                title: 'Approve browser_fetch_resource',
+                title: 'Approve browser_network_request',
                 component_type: 'approval',
                 completion_mode: 'wait_for_submit',
                 props: {
                   fields: [
-                    { name: 'tool', label: 'Tool', value: 'browser_fetch_resource' },
+                    { name: 'tool', label: 'Tool', value: 'browser_network_request' },
                   ],
                 },
                 interaction_schema: {

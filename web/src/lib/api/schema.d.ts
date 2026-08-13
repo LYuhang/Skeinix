@@ -4153,28 +4153,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/browser/debug/send": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Debug Send
-         * @description DEV-ONLY (BROWSER_DEBUG_SEND=1): push a single command to this tenant's
-         *     connected extension and return the observation. Lets us manually verify a
-         *     backend command driving a real page during manual acceptance.
-         */
-        post: operations["debug_send_api_v1_browser_debug_send_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/agent-runtime/capabilities": {
         parameters: {
             query?: never;
@@ -5564,20 +5542,6 @@ export interface components {
             proxy?: string | null;
             /** Api Key */
             api_key?: string | null;
-        };
-        /** DebugSendIn */
-        DebugSendIn: {
-            /** Cmd */
-            cmd: string;
-            /**
-             * Args
-             * @default {}
-             */
-            args: {
-                [key: string]: unknown;
-            };
-            /** Target Id */
-            target_id?: string | null;
         };
         /** DeleteAccountIn */
         DeleteAccountIn: {
@@ -15988,39 +15952,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["MintIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    debug_send_api_v1_browser_debug_send_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DebugSendIn"];
             };
         };
         responses: {

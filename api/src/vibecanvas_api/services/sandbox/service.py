@@ -67,6 +67,8 @@ _SESSION_METHODS = {
     "sync_workspace_path",
     "writeback_vfs",
     "mirror_vfs_write",
+    "mirror_vfs_delete",
+    "mirror_vfs_rename",
     "acknowledge_external_vfs_commit",
     "fence_external_vfs_path",
     "drain_writeback",
@@ -87,6 +89,8 @@ _MANAGER_METHODS = {
     "purge_user_storage",
     "invalidate_codex_account_sessions",
     "mirror_vfs_write",
+    "mirror_vfs_delete",
+    "mirror_vfs_rename",
     "sweep_idle",
     "run_mcp_probe",
     "ensure_workflow_dependencies",
@@ -302,6 +306,12 @@ class RemoteSandboxSession:
 
     async def mirror_vfs_write(self, path: str, data: bytes) -> bool:
         return bool(await self._call("mirror_vfs_write", path, data))
+
+    async def mirror_vfs_delete(self, path: str) -> bool:
+        return bool(await self._call("mirror_vfs_delete", path))
+
+    async def mirror_vfs_rename(self, old_path: str, new_path: str) -> bool:
+        return bool(await self._call("mirror_vfs_rename", old_path, new_path))
 
     async def acknowledge_external_vfs_commit(self, path: str, data: bytes) -> bool:
         return bool(await self._call("acknowledge_external_vfs_commit", path, data))
@@ -599,6 +609,20 @@ class RemoteSandboxManager:
                                data: bytes) -> bool:
         return bool(await self._manager_call(
             "mirror_vfs_write", tenant_id, wf_id, path, data,
+        ))
+
+    async def mirror_vfs_delete(
+        self, tenant_id: str, wf_id: str, path: str,
+    ) -> bool:
+        return bool(await self._manager_call(
+            "mirror_vfs_delete", tenant_id, wf_id, path,
+        ))
+
+    async def mirror_vfs_rename(
+        self, tenant_id: str, wf_id: str, old_path: str, new_path: str,
+    ) -> bool:
+        return bool(await self._manager_call(
+            "mirror_vfs_rename", tenant_id, wf_id, old_path, new_path,
         ))
 
     async def sweep_idle(self) -> int:

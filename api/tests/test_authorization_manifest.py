@@ -95,7 +95,6 @@ def test_platform_mcp_manifest_has_one_policy_per_exported_tool():
     keys = {(item.server, item.tool_name) for item in manifest}
     assert len(keys) == len(manifest)
     assert {server for server, _ in keys} == {
-        "browser",
         "build",
         "config",
         "deployment",
@@ -126,8 +125,7 @@ def test_platform_mcp_manifest_has_one_policy_per_exported_tool():
     assert actions[("knowledge", "search_knowledge")] is Action.USE
     assert actions[("knowledge", "read_knowledge_file")] is Action.USE
     assert actions[("build", "run_workflow")] is Action.EXECUTE
-    assert actions[("browser", "browser_read_text")] is Action.VIEW
-    assert actions[("browser", "browser_click")] is Action.USE
+    assert all(server != "browser" for server, _tool in actions)
 
 
 def test_subresource_manifest_matches_runtime_authorization_semantics():

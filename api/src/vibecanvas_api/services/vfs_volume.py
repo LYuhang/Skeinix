@@ -290,8 +290,17 @@ class EncryptedObjectStoreChatRuntimeVolumeProvider:
         current_keys: set[str] = set()
         for relative, path in sorted(files.items()):
             key = f"{prefix}/{relative}"
-            with open(path, "rb") as handle:
-                data = handle.read()
+            try:
+                with open(path, "rb") as handle:
+                    data = handle.read()
+            except (FileNotFoundError, NotADirectoryError):
+                # Resident runtimes may delete disposable files (for example a
+                # Codex shell snapshot) after the manifest walk but before its
+                # contents are read.  The file no longer belongs in the durable
+                # snapshot; treat this exactly like a file absent from the
+                # manifest instead of turning an otherwise completed Agent
+                # Turn into a failure.
+                continue
             self.store.put_bytes(key, data)
             current_keys.add(key)
         stale = set(self.store.list_keys(f"{prefix}/")) - current_keys

@@ -53,6 +53,7 @@ def _source_hashes() -> dict[str, str]:
         Path(__file__).with_name("manager.py").resolve(),
         api_root / "services" / "agent_runtime" / "sandbox_entry.py",
         api_root / "services" / "agent_runtime" / "codex.py",
+        api_root / "services" / "agent_runtime" / "codex_mcp_gateway.py",
         api_root / "services" / "agent_runtime" / "mcp.py",
         api_root / "agent.py",
     )
@@ -78,7 +79,7 @@ def _fingerprint(
     except Exception as exc:
         raise RuntimeError("unable to identify runsc for Runtime snapshot") from exc
     payload = {
-        "format": 2,
+        "format": 3,
         "kind": "agent_runtime_bootstrap",
         "runtime_type": runtime_type,
         "runsc": runsc_version,

@@ -1487,6 +1487,7 @@ async def run_codex_turn(
         await emit("message.end", {"message_id": carrier_id})
         return item_id
 
+    result_ready = False
     try:
         connection_overrides: dict[str, dict[str, Any]] = {}
         phase_started = perf_counter()
@@ -1526,15 +1527,59 @@ async def run_codex_turn(
         # Every gateway is independent and upstream tool discovery is network
         # bound. Start them concurrently so the stable config/interactive/
         # workflow baseline costs one handshake window rather than three.
-        gateway_results = await asyncio.gather(
-            *(gateway.start() for gateway in gateways),
+        # HTTP gateways remain stateless and can discover tools concurrently.
+        # A stdio gateway owns a resident child process whose async context must
+        # be entered and exited by this Turn task, so start it directly rather
+        # than inside a temporary asyncio.gather task.
+        gateway_results: list[object | None] = [None] * len(gateways)
+        http_indexes = [
+            index
+            for index, gateway in enumerate(gateways)
+            if gateway.descriptor.connection.get("transport") != "stdio"
+        ]
+        http_results = await asyncio.gather(
+            *(gateways[index].start() for index in http_indexes),
             return_exceptions=True,
         )
+        for index, result in zip(http_indexes, http_results, strict=True):
+            gateway_results[index] = result
+        for index, gateway in enumerate(gateways):
+            if gateway.descriptor.connection.get("transport") != "stdio":
+                continue
+            try:
+                await gateway.start()
+            except BaseException as exc:  # handled uniformly below
+                gateway_results[index] = exc
         for gateway, result in zip(gateways, gateway_results, strict=True):
             if isinstance(result, BaseException):
+                detail = str(result)
+                connection = dict(gateway.descriptor.connection)
+                secret_values: list[str] = []
+                for mapping_name in ("headers", "env"):
+                    mapping = connection.get(mapping_name)
+                    if not isinstance(mapping, dict):
+                        continue
+                    for key, value in mapping.items():
+                        normalized_key = str(key).lower()
+                        if any(
+                            marker in normalized_key
+                            for marker in (
+                                "authorization",
+                                "bearer",
+                                "token",
+                                "secret",
+                                "password",
+                                "api_key",
+                            )
+                        ):
+                            secret_values.append(str(value))
+                for secret in secret_values:
+                    if secret:
+                        detail = detail.replace(secret, "[redacted]")
+                detail = detail[:500]
                 raise RuntimeError(
                     f"Codex Platform MCP gateway {gateway.descriptor.name} "
-                    "failed to start"
+                    f"failed to start: {type(result).__name__}: {detail}"
                 ) from result
             if gateway.url is None:
                 raise RuntimeError(
@@ -2388,9 +2433,7 @@ async def run_codex_turn(
                 + json.dumps(bounded_counts, ensure_ascii=True)
             )
         await emit("runtime.completed", {"state_ref": thread_id})
-        from vibecanvas_engine.sandbox_bus import MSG_RUNTIME_RESULT
-
-        await channel.send({"type": MSG_RUNTIME_RESULT})
+        result_ready = True
     except CodexAppServerError as exc:
         raise RuntimeError(f"{exc.code}: {exc}") from exc
     finally:
@@ -2409,6 +2452,15 @@ async def run_codex_turn(
                 await gateway.close()
             else:
                 gateway.deactivate()
+                await gateway.disconnect_upstream()
+    if result_ready:
+        # Do not advertise a reusable Turn boundary while the old control
+        # receiver or MCP upstream is still being dismantled.  The outer
+        # sandbox loop may safely receive the next runtime_request immediately
+        # after this frame.
+        from vibecanvas_engine.sandbox_bus import MSG_RUNTIME_RESULT
+
+        await channel.send({"type": MSG_RUNTIME_RESULT})
 
 
 __all__ = ["create_codex_app_server", "run_codex_turn"]

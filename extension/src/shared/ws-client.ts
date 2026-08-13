@@ -5,8 +5,8 @@
  * it just surfaces opens/echoes and reconnects with capped exponential backoff.
  *
  * On reconnect it loses no app state the backend can't re-drive: the host
- * registry re-keys the transport on the new socket. Ping, command, and
- * observation frames share the same transport.
+ * registry re-keys the transport on the new socket. Ping, lifecycle, and
+ * Playwright relay frames share the same transport.
  */
 import { encode, decode, type Envelope } from "./envelope";
 
@@ -33,7 +33,7 @@ export class WsClient {
   private closeCbs: ((event: CloseEvent) => void)[] = [];
   private authRequiredCbs: (() => void)[] = [];
   private echoCbs: ((e: Envelope) => void)[] = [];
-  private commandCbs: ((e: Envelope) => void)[] = [];
+  private playwrightRelayCbs: ((e: Envelope) => void)[] = [];
 
   constructor(
     private readonly url: string,
@@ -56,13 +56,9 @@ export class WsClient {
     this.echoCbs.push(cb);
   }
 
-  /**
-   * Subscribe to inbound `kind:"command"` frames. The
-   * offscreen command loop registers here, runs the bundled CDP handler, and
-   * replies via `sendRaw(makeObservation(...))`. (ping/echo path is untouched.)
-   */
-  onCommand(cb: (e: Envelope) => void): void {
-    this.commandCbs.push(cb);
+  /** Subscribe to the authenticated Playwright extension relay data plane. */
+  onPlaywrightRelay(cb: (e: Envelope) => void): void {
+    this.playwrightRelayCbs.push(cb);
   }
 
   connect(): void {
@@ -92,8 +88,8 @@ export class WsClient {
       }
       if (e.kind === "echo") {
         for (const cb of this.echoCbs) cb(e);
-      } else if (e.kind === "command") {
-        for (const cb of this.commandCbs) cb(e);
+      } else if (e.kind === "playwright_relay") {
+        for (const cb of this.playwrightRelayCbs) cb(e);
       }
     };
 
@@ -144,10 +140,9 @@ export class WsClient {
   }
 
   /**
-   * Send a pre-encoded frame verbatim (for example an
-   * observation built by `makeObservation`, or a tab `event` frame). The
-   * extension never constructs run state — it only echoes what the host asked
-   * for — so this is a thin passthrough to the socket.
+   * Send a pre-encoded lifecycle or Playwright relay frame verbatim. The
+   * extension never constructs Agent run state, so this remains a thin
+   * passthrough to the socket.
    */
   sendRaw(raw: string): void {
     this.ws?.send(raw);

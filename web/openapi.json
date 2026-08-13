@@ -13191,51 +13191,6 @@
         ]
       }
     },
-    "/api/v1/browser/debug/send": {
-      "post": {
-        "tags": [
-          "browser"
-        ],
-        "summary": "Debug Send",
-        "description": "DEV-ONLY (BROWSER_DEBUG_SEND=1): push a single command to this tenant's\nconnected extension and return the observation. Lets us manually verify a\nbackend command driving a real page during manual acceptance.",
-        "operationId": "debug_send_api_v1_browser_debug_send_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DebugSendIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
     "/api/v1/agent-runtime/capabilities": {
       "get": {
         "tags": [
@@ -17820,36 +17775,6 @@
         "type": "object",
         "title": "CredentialUpdate",
         "description": "Update body. All fields optional (partial update). ``api_key`` omitted\nOR empty => keep the existing key (the handler keys off\n``exclude_unset=True`` + a non-empty check). ``extra='forbid'``."
-      },
-      "DebugSendIn": {
-        "properties": {
-          "cmd": {
-            "type": "string",
-            "title": "Cmd"
-          },
-          "args": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Args",
-            "default": {}
-          },
-          "target_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "cmd"
-        ],
-        "title": "DebugSendIn"
       },
       "DeleteAccountIn": {
         "properties": {

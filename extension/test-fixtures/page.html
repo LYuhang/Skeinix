@@ -11,7 +11,8 @@
       main { width: min(760px, calc(100% - 40px)); margin: 70px auto; padding: 38px; border: 1px solid #dfe4ef; border-radius: 22px; background: white; }
       .fields { display: grid; gap: 18px; margin: 30px 0; }
       label { display: grid; gap: 8px; font-weight: 700; }
-      input, select { padding: 13px; border: 1px solid #bdc5d8; border-radius: 10px; font: inherit; }
+      input, select, #rich-editor { padding: 13px; border: 1px solid #bdc5d8; border-radius: 10px; font: inherit; }
+      #rich-editor { min-height: 120px; }
       button, a { display: inline-flex; margin-right: 10px; padding: 12px 18px; border: 0; border-radius: 10px; background: #6757d9; color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
       #thumb { width: 72px; height: 72px; image-rendering: pixelated; border-radius: 12px; background: #eef0f8; }
       #bottom { position: absolute; top: 2150px; left: 50%; transform: translateX(-50%); font-weight: 700; }
@@ -26,6 +27,12 @@
         <label>Reason <input id="reason" type="text" /></label>
         <label>Decision
           <select id="decision"><option value="approve">approve</option><option value="reject">reject</option></select>
+        </label>
+        <label>Attachment <input id="upload" type="file" accept="image/png" /></label>
+        <button id="hidden-upload-trigger" type="button">Choose hidden attachment</button>
+        <input id="hidden-upload" type="file" accept="image/png" hidden />
+        <label>Rich article
+          <div id="rich-editor" contenteditable="true"><p>Existing draft</p></div>
         </label>
       </div>
       <button id="submit" type="button">Submit</button>
@@ -55,6 +62,32 @@
           document.querySelector("main").appendChild(marker);
         }
         marker.textContent = "Enter observed";
+      });
+      document.querySelector("#upload").addEventListener("change", (event) => {
+        const file = event.target.files && event.target.files[0];
+        let marker = document.querySelector("#uploaded");
+        if (!marker) {
+          marker = document.createElement("div");
+          marker.id = "uploaded";
+          document.querySelector("main").appendChild(marker);
+        }
+        marker.textContent = file ? `Uploaded ${file.name} (${file.size})` : "No file";
+      });
+      document.querySelector("#hidden-upload").addEventListener("change", (event) => {
+        const file = event.target.files && event.target.files[0];
+        let marker = document.querySelector("#hidden-uploaded");
+        if (!marker) {
+          marker = document.createElement("div");
+          marker.id = "hidden-uploaded";
+          document.querySelector("main").appendChild(marker);
+        }
+        marker.textContent = file ? `Hidden uploaded ${file.name} (${file.size})` : "No file";
+      });
+      document.querySelector("#hidden-upload-trigger").addEventListener("click", () => {
+        document.querySelector("#hidden-upload").click();
+      });
+      document.querySelector("#rich-editor").addEventListener("input", () => {
+        document.querySelector("#rich-editor").dataset.inputObserved = "true";
       });
     </script>
   </body>

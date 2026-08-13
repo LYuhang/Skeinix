@@ -33,6 +33,13 @@ describe('auth extension exchange hydration', () => {
             tenant_id: 'tenant_embed',
             email: 'embed@example.test',
             display_name: 'Embed User',
+            session: {
+              session_id: 'derived-extension-session',
+              generation: 1,
+              authentication_strength: 'password',
+              step_up_expires_at: null,
+              audience: 'extension',
+            },
           }),
           {
             status: 200,
@@ -58,6 +65,7 @@ describe('auth extension exchange hydration', () => {
       token: null,
       authenticated: true,
       bootstrapped: true,
+      sessionAudience: 'extension',
       user: {
         user_id: 'user_embed',
         tenant_id: 'tenant_embed',

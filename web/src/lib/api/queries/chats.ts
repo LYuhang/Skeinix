@@ -446,6 +446,15 @@ export const useChatHistory = (
     queryKey: ['chat-history', scopeId, chatId, beforeTurnId ?? null],
     enabled: enabled && !!(scopeId && chatId),
     queryFn: () => fetchChatHistory(scopeId!, chatId!, beforeTurnId),
+    // Keep the already-rendered transcript while the same Chat moves from its
+    // normal tail query to the active-Turn boundary query. Never borrow data
+    // from another Chat: that would briefly display the wrong conversation.
+    placeholderData: (previousData, previousQuery) => {
+      const previousKey = previousQuery?.queryKey;
+      return previousKey?.[1] === scopeId && previousKey?.[2] === chatId
+        ? previousData
+        : undefined;
+    },
     staleTime: 15 * 1000,
   });
 

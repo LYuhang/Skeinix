@@ -288,14 +288,10 @@ export function ToolCallBlock({ call, autoExpand, wfId, vfsScopeId, onOpenFilePr
                   path={typeof envelope.output.path === 'string' ? envelope.output.path : undefined}
                   onOpenFile={onOpenFilePreview}
                 />
-              ) : presenter === 'browser' && envelope ? (
-                // Browser tools get dedicated renderings (navigate URL,
-                // screenshot <img>, page text, acted element + expect); the
-                // view falls back to EnvelopeView for anything it doesn't
-                // specialise.
+              ) : presenter === 'browser' ? (
                 <BrowserToolView
                   toolName={call.name}
-                  envelope={envelope}
+                  standardResult={universal!}
                   arguments={call.arguments}
                   wfId={renderScopeId}
                 />

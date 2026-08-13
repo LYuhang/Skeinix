@@ -911,16 +911,8 @@ def _mcp_action(tool_name: str) -> Action:
         return Action.VIEW_METADATA
     if (
         name.endswith("_get")
-        or name.startswith(("get_", "check_", "browser_read_"))
+        or name.startswith(("get_", "check_"))
         or name in {
-            "browser_snapshot",
-            "browser_query",
-            "browser_get_attribute",
-            "browser_get_html",
-            "browser_take_screenshot",
-            "browser_fetch_resource",
-            "browser_session_status",
-            "browser_check_login",
             "get_config",
             "search_diagram_assets",
             "inspect_diagram",
@@ -928,7 +920,7 @@ def _mcp_action(tool_name: str) -> Action:
         }
     ):
         return Action.VIEW
-    if "cancel" in name or name == "browser_end_session":
+    if "cancel" in name:
         return Action.CANCEL
     if "resume" in name:
         return Action.RESUME
@@ -940,8 +932,6 @@ def _mcp_action(tool_name: str) -> Action:
         return Action.DEPLOY
     if name.startswith(("task_delete_", "deployment_delete")):
         return Action.DELETE
-    if name.startswith("browser_"):
-        return Action.USE
     return Action.UPDATE
 
 
@@ -951,7 +941,6 @@ def platform_mcp_permission_manifest() -> tuple[McpToolPermission, ...]:
         platform_mcp_tool_action,
         platform_resource_tool_action,
     )
-    from vibecanvas_api.services.platform_mcp.browser_tools import BROWSER_TOOLS
     from vibecanvas_api.services.platform_mcp.build_tools import BUILD_TOOLS
     from vibecanvas_api.services.platform_mcp.build_tools.workflow_context import (
         create_workflow,
@@ -1008,11 +997,6 @@ def platform_mcp_permission_manifest() -> tuple[McpToolPermission, ...]:
             [set_workflow, create_workflow, *BUILD_TOOLS, *RUN_TOOLS],
             ResourceType.WORKFLOW,
             "tool_argument_or_chat_binding_to_workflow",
-        ),
-        "browser": (
-            BROWSER_TOOLS,
-            ResourceType.CHAT,
-            "platform_capability_to_chat_browser_binding",
         ),
         "plan": (
             PLAN_TOOLS,

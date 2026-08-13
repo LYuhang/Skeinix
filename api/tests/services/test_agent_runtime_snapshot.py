@@ -5,6 +5,12 @@ from types import SimpleNamespace
 from vibecanvas_api.services.sandbox import agent_runtime_snapshot
 
 
+def test_source_fingerprint_covers_turn_local_mcp_gateway() -> None:
+    hashes = agent_runtime_snapshot._source_hashes()
+
+    assert "services/agent_runtime/codex_mcp_gateway.py" in hashes
+
+
 def test_fingerprint_ignores_substitutable_runtime_resource_sources(
     monkeypatch,
 ) -> None:

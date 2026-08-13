@@ -3324,16 +3324,46 @@ async def post_message(
         context_manifest=context_manifest,
     )
 
+    bootstrap_sidepanel_browser = (
+        body.surface == "sidepanel" and "browser" in effective_active_modes
+    )
+
     async def producer(stop_ev: asyncio.Event):
-        orchestrator = AgentRuntimeOrchestrator()
-        async for product_event in orchestrator.stream_turn(
-            open_request=open_request,
-            turn_request=turn_request,
-            workspace_scope_id=agent_wf_id,
-            current_workflow_id=effective_current_workflow_id,
-            stop_event=stop_ev,
-        ):
-            yield product_event
+        browser_lease = None
+        if bootstrap_sidepanel_browser:
+            # Sending from the side panel is the explicit user action that
+            # authorizes the visible page for this Chat. Reserve the durable
+            # lease before official Playwright MCP connects; the CDP endpoint
+            # confirms it only after the extension initializes successfully.
+            from ..browser.session_control import (
+                reserve_sidepanel_browser_session,
+            )
+
+            browser_lease = await reserve_sidepanel_browser_session(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                chat_id=chat_id,
+            )
+        try:
+            orchestrator = AgentRuntimeOrchestrator()
+            async for product_event in orchestrator.stream_turn(
+                open_request=open_request,
+                turn_request=turn_request,
+                workspace_scope_id=agent_wf_id,
+                current_workflow_id=effective_current_workflow_id,
+                stop_event=stop_ev,
+            ):
+                yield product_event
+        finally:
+            if browser_lease is not None:
+                from ..browser.session_control import (
+                    release_unconfirmed_browser_session,
+                )
+
+                await release_unconfirmed_browser_session(
+                    browser_lease,
+                    reason="playwright_mcp_startup_incomplete",
+                )
 
     # Authorization may have changed while model/MCP/runtime inputs were being
     # assembled. Recheck at the durable Agent Run mutation boundary so revoke

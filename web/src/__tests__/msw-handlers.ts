@@ -102,6 +102,13 @@ export const handlers = [
   http.get('*/api/v1/chat-scopes/:scopeId/chats/:chatId/messages', () =>
     HttpResponse.json({ items: [], total: 0, limit: 200, offset: 0 }),
   ),
+  http.get('*/api/v1/chats/workspace', ({ request }) => {
+    const chatId = new URL(request.url).searchParams.get('chat_id') || 'chat-test';
+    return HttpResponse.json({
+      chat_id: chatId,
+      workspace_scope_id: `__chatws_test_${chatId}`,
+    });
+  }),
   http.get('*/api/v1/interactive-artifacts/:artifactId', () =>
     new HttpResponse(null, { status: 404 }),
   ),

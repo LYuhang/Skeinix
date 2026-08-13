@@ -53,7 +53,6 @@ def _config(tmp_path, monkeypatch, **env) -> AppConfig:
         "SANDBOX_NETWORK",
         "ENABLE_TEST_USER",
         "AGENT_DEBUG_VIEW_ENABLED",
-        "BROWSER_DEBUG_SEND",
         "SANDBOX_DEBUG_EXECUTE_ENABLED",
         "VIBECANVAS_FRAME_ANCESTORS",
         "TRUSTED_PROXY_CIDRS",
@@ -88,7 +87,6 @@ def test_production_profile_reports_all_insecure_fallbacks_without_values(
         VIBECANVAS_ENV="production",
         ENABLE_TEST_USER="1",
         AGENT_DEBUG_VIEW_ENABLED="1",
-        BROWSER_DEBUG_SEND="1",
         SANDBOX_DEBUG_EXECUTE_ENABLED="1",
     )
     issues = production_security_issues(
@@ -110,7 +108,6 @@ def test_production_profile_reports_all_insecure_fallbacks_without_values(
         "proxy.trusted_cidrs_required",
         "debug.test_user_forbidden",
         "debug.inspector_forbidden",
-        "debug.browser_send_forbidden",
         "debug.sandbox_execute_forbidden",
         "cors.wildcard",
         "cors.origin_not_public_https",

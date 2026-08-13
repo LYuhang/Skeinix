@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from vibecanvas_api.agents.tools import builtin_tool_names
 from vibecanvas_api.config import config
@@ -35,6 +37,7 @@ from vibecanvas_api.services.platform_mcp.capability import (
 from vibecanvas_api.services.platform_mcp.catalog import platform_mcp_description
 from vibecanvas_api.storage.db import session_scope
 from vibecanvas_api.storage.repo_mcp_servers import McpServersRepo
+from vibecanvas_api.browser.playwright_contract import filter_playwright_tools
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +48,19 @@ _RUNTIME_MCP_TOOL_CACHE: dict[
 ] = {}
 _MCP_HANDSHAKE_RETRIES = 1
 
+
+def _playwright_cdp_url() -> str:
+    parts = urlsplit(config.mcp.platform_internal_base_url)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("Platform MCP internal base URL must be absolute")
+    return urlunsplit((
+        "wss" if parts.scheme == "https" else "ws",
+        parts.netloc,
+        "/api/v1/browser/playwright/cdp",
+        "",
+        "",
+    ))
+
 _PLATFORM_PATHS = {
     "config": "/api/internal/mcp/config/",
     "interactive": "/api/internal/mcp/interactive/",
@@ -53,7 +69,6 @@ _PLATFORM_PATHS = {
     "deployment": "/api/internal/mcp/deployment/",
     "knowledge": "/api/internal/mcp/knowledge/",
     "build": "/api/internal/mcp/build/",
-    "browser": "/api/internal/mcp/browser/",
     "plan": "/api/internal/mcp/plan/",
     "diagram": "/api/internal/mcp/diagram/",
 }
@@ -234,9 +249,6 @@ def platform_mcp_descriptors(
     """Mint least-privilege descriptors for explicitly activated capabilities."""
     result: list[RuntimeMcpServer] = []
     for server in servers:
-        path = _PLATFORM_PATHS.get(server)
-        if path is None:
-            raise ValueError(f"unknown platform MCP capability: {server}")
         token = mint_platform_mcp_capability(
             organization_id=tenant_id,
             user_id=user_id,
@@ -255,16 +267,57 @@ def platform_mcp_descriptors(
             secret=config.signing_secret,
             ttl_s=config.mcp.platform_capability_ttl_s,
         )
+        if server == "browser":
+            # Official Playwright MCP owns locators, accessibility snapshots,
+            # actionability, frames, dialogs, tabs and post-action settling.
+            # The scoped Platform capability authenticates only the remote CDP
+            # bridge for this user/Chat/turn; the browser never opens a port.
+            connection = {
+                "transport": "stdio",
+                "command": os.environ.get(
+                    "PLAYWRIGHT_MCP_COMMAND", "skeinix-playwright-mcp"
+                ),
+                "args": [
+                    "--codegen",
+                    "none",
+                    "--snapshot-mode",
+                    "full",
+                    "--timeout-action",
+                    "7000",
+                    "--timeout-navigation",
+                    "60000",
+                    "--timeout-settle",
+                    "500",
+                    "--output-dir",
+                    "/data/browser-media",
+                ],
+                "env": {
+                    "SKEINIX_PLAYWRIGHT_CDP_ENDPOINT": _playwright_cdp_url(),
+                    "SKEINIX_PLAYWRIGHT_CDP_BEARER": token,
+                },
+                "cwd": "/data",
+                "skeinix_persistent_session": True,
+            }
+        else:
+            path = _PLATFORM_PATHS.get(server)
+            if path is None:
+                raise ValueError(f"unknown platform MCP capability: {server}")
+            connection = {
+                "transport": "streamable_http",
+                "url": f"{config.mcp.platform_internal_base_url}{path}",
+                "headers": {"Authorization": f"Bearer {token}"},
+            }
         result.append(
             RuntimeMcpServer(
                 name=server,
                 source="platform",
-                description=platform_mcp_description(server),
-                connection={
-                    "transport": "streamable_http",
-                    "url": f"{config.mcp.platform_internal_base_url}{path}",
-                    "headers": {"Authorization": f"Bearer {token}"},
-                },
+                description=(
+                    "Control the user-approved browser page through the "
+                    "reviewed official Playwright MCP tool surface."
+                    if server == "browser"
+                    else platform_mcp_description(server)
+                ),
+                connection=connection,
                 required=True,
             )
         )
@@ -377,8 +430,13 @@ async def _load_server_tools(server: RuntimeMcpServer) -> _McpLoadResult:
     started = monotonic()
     retries = 0
     while True:
+        runtime_connection = {
+            key: value
+            for key, value in server.connection.items()
+            if not str(key).startswith("skeinix_")
+        }
         client = MultiServerMCPClient(
-            {server.name: dict(server.connection)},
+            {server.name: runtime_connection},
             handle_tool_errors=True,
         )
         try:
@@ -386,6 +444,8 @@ async def _load_server_tools(server: RuntimeMcpServer) -> _McpLoadResult:
                 client.get_tools(server_name=server.name),
                 timeout=float(config.mcp.handshake_timeout_s),
             ))
+            if server.name == "browser":
+                loaded = filter_playwright_tools(loaded)
             break
         except (TimeoutError, OSError, ConnectionError):
             if retries >= _MCP_HANDSHAKE_RETRIES:

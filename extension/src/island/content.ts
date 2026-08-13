@@ -53,7 +53,7 @@ const TOOL_LABELS: Record<string, { zh: string; en: string }> = {
 };
 
 const ISLAND_CSS = `
-:host { all: initial; color-scheme: dark; }
+:host { color-scheme: dark; }
 .pill {
   position: fixed;
   top: max(10px, env(safe-area-inset-top));

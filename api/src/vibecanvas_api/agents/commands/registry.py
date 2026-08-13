@@ -17,6 +17,7 @@ from vibecanvas_api.agents.prompts.knowledge import KNOWLEDGE
 from vibecanvas_api.agents.prompts.plan import PLAN
 from vibecanvas_api.agents.prompts.task import TASK
 from vibecanvas_api.agents.prompts.diagram import DIAGRAM
+from vibecanvas_api.browser.playwright_contract import PLAYWRIGHT_AGENT_TOOLS
 
 
 COMMAND_CONTEXT_HEADER = "<command-context"
@@ -140,21 +141,11 @@ COMMAND_MODES: dict[str, CommandMode] = {
         kind="additive",
         sticky=True,
         context_prompt=BROWSER,
-        tools=[
-            "browser_navigate", "browser_snapshot", "browser_read_text",
-            "browser_query", "browser_get_attribute",
-            "browser_get_html", "browser_take_screenshot", "browser_scroll",
-            "browser_wait_for", "browser_tab",
-            "browser_fetch_resource",
-            "browser_click", "browser_type",
-            "browser_select_option", "browser_press_key",
-            "browser_session_status", "browser_check_login",
-            "browser_start_session", "browser_end_session",
-        ],
+        tools=list(PLAYWRIGHT_AGENT_TOOLS),
         activation_message=(
-            "This is the latest /browser activation. Start browser control first; "
-            "that step tells you whether this turn can actually control a browser. "
-            "Then inspect the page state before acting."
+            "This is the latest /browser activation. The side-panel send action "
+            "has already requested control of the visible page. Capture a fresh "
+            "Playwright snapshot before choosing the first action."
         ),
         external_control=None,
         sidepanel_only=True,

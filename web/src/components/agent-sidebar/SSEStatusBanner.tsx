@@ -2,9 +2,11 @@
  * SSE reconnect banner for the agent chat sidebar.
  *
  * Rendered inline at the top of {@link AgentChatSidebar} and visible
- * when the chat-stream store is in `'interrupted'` (retries-exhausted) or
- * `'failed'` (transport / parser error). User-requested Stop has its own
- * explicit `'cancelled'` state and composer Retry action.
+ * when the chat-stream store is in `'interrupted'` (the browser lost its
+ * resumable SSE transport) or `'failed'` (the backend Runtime/model ended the
+ * Turn with an error). Those states deliberately use different copy: a model
+ * provider failure is not a browser reconnection failure. User-requested Stop
+ * has its own explicit `'cancelled'` state and composer Retry action.
  *
  * Three affordances appear when a stream disconnects:
  *   - **Retry** — re-fires the same turn via `runAgentTurn` using the
@@ -64,6 +66,16 @@ export function SSEStatusBanner({
   const chatId = runtime?.chatId ?? null;
   if (state !== 'interrupted' && state !== 'failed') return null;
 
+  const statusText = state === 'interrupted'
+    ? t(
+        'sse_disconnected',
+        'Connection interrupted. The live response could not be resumed.',
+      )
+    : t(
+        'agent_run_failed',
+        'The agent run failed before completion.',
+      );
+
   const canRetry = (!!lastInput?.content || !!lastInput?.control) && !!chatId;
 
   const handleRetry = () => {
@@ -95,10 +107,7 @@ export function SSEStatusBanner({
       className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 p-2 text-xs"
     >
       <span className="flex-1">
-        {t(
-          'sse_disconnected',
-          'Disconnected. The agent stream could not be re-established.',
-        )}
+        {statusText}
       </span>
       <Button
         size="sm"

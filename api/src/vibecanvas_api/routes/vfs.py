@@ -698,6 +698,34 @@ async def _mirror_live_sandbox_write(tenant_id: str, wf_id: str, path: str,
                        exc_info=True)
 
 
+async def _mirror_live_sandbox_delete(
+    tenant_id: str, wf_id: str, path: str,
+) -> None:
+    try:
+        await get_sandbox_manager().mirror_vfs_delete(tenant_id, wf_id, path)
+    except Exception:  # pragma: no cover - durable VFS remains authoritative
+        logger.warning(
+            "vfs_live_sandbox_delete_failed", wf_id=wf_id, path=path, exc_info=True,
+        )
+
+
+async def _mirror_live_sandbox_rename(
+    tenant_id: str, wf_id: str, old_path: str, new_path: str,
+) -> None:
+    try:
+        await get_sandbox_manager().mirror_vfs_rename(
+            tenant_id, wf_id, old_path, new_path,
+        )
+    except Exception:  # pragma: no cover - durable VFS remains authoritative
+        logger.warning(
+            "vfs_live_sandbox_rename_failed",
+            wf_id=wf_id,
+            old_path=old_path,
+            new_path=new_path,
+            exc_info=True,
+        )
+
+
 @router.post("/upload", response_model=VfsUploadOut)
 async def upload_file(
     request: Request,
@@ -909,6 +937,7 @@ async def delete_vfs(
     deleted = await repo.delete_artifact(wf_id=wf_id, tenant=ctx.tenant_id, path=safe)
     if deleted == 0:
         raise HTTPException(status_code=404, detail="vfs_path_not_found")
+    await _mirror_live_sandbox_delete(ctx.tenant_id, wf_id, safe)
     return VfsDeleteOut(deleted=deleted)
 
 
@@ -958,4 +987,7 @@ async def rename_vfs(
         if "not found" in str(e):
             raise HTTPException(status_code=404, detail="vfs_path_not_found")
         raise HTTPException(status_code=400, detail="invalid_path")
+    await _mirror_live_sandbox_rename(
+        ctx.tenant_id, body.wf_id, old_path, new_path,
+    )
     return VfsRenameOut(path=new_path)

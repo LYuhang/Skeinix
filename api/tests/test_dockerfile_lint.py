@@ -25,8 +25,14 @@ def test_dockerfile_exists():
 def test_dockerfile_uses_python_3_10_or_later_base():
     lines = _dockerfile_instructions()
     from_lines = [ln for ln in lines if ln.upper().startswith("FROM ")]
-    assert len(from_lines) == 2, f"expected Codex and Python stages, got {from_lines}"
+    assert len(from_lines) == 5, (
+        "expected shared Node, Codex, Playwright, ELK, and Python stages, "
+        f"got {from_lines}"
+    )
     assert from_lines[0].startswith("FROM node:22.23.2-bookworm-slim@sha256:")
+    assert from_lines[1] == "FROM node-runtime-base AS codex-assets"
+    assert from_lines[2] == "FROM node-runtime-base AS playwright-assets"
+    assert from_lines[3] == "FROM node-runtime-base AS elk-assets"
     m = re.match(r"FROM\s+python:3\.(\d+)([-\w.]*)?@sha256:", from_lines[-1])
     assert m, (
         f"final stage must use a digest-pinned python:3.x base, got: {from_lines[-1]}"
@@ -39,12 +45,17 @@ def test_dockerfile_pins_and_verifies_external_runtime_assets():
     text = DOCKERFILE_PATH.read_text()
     assert "ARG CODEX_CLI_VERSION=0.147.0" in text
     assert "ARG NPM_VERSION=11.19.0" in text
+    assert "ARG PLAYWRIGHT_MCP_VERSION=0.0.79" in text
     assert 'test "$(npm --version)" = "${NPM_VERSION}"' in text
     assert '"@openai/codex@${CODEX_CLI_VERSION}"' in text
+    assert "api/playwright-runtime/package-lock.json" in text
+    assert "skeinix-playwright-mcp --version" in text
+    assert "--ignore-scripts" in text
     assert 'test "$(codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"' in text
     assert "api/elk-runtime/package-lock.json" in text
     assert "npm ci --prefix /opt/elk" in text
-    assert "COPY --from=runtime-assets /usr/local/bin/node" in text
+    assert "COPY --from=node-runtime-base /usr/local/bin/node" in text
+    assert "COPY --from=playwright-assets /opt/playwright-mcp" in text
     assert "VIBECANVAS_ELK_LAYOUT_SCRIPT=/opt/elk/elk-layout.mjs" in text
     assert '"engineVersion":"elkjs-0.12.0"' in text
     assert "ARG RUNSC_RELEASE=20260601.0" in text

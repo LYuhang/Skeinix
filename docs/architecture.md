@@ -160,14 +160,17 @@ lifecycle and resource management in
 
 The optional Chrome MV3 extension embeds Chat in a browser side panel and opens
 an authenticated WebSocket connection limited to the current browser-control
-session. Its service worker accepts a fixed set of commands and maps each one
-to a Chrome DevTools Protocol handler. Some handlers use predefined
-`Runtime.evaluate` expressions, but the backend cannot send arbitrary
-JavaScript for the extension to execute.
+session. The official Playwright MCP owns browser semantics in the Chat
+sandbox. The extension service worker is only its remote CDP data plane: a
+fixed five-command relay allow-list attaches approved tabs, forwards CDP
+messages, and reports tab lifecycle events. It has no Skeinix-specific DOM
+query/action protocol and accepts no arbitrary JavaScript command.
 
-The command vocabulary is defined in
-[`commands.ts`](../extension/src/shared/commands.ts), dispatch in
-[`router.ts`](../extension/src/cdp/router.ts), and Chrome integration in
+The relay allow-list and dispatch live in
+[`relay-executor.ts`](../extension/src/playwright/relay-executor.ts), the
+upstream-derived target model in
+[`browser-model.ts`](../extension/src/playwright/browser-model.ts), and Chrome
+integration in
 [`service-worker.ts`](../extension/src/service-worker.ts). Build-time origins
 and runtime sender checks share the allowlist in
 [`config.ts`](../extension/src/shared/config.ts).
@@ -213,10 +216,11 @@ and [approval repository](../api/src/vibecanvas_api/storage/hitl_repo.py).
 ### Agent tools and MCP integration
 
 Slash Commands activate a defined set of tools and instructions for a Chat.
-Every turn receives the core Platform MCP servers. Commands such as `/build`,
-`/task`, and `/browser` add the MCP server associated with that capability.
-`/plan` is available only with the LangChain runtime, and `/browser` is
-available only in the extension side panel.
+Every turn receives the core Platform MCP servers. Commands such as `/build`
+and `/task` add their Platform MCP capability. `/browser` instead starts the
+pinned official Playwright MCP in the Chat sandbox and gives it a scoped remote
+CDP connection to the extension. `/plan` is available only with the LangChain
+runtime, and `/browser` is available only in the extension side panel.
 
 Platform MCP servers expose backend capabilities through the Model Context
 Protocol. They remain in the control plane because their tools require
@@ -294,16 +298,23 @@ See the [Task API](../api/src/vibecanvas_api/routes/tasks.py),
 
 `/browser` is available only in a Chat opened from the extension side panel.
 The extension establishes an authenticated control channel, and the backend
-stores which Chat currently holds that browser session. Platform browser tools
-check this binding before sending a structured command to the extension. The
-extension performs the corresponding Chrome DevTools Protocol operation and
-returns the observed result.
+stores which Chat currently holds that browser session. The selected Agent
+Runtime starts the pinned official Playwright MCP inside the Chat sandbox.
+Playwright owns page snapshots, locators, actionability, waiting, dialogs, tabs,
+screenshots, and tool schemas. Its CDP connection is carried through a
+short-lived, Chat- and generation-fenced WebSocket capability to the extension;
+the browser never exposes a public debugging port.
 
 The backend path starts in the
-[browser Platform MCP tools](../api/src/vibecanvas_api/services/platform_mcp/browser_tools/)
-and reaches the live connection through the
-[browser host](../api/src/vibecanvas_api/browser/host.py) and
-[transport registry](../api/src/vibecanvas_api/browser/registry.py).
+[Runtime MCP descriptor](../api/src/vibecanvas_api/services/agent_runtime/mcp.py),
+passes through the authenticated
+[browser relay route](../api/src/vibecanvas_api/routes/browser.py), and reaches
+the selected extension through the
+[transport registry](../api/src/vibecanvas_api/browser/registry.py). The
+reviewed Agent-facing tool allow-list is centralized in
+[`playwright_contract.py`](../api/src/vibecanvas_api/browser/playwright_contract.py);
+unrestricted page evaluation and remote-code tools are rejected both when tools
+are listed and when a call is forwarded.
 
 ## Data and state management
 

@@ -41,3 +41,24 @@ async def test_sender_failure_is_uncertain_delivery_and_unregisters():
     with pytest.raises(TransportSendFailed):
         await reg.send_to("t:b1", "command")
     assert not reg.is_connected("t:b1")
+
+
+def test_multiple_browsers_resolve_by_derived_extension_session():
+    reg = TransportRegistry()
+
+    async def send_a(_raw: str): ...
+    async def send_b(_raw: str): ...
+
+    reg.register("tenant:user:browser-a", send_a, session_id="session-a")
+    reg.register("tenant:user:browser-b", send_b, session_id="session-b")
+
+    assert reg.find_for_user("tenant", "user") is None
+    assert (
+        reg.find_for_session("tenant", "user", "session-a")
+        == "tenant:user:browser-a"
+    )
+    assert (
+        reg.find_for_session("tenant", "user", "session-b")
+        == "tenant:user:browser-b"
+    )
+    assert reg.find_for_session("tenant", "user", "unknown") is None

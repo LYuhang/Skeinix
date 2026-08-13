@@ -6,15 +6,14 @@
  * and a translatable label per known tool; unknown tools fall back to a
  * generic wrench + the raw name (see `getToolMeta`).
  *
- * Keep this list additive: a metadata entry gives new tools a useful collapsed
- * chip before they need a dedicated renderer.
+ * Keep this list aligned with tools that can actually be emitted. Unknown or
+ * historical tools use the generic wrench and their raw name.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
   Bot,
   Camera,
   Clock,
-  Code,
   Columns,
   CornerDownLeft,
   Eye,
@@ -25,15 +24,12 @@ import {
   Image,
   ListChecks,
   ListFilter,
-  LogIn,
   MousePointerClick,
   MoveVertical,
   PenLine,
   Play,
   Power,
   Search,
-  Send,
-  Tag,
   Terminal,
   Type,
   Wrench,
@@ -64,25 +60,27 @@ const TOOL_META: Record<string, ToolMeta> = {
   render_interactive: { icon: Eye, labelKey: 'tool.meta.render_interactive' },
   // ── Browser-automation tools ───────────────────────────────────────────
   browser_navigate: { icon: Globe, labelKey: 'tool.meta.browser_navigate' },
+  browser_navigate_back: { icon: CornerDownLeft, labelKey: 'tool.meta.browser_navigate_back' },
   browser_snapshot: { icon: Eye, labelKey: 'tool.meta.browser_snapshot' },
-  browser_read_text: { icon: FileText, labelKey: 'tool.meta.browser_read_text' },
-  browser_read_fields: { icon: ListChecks, labelKey: 'tool.meta.browser_read_fields' },
-  browser_query: { icon: Search, labelKey: 'tool.meta.browser_query' },
-  browser_get_attribute: { icon: Tag, labelKey: 'tool.meta.browser_get_attribute' },
-  browser_get_html: { icon: Code, labelKey: 'tool.meta.browser_get_html' },
+  browser_find: { icon: Search, labelKey: 'tool.meta.browser_find' },
+  browser_console_messages: { icon: Terminal, labelKey: 'tool.meta.browser_console_messages' },
+  browser_network_requests: { icon: ListFilter, labelKey: 'tool.meta.browser_network_requests' },
+  browser_network_request: { icon: Globe, labelKey: 'tool.meta.browser_network_request' },
   browser_take_screenshot: { icon: Camera, labelKey: 'tool.meta.browser_take_screenshot' },
-  browser_scroll: { icon: MoveVertical, labelKey: 'tool.meta.browser_scroll' },
   browser_wait_for: { icon: Clock, labelKey: 'tool.meta.browser_wait_for' },
-  browser_list_tabs: { icon: ListFilter, labelKey: 'tool.meta.browser_list_tabs' },
-  browser_tab: { icon: Columns, labelKey: 'tool.meta.browser_tab' },
+  browser_tabs: { icon: Columns, labelKey: 'tool.meta.browser_tabs' },
+  browser_close: { icon: Power, labelKey: 'tool.meta.browser_close' },
+  browser_resize: { icon: Columns, labelKey: 'tool.meta.browser_resize' },
   browser_click: { icon: MousePointerClick, labelKey: 'tool.meta.browser_click' },
+  browser_drag: { icon: MoveVertical, labelKey: 'tool.meta.browser_drag' },
+  browser_drop: { icon: MoveVertical, labelKey: 'tool.meta.browser_drop' },
+  browser_hover: { icon: MousePointerClick, labelKey: 'tool.meta.browser_hover' },
   browser_type: { icon: Type, labelKey: 'tool.meta.browser_type' },
-  browser_fill: { icon: PenLine, labelKey: 'tool.meta.browser_fill' },
+  browser_fill_form: { icon: PenLine, labelKey: 'tool.meta.browser_fill_form' },
+  browser_file_upload: { icon: FilePen, labelKey: 'tool.meta.browser_file_upload' },
+  browser_handle_dialog: { icon: ListChecks, labelKey: 'tool.meta.browser_handle_dialog' },
   browser_select_option: { icon: ListFilter, labelKey: 'tool.meta.browser_select_option' },
   browser_press_key: { icon: CornerDownLeft, labelKey: 'tool.meta.browser_press_key' },
-  browser_submit: { icon: Send, labelKey: 'tool.meta.browser_submit' },
-  browser_check_login: { icon: LogIn, labelKey: 'tool.meta.browser_check_login' },
-  browser_start_session: { icon: Power, labelKey: 'tool.meta.browser_start_session' },
 };
 
 /**

@@ -12,7 +12,6 @@ from vibecanvas_api.auth.deps import AuthContext
 from vibecanvas_api.services.platform_mcp import server as platform_server
 from vibecanvas_api.services.platform_mcp.capability import platform_mcp_policy
 from vibecanvas_api.services.platform_mcp.server import (
-    BROWSER_MCP,
     BUILD_MCP,
     CONFIG_MCP,
     DEPLOYMENT_MCP,
@@ -131,7 +130,6 @@ async def test_management_catalog_matches_every_live_platform_registry() -> None
         "deployment": DEPLOYMENT_MCP,
         "knowledge": KNOWLEDGE_MCP,
         "build": BUILD_MCP,
-        "browser": BROWSER_MCP,
         "plan": PLAN_MCP,
         "diagram": DIAGRAM_MCP,
     }
@@ -284,17 +282,6 @@ async def test_diagram_platform_mcp_exports_closed_loop_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_browser_platform_mcp_preserves_hitl_parameters() -> None:
-    tools = await _tools(BROWSER_MCP)
-    click = tools["browser_click"]
-    assert click.inputSchema["properties"]["require_user_auth"]["default"] is True
-    assert click.inputSchema["properties"]["approval_reason"]["default"] == ""
-    assert click.annotations.destructiveHint is True
-    assert tools["browser_read_text"].annotations.readOnlyHint is True
-    assert "browser_session_status" in tools
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("server_name", "server"),
     [
@@ -305,7 +292,6 @@ async def test_browser_platform_mcp_preserves_hitl_parameters() -> None:
         ("deployment", DEPLOYMENT_MCP),
         ("knowledge", KNOWLEDGE_MCP),
         ("build", BUILD_MCP),
-        ("browser", BROWSER_MCP),
         ("plan", PLAN_MCP),
         ("diagram", DIAGRAM_MCP),
     ],

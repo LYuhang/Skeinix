@@ -394,10 +394,10 @@ def test_browser_mode_does_not_change_system_prompt():
     assert "browser_snapshot" not in p
 
 
-def test_browser_tools_are_supplied_only_by_platform_mcp():
+def test_browser_tools_are_supplied_only_by_official_playwright_mcp():
     from vibecanvas_api.agents.tools import build_tools
-    from vibecanvas_api.services.platform_mcp.browser_tools import BROWSER_TOOLS
-    bnames = {t.name for t in BROWSER_TOOLS}
+    from vibecanvas_api.browser.playwright_contract import PLAYWRIGHT_AGENT_TOOL_SET
+    bnames = set(PLAYWRIGHT_AGENT_TOOL_SET)
     def names(ts):
         return {t.name for t in ts}
     assert not (bnames & names(build_tools(set())))

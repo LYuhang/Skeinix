@@ -70,6 +70,9 @@ class _FakeBroker:
     async def wait_connected(self) -> None:
         return None
 
+    def is_connected(self) -> bool:
+        return not self.closed
+
     async def send(self, message: dict) -> None:
         self.turn_id = str((message.get("request") or {}).get("turn_id") or "")
 
@@ -82,6 +85,21 @@ class _FakeBroker:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _ResetOnSecondSendBroker(_FakeBroker):
+    instances: list["_ResetOnSecondSendBroker"] = []
+
+    def __init__(self, socket_path: str) -> None:
+        super().__init__(socket_path)
+        self.send_count = 0
+        self.__class__.instances.append(self)
+
+    async def send(self, message: dict) -> None:
+        self.send_count += 1
+        if len(self.__class__.instances) == 1 and self.send_count == 2:
+            raise ConnectionResetError("Connection lost")
+        await super().send(message)
 
 
 class _BlockingResultBroker(_FakeBroker):
@@ -129,6 +147,44 @@ async def test_main_runtime_process_is_reused_across_turns(
     assert "allow_hosts" not in provider.launch_kwargs[0]
     await session.close()
     assert provider.stops == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_runtime_transport_is_restored_before_user_turn_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    _ResetOnSecondSendBroker.instances = []
+    monkeypatch.setattr(manager_module, "BusBroker", _ResetOnSecondSendBroker)
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        expose_run=False,
+    )
+
+    first = [
+        event
+        async for event in session.run_agent_runtime_stream(
+            {"turn_id": "turn-1", "runtime_type": "langchain"}
+        )
+    ]
+    second = [
+        event
+        async for event in session.run_agent_runtime_stream(
+            {"turn_id": "turn-2", "runtime_type": "langchain"}
+        )
+    ]
+
+    assert first[0]["turn_id"] == "turn-1"
+    assert second[0]["turn_id"] == "turn-2"
+    assert provider.launches == 2
+    assert provider.stops == 1
+    assert len(_ResetOnSecondSendBroker.instances) == 2
+    await session.close()
 
 
 @pytest.mark.asyncio
@@ -323,6 +379,47 @@ async def test_codex_account_runtime_is_reused_until_session_close(
 
     await session.close()
     assert provider.stops == 1
+
+
+def test_codex_runtime_mounts_resolved_playwright_mcp_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    provider = _FakeProvider()
+    package_root = tmp_path / "playwright-mcp"
+    package_root.mkdir()
+    launcher = package_root / "launch.cjs"
+    launcher.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    shim_root = tmp_path / "bin"
+    shim_root.mkdir()
+    shim = shim_root / "skeinix-playwright-mcp"
+    shim.symlink_to(launcher)
+
+    monkeypatch.setattr(manager_module, "resolve_codex_executable", lambda: "/bin/true")
+    monkeypatch.setattr(
+        manager_module,
+        "codex_cli_readonly_root",
+        lambda _executable: "/bin",
+    )
+    monkeypatch.setattr(manager_module, "codex_cli_node_runtime", lambda _path: None)
+    monkeypatch.setenv("PLAYWRIGHT_MCP_COMMAND", str(shim))
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        expose_run=False,
+    )
+
+    _rw_binds, ro_binds, _env = session._agent_runtime_launch_spec(
+        runtime_type="codex",
+        uses_codex_account=False,
+    )
+
+    assert str(package_root) in ro_binds
 
 
 @pytest.mark.asyncio

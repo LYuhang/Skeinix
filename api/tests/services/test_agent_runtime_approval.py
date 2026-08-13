@@ -4,9 +4,10 @@ from vibecanvas_api.services.agent_runtime.approval import (
 )
 
 
-def test_browser_tab_read_is_not_an_approval_candidate() -> None:
-    assert not is_pre_tool_approval_candidate("browser_tab", {"action": "list"})
-    assert is_pre_tool_approval_candidate("browser_tab", {"action": "switch"})
+def test_official_browser_tabs_read_is_not_an_approval_candidate() -> None:
+    assert not is_pre_tool_approval_candidate("browser_tabs", {"action": "list"})
+    assert is_pre_tool_approval_candidate("browser_tabs", {"action": "select"})
+    assert not is_pre_tool_approval_candidate("browser_tab", {"action": "switch"})
 
 
 def test_agent_mode_defaults_approval_capable_tool_to_wait() -> None:

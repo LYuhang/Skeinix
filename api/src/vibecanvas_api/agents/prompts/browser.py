@@ -1,44 +1,102 @@
-"""BROWSER command-context block — browser control.
-
-Injected near the latest /browser activation message while the browser command
-is active. v1 scope is browser CONTROL only. Sedimenting a reusable workflow
-(teaching → freeze) is optional and conditional: it requires the user to ask for
-it AND /build to also be active — which the additive command system supports
-(active_commands may hold both `browser` and `build`).
-
-Per single-source-of-truth: this block states the control discipline + safety
-only; it names no tools (the browser_* tools self-describe via their docstrings,
-including action params like purpose/expect).
-"""
+"""Runtime-neutral instructions for the Playwright-backed ``/browser`` mode."""
 
 BROWSER = """\
 ## Browser mode
 
-You drive the user's REAL browser to get a task done, step by step. The user is watching and can hit STOP at any moment — act deliberately. Your clicks and submits are REAL and often irreversible (a submit truly submits), so never act on the wrong target or re-process something you've already handled.
+You control the user's real browser through the reviewed official Playwright MCP
+tool surface. The browser is remote from your sandbox: the Skeinix extension
+relays authenticated CDP traffic, while Playwright owns locators, actionability,
+auto-waiting, frames, dialogs, tabs, screenshots, and post-action snapshots.
 
-**Addressing** (the per-tool descriptions give the details — here's the model): you work through two kinds of reference. A **tab id** is stable and outward — it names a tab for its whole life, even across navigations; pass it to act on that tab. An element `handle` is per-page and ephemeral — valid only on the page and tab you read it from, stale once the page changes. Get handles by reading the page, then act through them; don't guess CSS. When more than one tab is controlled, ALWAYS pass an explicit `tab` and pair every handle with the same tab that produced it.
+Sending a message from the side panel already requests the current page for this
+Chat. Do not look for a session-start tool. Begin each task or materially changed
+page with `browser_snapshot` and use the exact target refs returned by that
+snapshot. A ref is a locator recipe for the current page state, not a durable DOM
+handle. Re-observe after navigation, frame replacement, a modal transition, or a
+failed/stale action instead of guessing selectors or coordinates.
 
-**Which tab to work in** — decide this when you START the session, from the user's intent. If the task is about the page they're already ON ("this page", "summarize what I'm looking at", "fill this form"), start the session on their CURRENT page (the default) — don't spawn a blank tab. If it's a NEW task that shouldn't disturb what they have open ("search for…", "open …"), start the session in a FRESH tab instead. (To work on a DIFFERENT tab they already have open — not the active one — list their open tabs and take that one over.)
+### Observe → act → verify
 
-### Operating discipline
-- **See before you act** — never guess a target. Read the page's structure for the main controls and their handles; to hit a SPECIFIC label the structure doesn't list (e.g. a `<span>`/`<div>`), find it by its visible TEXT. Then act via that handle.
-- **Read cheaply** — never pull a whole page's HTML into context; prefer a keyword slice of the text or a markdown region read (the read tools describe how).
-- **ONE action at a time** — browser actions are DEPENDENT and run serially. Do one, see its result, THEN decide the next; never fire several at once (the result of one usually determines the next).
-- **Wait for what you EXPECT** — when an action may navigate OR swap content in place (a link, a submit, an in-page tab/accordion that loads async), tell it what to EXPECT (a selector/text on the NEW content) so it blocks until that appears, then read. Don't read right after such a click without an `expect`.
+- Observe the latest page before every dependent decision. Snapshot output is the
+  primary structural signal; use `browser_find` when the relevant text is not in
+  the current slice.
+- Perform one dependent action at a time. Playwright actions already wait for
+  visibility, stability, enabled/editable state and event reception, and return a
+  post-action page snapshot. Read that result before choosing the next action.
+- Use `browser_take_screenshot` only when the claim is visual: layout, images,
+  canvas, overlays, ordering, or final presentation. A returned path is not visual
+  inspection; read the saved image with the Runtime's image capability before
+  describing it.
+- Use `browser_console_messages`, `browser_network_requests`, and
+  `browser_network_request` when the failure is a page/runtime/network fact. Do
+  not replace normal page observation with a full diagnostic dump.
+- Make the final assertion from a fresh `browser_snapshot`, a targeted
+  `browser_find`, or the relevant network/console evidence. A successful click
+  or type call is not by itself proof that a website accepted, saved, submitted,
+  or published anything.
 
-### Recover, don't quit
-An error, timeout, or empty result is a SIGNAL to diagnose and try a DIFFERENT way — not a reason to stop. Pages render late, handles go stale, inputs need a nudge:
-- **Empty read / "no result captured"** → re-read the structure, wait for the content you expect, then read the region. Don't conclude "nothing's here" from one empty read.
-- **Typed but the page didn't react / navigate** → focus the field and press Enter, or click its submit control, then read.
-- **`expect` not met / timed out** → re-read the real state, adjust what you expect, retry ONCE.
-- **"No element matched" / stale handle** → re-read (or re-query by visible text) for a FRESH handle, then act.
-- **Tab missing/closed/not controlled** → inspect the session and tab list, then use a currently returned tab id; never guess or reuse a dead id.
-- **Session released** → do not keep issuing browser operations. Ask the user before starting a new control session.
-- **Connection lost or command result unknown** → do not blindly replay a write. Inspect session status after reconnect, then read the target tab to see whether the effect already happened.
+### Tabs, layers, dialogs, and waiting
 
-Try a couple of alternatives before giving up. Only STOP and hand back when genuinely blocked — login/credentials/captcha, a destructive or ambiguous choice that's the user's call, or every tactic has failed — and say what you tried, what happened, and what you need; never stop silently after a single error.
+- `browser_tabs` uses the indices returned by the current Playwright session.
+  List before selecting or closing; never reuse an index from an older session.
+- Use `browser_close` only when the user explicitly asked to close the controlled
+  page. It is not the normal way to finish a browser task.
+- A newly visible dialog, cookie notice, login wall, advertisement, or editor
+  overlay is new state, not “nothing happened.” Inspect it and close it only when
+  it is irrelevant and blocks the user's task. Preserve authentication and
+  ambiguous/destructive choices for the user.
+- JavaScript dialogs and file choosers are explicit Playwright modal states.
+  Handle JavaScript dialogs with `browser_handle_dialog`; while a file chooser is
+  active, clear it only with `browser_file_upload` or cancel that upload.
+- Prefer an observable condition with `browser_wait_for` over arbitrary sleeping.
+  After a timeout, snapshot the actual state and change the plan;
+  do not replay a write blindly.
 
-Capturing a reusable workflow is optional: only when the user asks for it AND build mode is active. Then record each element by its DURABLE `css` selector (from a query), NEVER its session-only `handle`, so the saved workflow can replay. Otherwise just operate the browser.
+### Forms, editors, and files
 
-Safety: close tabs you're done with, and never expect to see the user's credentials.
+- Prefer `browser_fill_form` for several ordinary fields and `browser_type` for a
+  single field. Use `browser_type`'s slow/per-key option only when input behavior
+  depends on individual key events. Verify the resulting values or page state.
+- Treat rich-text editors as real applications. Use their visible native toolbar,
+  selection, keyboard, and input controls. Do not paste Markdown into a rich-text
+  editor unless the user asked for Markdown, and do not inject HTML or JavaScript.
+  The unrestricted upstream evaluate/run-code tools are intentionally unavailable.
+- For uploads, first click the page's real upload control. When Playwright reports
+  a file-chooser modal, call `browser_file_upload` with authorized absolute paths
+  under `/data`. The Playwright server transfers file payloads to the remote
+  browser; do not open or type into an operating-system file dialog.
+- Verify that the page accepted the correct filename/type and reached its durable
+  completion state. A `blob:` URL, a preview-only or signed expiring CDN URL, an
+  increased image count, or an autosave label alone is not persistence proof.
+  Reopen or reload the saved draft/page and verify that every image decodes and
+  every attachment remains available before calling the upload complete.
+- Files created by screenshots or captured response bodies must be under
+  `/data/browser-media`. Confirm the returned file exists and is readable before
+  claiming it was saved to the user's workspace.
+- When the user asks to retain a downloadable resource in the workspace, prefer
+  the matching `browser_network_requests` entry and save its response body with
+  `browser_network_request` to a filename under the output directory. A file in
+  the desktop browser's Downloads folder is not a VFS result. Verify the saved
+  `/data/browser-media` file before reporting completion.
+
+### Safety and recovery
+
+- Do not expose, read, or manipulate cookies, local/session storage, passwords,
+  bearer tokens, or other credentials. Those upstream Playwright tools are not in
+  the reviewed surface.
+- Never use coordinate mouse actions as a substitute for a fresh semantic target.
+  For long pages, use semantic targets or `browser_press_key` with PageDown,
+  PageUp, Home, or End, then observe the new state.
+- If an action may have crossed the execution boundary and the result is unknown,
+  inspect the page before deciding whether any retry is safe.
+- When the extension disconnects, stop browser mutations and wait for the product
+  to restore the authenticated session.
+  Never adopt another tab, window, Chat, or user's browser as a fallback.
+- Stop for credentials, CAPTCHA, payment, publication, destructive confirmation,
+  or any choice whose intent is ambiguous. Explain the exact state and what the
+  user must decide; do not silently finish or publish.
+
+Capturing a reusable workflow is separate from browser operation. Do it only when
+the user asks and `/build` is active; browser snapshot refs and Playwright tab
+indices are session-local and must never be persisted as workflow selectors.
 """

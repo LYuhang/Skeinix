@@ -108,7 +108,10 @@ export function EmbedChatPage() {
   const setLastWf = useUIStore((s) => s.setLastActiveWorkflowId);
   const setActiveChatId = useUIStore((s) => s.setActiveChatId);
   const authenticated = useAuthStore((s) => s.authenticated);
+  const sessionAudience = useAuthStore((s) => s.sessionAudience);
   const bootstrap = useAuthStore((s) => s.bootstrap);
+  const extensionAuthenticated =
+    authenticated && sessionAudience === 'extension';
 
   const chatFromUrl = params.get('chat') ?? undefined;
   const [chat, setChat] = useState<string | undefined>(chatFromUrl);
@@ -123,13 +126,13 @@ export function EmbedChatPage() {
   const [binding, setBinding] = useState(true);
   const [bindingFailed, setBindingFailed] = useState(false);
   const [boundWf, setBoundWf] = useState<string | null>(null);
-  const browserBootstrap = useBrowserChatBootstrap(authenticated);
+  const browserBootstrap = useBrowserChatBootstrap(extensionAuthenticated);
   const wf = wfParam ?? browserBootstrap.data?.carrier_scope_id;
   // A post-tool Continue gate can outlive its originating Runtime Turn. On a
   // cold/reloaded Sidepanel there may therefore be no active Run to discover;
   // resolve the latest durable browser Chat before creating a new draft.
   const browserSessions = useChatSessions(
-    seeded && authenticated ? (wf ?? null) : null,
+    seeded && extensionAuthenticated ? (wf ?? null) : null,
     'browser',
   );
   const trustedExtensionOrigin = extensionOrigin();
@@ -157,7 +160,7 @@ export function EmbedChatPage() {
   }, [wf, chat, setLastWf, setActiveChatId]);
 
   useEffect(() => {
-    if (!wf || chat || !seeded || !authenticated) return;
+    if (!wf || chat || !seeded || !extensionAuthenticated) return;
     const sessionsReady =
       browserSessions.data !== undefined ||
       browserSessions.isFetched ||
@@ -183,7 +186,7 @@ export function EmbedChatPage() {
     chat,
     seeded,
     setActiveChatId,
-    authenticated,
+    extensionAuthenticated,
     wf,
   ]);
 
@@ -219,12 +222,12 @@ export function EmbedChatPage() {
   );
 
   useEffect(() => {
-    if (!seeded || !authenticated || !wf || !browserId || boundWf === wf) return;
+    if (!seeded || !extensionAuthenticated || !wf || !browserId || boundWf === wf) return;
     queueMicrotask(() => {
       setBoundWf(wf);
       void bindToShell(wf, browserId);
     });
-  }, [authenticated, bindToShell, boundWf, browserId, seeded, wf]);
+  }, [bindToShell, boundWf, browserId, extensionAuthenticated, seeded, wf]);
 
   // Listen for the shell's BINDING reply, redeem any fresh one-time exchange
   // code, and proceed to render the chat.
@@ -311,36 +314,39 @@ export function EmbedChatPage() {
         return;
       }
       if (!isBindingMessage(e.data)) return;
-      const {
-        browser_id,
-        chat_id,
-        exchangeCode,
-        agentSettings,
-        browser_control_chat_id,
-        browser_control_available_here,
-      } = e.data;
-      if (typeof browser_id === 'string' && browser_id) setBrowserId(browser_id);
-      if (exchangeCode) {
-        void bootstrap(exchangeCode).then(() => {
-          if (useAuthStore.getState().authenticated) {
-            postToExtension({ type: 'AUTH_EXCHANGE_CONSUMED' });
-          }
-        });
-      }
-      // Relayed agent settings (entry A and B): seed the credential/model store.
-      // Guarded so a settings-less BINDING (cold entry B) leaves the embed's
-      // own picked settings untouched.
-      if (agentSettings) {
-        seedAgentSettings(agentSettings);
-      }
-      // A BINDING may still carry a chat_id (legacy/defensive); adopt it so the
-      // embed continues that chat. Guarded so a relay-less BINDING (the normal
-      // cold entry B) never clobbers a freshly-minted chat.
-      if (chat_id) setChat((prev) => prev ?? chat_id);
-      setBrowserControlChatId(browser_control_chat_id || '');
-      setBrowserControlAvailableHere(browser_control_available_here === true);
-      setBindingFailed(false);
-      setBinding(false);
+      const received = e.data;
+      void (async () => {
+        if (received.exchangeCode) {
+          await bootstrap(received.exchangeCode);
+        }
+        const auth = useAuthStore.getState();
+        if (!auth.authenticated || auth.sessionAudience !== 'extension') {
+          // A normal Web Session can also be visible to this iframe. It must
+          // never race the one-time exchange and mint a browser token: browser
+          // control is bound exclusively to the derived Extension Session.
+          setBinding(true);
+          postToExtension({ type: 'REQUEST_AUTH_REFRESH' });
+          return;
+        }
+        if (received.exchangeCode) {
+          postToExtension({ type: 'AUTH_EXCHANGE_CONSUMED' });
+        }
+        if (typeof received.browser_id === 'string' && received.browser_id) {
+          setBrowserId(received.browser_id);
+        }
+        // Relayed agent settings (entry A and B): seed the credential/model
+        // store only after the Extension Session is authoritative.
+        if (received.agentSettings) {
+          seedAgentSettings(received.agentSettings);
+        }
+        if (received.chat_id) setChat((prev) => prev ?? received.chat_id);
+        setBrowserControlChatId(received.browser_control_chat_id || '');
+        setBrowserControlAvailableHere(
+          received.browser_control_available_here === true,
+        );
+        setBindingFailed(false);
+        setBinding(false);
+      })();
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -362,15 +368,15 @@ export function EmbedChatPage() {
   }, [postToExtension, seeded]);
 
   useEffect(() => {
-    if (!seeded || authenticated || window.parent === window) return;
+    if (!seeded || extensionAuthenticated || window.parent === window) return;
     postToExtension({ type: 'REQUEST_AUTH_REFRESH' });
-  }, [authenticated, postToExtension, seeded]);
+  }, [extensionAuthenticated, postToExtension, seeded]);
 
   useEffect(() => {
-    if (!binding || !seeded || !authenticated) return;
+    if (!binding || !seeded || !extensionAuthenticated) return;
     const timer = window.setTimeout(() => setBindingFailed(true), 12_000);
     return () => window.clearTimeout(timer);
-  }, [authenticated, binding, seeded]);
+  }, [binding, extensionAuthenticated, seeded]);
 
   const retryBinding = useCallback(() => {
     setBinding(true);
@@ -394,6 +400,15 @@ export function EmbedChatPage() {
   // embed (it receives a partitioned HttpOnly Session cookie).
   if (!authenticated) {
     return <EmbedLogin />;
+  }
+
+  if (!extensionAuthenticated) {
+    return (
+      <div className="flex h-screen items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+        <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        {t('embed.establishing_extension_session', 'Establishing the secure browser session…')}
+      </div>
+    );
   }
 
   if (browserBootstrap.isLoading || !wf || !chat) {

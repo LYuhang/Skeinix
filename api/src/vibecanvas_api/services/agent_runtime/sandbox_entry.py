@@ -371,6 +371,7 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
         """Publish metering facts without granting the sandbox database access."""
         await _emit(channel, event("usage", dict(payload)))
 
+    completed = False
     try:
         await _emit(channel, event("runtime.started", {}))
         # Runtime-private state is created by the adapter and never projected
@@ -468,12 +469,17 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
             await _emit(channel, event("projection", payload))
 
         await _emit(channel, event("runtime.completed", {}))
-        await channel.send({"type": MSG_RUNTIME_RESULT})
+        completed = True
     finally:
         clear_stores(expected_checkpointer=checkpointer)
         state_client.fail_all("runtime turn completed")
         control_task.cancel()
         await asyncio.gather(control_task, return_exceptions=True)
+    if completed:
+        # The terminal boundary means the resident process is ready to receive
+        # its next Turn, not merely that model output has ended.  Publish it
+        # only after the Turn-local channel reader has fully stopped.
+        await channel.send({"type": MSG_RUNTIME_RESULT})
 
 
 async def _run_background_subagent(

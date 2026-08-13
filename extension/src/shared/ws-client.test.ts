@@ -91,3 +91,39 @@ describe("credential-safe WebSocket handshake", () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 });
+
+describe("Playwright relay dispatch", () => {
+  it("dispatches relay frames through the only browser-control data plane", () => {
+    class FakeWebSocket {
+      static OPEN = 1;
+      static instance: FakeWebSocket;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      readyState = 1;
+      constructor() {
+        FakeWebSocket.instance = this;
+      }
+      close() {}
+      send() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const client = new WsClient("wss://app.example/api/v1/browser/ws");
+    const relay = vi.fn();
+    client.onPlaywrightRelay(relay);
+    client.connect();
+    FakeWebSocket.instance.onmessage?.({
+      data: JSON.stringify({
+        v: 1,
+        kind: "playwright_relay",
+        id: "pw_1",
+        channel: "chat:1",
+        transport: "browser:1",
+        data: { action: "request" },
+        producer: null,
+      }),
+    } as MessageEvent);
+
+    expect(relay).toHaveBeenCalledOnce();
+  });
+});

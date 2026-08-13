@@ -36,8 +36,6 @@ from vibecanvas_api.authorization.types import (
     ResourceRef,
     ResourceType,
 )
-from vibecanvas_api.browser.agent_channel import BrowserBinding
-from vibecanvas_api.browser.registry import registry as browser_registry
 from vibecanvas_api.config import config
 from vibecanvas_api.diagrams.mcp_contract import (
     diagram_input_schema,
@@ -49,7 +47,6 @@ from vibecanvas_api.services.platform_mcp.authorization import (
     platform_resource_tool_action,
     prepare_platform_tool,
 )
-from vibecanvas_api.services.platform_mcp.browser_tools import BROWSER_TOOLS
 from vibecanvas_api.services.platform_mcp.build_tools import BUILD_TOOLS
 from vibecanvas_api.services.platform_mcp.build_tools.workflow_context import (
     create_workflow,
@@ -88,7 +85,6 @@ PLATFORM_MCP_PATHS = {
     "deployment": "/api/internal/mcp/deployment",
     "knowledge": "/api/internal/mcp/knowledge",
     "build": "/api/internal/mcp/build",
-    "browser": "/api/internal/mcp/browser",
     "plan": "/api/internal/mcp/plan",
     "diagram": "/api/internal/mcp/diagram",
 }
@@ -243,16 +239,6 @@ async def _context_for(capability: PlatformMcpCapability) -> AgentContext:
         current_workflow_id = binding["current_workflow_id"]
 
     workflow_repo = SyncWorkflowRepo(capability.user_id)
-    browser = None
-    if capability.server == "browser":
-        transport_id = browser_registry.find_for_user(
-            capability.tenant_id, capability.user_id
-        )
-        if transport_id is not None:
-            browser = BrowserBinding(
-                transport_id=transport_id,
-                channel=f"chat:{capability.chat_id}",
-            )
 
     return AgentContext(
         # Never preload selected workflow content before the concrete tool
@@ -282,11 +268,10 @@ async def _context_for(capability: PlatformMcpCapability) -> AgentContext:
         authorization_privileged_actions=tuple(identity.privileged_actions),
         authorization_privileged_expires_at=identity.privileged_expires_at,
         runtime_session_id=capability.runtime_session_id,
-        surface="browser" if capability.server == "browser" else "chat",
+        surface="chat",
         approval_mode=capability.approval_mode,
         runtime_location="platform_mcp",
         current_workflow_id=current_workflow_id,
-        browser=browser,
     )
 
 
@@ -391,11 +376,6 @@ def _annotations(name: str) -> types.ToolAnnotations:
         "list_",
         "get_",
         "check_",
-        "browser_read_",
-        "browser_query",
-        "browser_snapshot",
-        "browser_take_screenshot",
-        "browser_session_status",
     )
     read_only = name.startswith(read_prefixes) or name in {
         "task_list",
@@ -414,11 +394,6 @@ def _annotations(name: str) -> types.ToolAnnotations:
     # Hints improve third-party client UX; security decisions still use the
     # backend-owned approval policy and concrete CallTool arguments.
     destructive = name in {
-        "browser_click",
-        "browser_type",
-        "browser_select_option",
-        "browser_press_key",
-        "browser_end_session",
         "task_create_scheduled_run",
         "task_update_scheduled_run",
         "task_delete_scheduled_run",
@@ -438,7 +413,7 @@ def _annotations(name: str) -> types.ToolAnnotations:
         readOnlyHint=read_only and not mutates_files,
         destructiveHint=destructive,
         idempotentHint=read_only or mutates_files,
-        openWorldHint=name.startswith("browser_"),
+        openWorldHint=False,
     )
 
 
@@ -487,12 +462,6 @@ def _required_tool_actions(server: str, tool_name: str) -> frozenset[str]:
             "interactive_artifact:create",
             "vfs_path:view",
         })
-    elif server == "browser" and tool_name.startswith("browser_"):
-        required.add("browser_binding:use")
-        if tool_name in {"browser_start_session", "browser_end_session"}:
-            required.add("browser_binding:update")
-        if tool_name == "browser_fetch_resource":
-            required.add("vfs_path:update")
     elif server == "plan" and tool_name == "create_execution_plan":
         required.update({"execution_plan:create", "vfs_path:view"})
     elif server == "diagram":
@@ -747,7 +716,6 @@ BUILD_MCP = _build_server(
     "build",
     [set_workflow, create_workflow, *BUILD_TOOLS, *RUN_TOOLS],
 )
-BROWSER_MCP = _build_server("browser", BROWSER_TOOLS)
 PLAN_MCP = _build_server("plan", PLAN_TOOLS)
 DIAGRAM_MCP = _build_server("diagram", DIAGRAM_TOOLS)
 CONFIG_MCP = _build_server("config", CONFIG_TOOLS)
@@ -762,7 +730,6 @@ _PLATFORM_MCP_TOOLSETS: dict[str, tuple[Any, ...]] = {
     "deployment": tuple(DEPLOYMENT_MCP_TOOLS),
     "knowledge": tuple(KNOWLEDGE_MCP_TOOLS),
     "build": (set_workflow, create_workflow, *BUILD_TOOLS, *RUN_TOOLS),
-    "browser": tuple(BROWSER_TOOLS),
     "plan": tuple(PLAN_TOOLS),
     "diagram": tuple(DIAGRAM_TOOLS),
 }
@@ -810,7 +777,6 @@ def platform_mcp_apps() -> dict[str, Any]:
         "deployment": DEPLOYMENT_MCP.streamable_http_app(),
         "knowledge": KNOWLEDGE_MCP.streamable_http_app(),
         "build": BUILD_MCP.streamable_http_app(),
-        "browser": BROWSER_MCP.streamable_http_app(),
         "plan": PLAN_MCP.streamable_http_app(),
         "diagram": DIAGRAM_MCP.streamable_http_app(),
     }
@@ -827,7 +793,6 @@ async def enter_platform_mcp_lifespans(stack) -> None:
         DEPLOYMENT_MCP,
         KNOWLEDGE_MCP,
         BUILD_MCP,
-        BROWSER_MCP,
         PLAN_MCP,
         DIAGRAM_MCP,
     ):

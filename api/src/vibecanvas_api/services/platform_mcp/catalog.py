@@ -60,13 +60,6 @@ PLATFORM_MCP_METADATA: Final[dict[str, dict[str, object]]] = {
         "activation_mode": "command",
         "runtime_types": ["langchain", "codex"],
     },
-    "browser": {
-        "name": "Browser",
-        "description": "Control the user's connected browser, tabs, pages, and authenticated resources.",
-        "activation": "/browser",
-        "activation_mode": "command",
-        "runtime_types": ["langchain", "codex"],
-    },
     "plan": {
         "name": "Execution Plan",
         "description": "Validate and submit a durable dynamic execution plan for LangChain subagents.",

@@ -143,10 +143,30 @@ class BusBroker:
             raise RuntimeError("BusBroker.wait_connected() called before start()")
         await self._conn
 
+    def is_connected(self) -> bool:
+        """Return whether the accepted full-duplex connection is still usable.
+
+        A resident runsc process can briefly remain observable after its guest
+        channel has reached EOF.  Process liveness alone therefore is not a
+        sufficient reuse signal for an interactive Runtime.  StreamReader gets
+        EOF notifications from the transport even when no caller is currently
+        draining ``messages()``, so this check is both non-blocking and able to
+        reject that half-dead state before the next Turn writes to it.
+        """
+        if self._conn is None or not self._conn.done() or self._conn.cancelled():
+            return False
+        if self._writer is None or self._writer.is_closing():
+            return False
+        try:
+            reader = self._conn.result()
+        except (asyncio.CancelledError, Exception):
+            return False
+        return not reader.at_eof()
+
     async def send(self, message: dict) -> None:
         """Send one framed host→sandbox message on the accepted connection."""
         await self.wait_connected()
-        if self._writer is None:
+        if not self.is_connected() or self._writer is None:
             raise ConnectionError("sandbox bus connection is not writable")
         self._writer.write(encode_frame(message))
         await self._writer.drain()

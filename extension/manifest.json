@@ -34,7 +34,7 @@
       "world": "ISOLATED"
     }
   ],
-  "permissions": ["offscreen", "sidePanel", "storage", "debugger", "tabs", "scripting"],
+  "permissions": ["offscreen", "sidePanel", "storage", "debugger", "tabs", "scripting", "downloads", "clipboardWrite"],
   "externally_connectable": {
     "matches": []
   }

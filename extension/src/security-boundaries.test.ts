@@ -50,7 +50,7 @@ describe("MV3 extension security boundaries", () => {
 
   it("retains required automation APIs without accepting plaintext remote peers", () => {
     expect(new Set(manifest.permissions)).toEqual(
-      new Set(["offscreen", "sidePanel", "storage", "debugger", "tabs", "scripting"]),
+      new Set(["offscreen", "sidePanel", "storage", "debugger", "tabs", "scripting", "downloads", "clipboardWrite"]),
     );
     const matches = manifest.externally_connectable?.matches ?? [];
     // Source manifest is a non-loadable template. Vite injects the exact

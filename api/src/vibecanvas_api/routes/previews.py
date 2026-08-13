@@ -69,6 +69,7 @@ from vibecanvas_api.services.file_revision import (
     vfs_row_revision,
 )
 from vibecanvas_api.services.object_store import get_object_store
+from vibecanvas_api.services.sandbox.manager import get_sandbox_manager
 from vibecanvas_api.services.preview_resource_policy import (
     html_vfs_read_rules,
     rules_for_root,
@@ -1199,6 +1200,14 @@ async def write_preview_file(
     # derived from the committed metadata rather than client input.
     await session.refresh(resolved.row)
     await session.commit()
+    # Preview is another VFS writer. Keep an already-mounted Agent workspace in
+    # the same state immediately; a cold sandbox will hydrate from durable VFS.
+    await get_sandbox_manager().mirror_vfs_write(
+        auth.tenant_id,
+        resolved.scope_id,
+        body.file_ref.path,
+        data,
+    )
     return PreviewFileWriteOut(
         fileRef=body.file_ref,
         revision=vfs_row_revision(resolved.row),

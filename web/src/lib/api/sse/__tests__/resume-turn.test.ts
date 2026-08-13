@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { fetchEventSource } from '@microsoft/fetch-event-source';
 
 import { resumeActiveTurn } from '@/lib/api/sse/resume-turn';
@@ -10,6 +10,7 @@ import {
 
 describe('resumeActiveTurn HITL projection', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     localStorage.clear();
     useChatStreamStore.getState().reset();
   });
@@ -184,5 +185,31 @@ describe('resumeActiveTurn HITL projection', () => {
     };
     await expect(resumeActiveTurn(turn, terminalStream)).resolves.toBe(true);
     expect(replayTransportCalls).toBe(1);
+  });
+
+  it('keeps the same active Turn across a transient resume dependency failure', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    let transportCalls = 0;
+    const stream: typeof fetchEventSource = async (_url, opts) => {
+      transportCalls += 1;
+      if (transportCalls === 1) {
+        await opts.onopen?.(new Response('', { status: 503 }));
+        return;
+      }
+      await opts.onopen?.(new Response('', { status: 200 }));
+      opts.onmessage?.({
+        id: '1',
+        event: 'done',
+        data: JSON.stringify({ ok: true }),
+      });
+    };
+
+    await expect(resumeActiveTurn({
+      wfId: 'scope_transient',
+      chatId: 'chat_transient',
+      turnId: 'turn_transient',
+    }, stream)).resolves.toBe(true);
+
+    expect(transportCalls).toBe(2);
   });
 });

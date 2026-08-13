@@ -15,18 +15,21 @@
 
 ARG CODEX_CLI_VERSION=0.147.0
 ARG NPM_VERSION=11.19.0
+ARG PLAYWRIGHT_MCP_VERSION=0.0.79
 
-# Codex App Server and the pinned ELK worker are external runtime dependencies,
-# not Python packages. Build both in one disposable, digest-pinned stage. The
-# final image receives the Codex native bundle, the Node executable, and only
-# elkjs (not npm or the frontend dependency tree).
-FROM node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime-assets
-ARG CODEX_CLI_VERSION
+# Node-based runtime assets share a digest-pinned Node/npm base, but are built
+# in independent stages. Updating Playwright MCP therefore cannot invalidate
+# the Codex or ELK dependency caches.
+FROM node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS node-runtime-base
 ARG NPM_VERSION
-ARG TARGETARCH
 RUN set -eux; \
     npm install --global --ignore-scripts --no-audit --no-fund "npm@${NPM_VERSION}"; \
-    test "$(npm --version)" = "${NPM_VERSION}"; \
+    test "$(npm --version)" = "${NPM_VERSION}"
+
+FROM node-runtime-base AS codex-assets
+ARG CODEX_CLI_VERSION
+ARG TARGETARCH
+RUN set -eux; \
     npm install --global --ignore-scripts --no-audit --no-fund \
         "@openai/codex@${CODEX_CLI_VERSION}"; \
     case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
@@ -40,6 +43,16 @@ RUN set -eux; \
     cp -a "${vendor}/." /opt/codex/; \
     test "$(/opt/codex/bin/codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"
 
+FROM node-runtime-base AS playwright-assets
+ARG PLAYWRIGHT_MCP_VERSION
+COPY api/playwright-runtime/package.json api/playwright-runtime/package-lock.json /opt/playwright-mcp/
+RUN set -eux; \
+    npm ci --prefix /opt/playwright-mcp --ignore-scripts --no-audit --no-fund; \
+    test "$(node -p 'require("/opt/playwright-mcp/node_modules/@playwright/mcp/package.json").version')" = "${PLAYWRIGHT_MCP_VERSION}"
+COPY api/playwright-runtime/launch.cjs /opt/playwright-mcp/launch.cjs
+RUN chmod 0755 /opt/playwright-mcp/launch.cjs
+
+FROM node-runtime-base AS elk-assets
 COPY api/elk-runtime/package.json api/elk-runtime/package-lock.json /opt/elk/
 RUN npm ci --prefix /opt/elk --ignore-scripts --no-audit --no-fund \
         --omit=dev && \
@@ -52,12 +65,13 @@ RUN printf '%s' \
 
 FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 ARG CODEX_CLI_VERSION
+ARG PLAYWRIGHT_MCP_VERSION
 
 WORKDIR /app
 
-COPY --from=runtime-assets /opt/codex /opt/codex
-COPY --from=runtime-assets /usr/local/bin/node /usr/local/bin/node
-COPY --from=runtime-assets /opt/elk /opt/elk
+COPY --from=codex-assets /opt/codex /opt/codex
+COPY --from=node-runtime-base /usr/local/bin/node /usr/local/bin/node
+COPY --from=elk-assets /opt/elk /opt/elk
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex && \
     test "$(codex --version)" = "codex-cli ${CODEX_CLI_VERSION}" && \
     test "$(node --version)" = "v22.23.2" && \
@@ -109,9 +123,10 @@ RUN set -eux; \
 COPY requirements-build.txt /tmp/requirements-build.txt
 COPY requirements-runtime.txt /tmp/requirements-runtime.txt
 COPY requirements-sandbox.txt /tmp/requirements-sandbox.txt
-RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-build.txt && \
-    pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.txt && \
-    pip install --no-cache-dir --require-hashes -r /tmp/requirements-sandbox.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --require-hashes -r /tmp/requirements-build.txt && \
+    pip install --require-hashes -r /tmp/requirements-runtime.txt && \
+    pip install --require-hashes -r /tmp/requirements-sandbox.txt
 
 # Engine is installed from this repository without resolving dependencies again.
 COPY engine /tmp/engine
@@ -129,6 +144,13 @@ COPY api/alembic/ /app/alembic/
 COPY scripts/security/ /app/scripts/security/
 
 RUN pip install --no-cache-dir --no-deps --no-build-isolation .
+
+# Keep the independently versioned browser MCP after the large OS/Python
+# dependency layers. Updating browser automation must not invalidate apt or pip
+# caches and force those dependencies to download again.
+COPY --from=playwright-assets /opt/playwright-mcp /opt/playwright-mcp
+RUN ln -s /opt/playwright-mcp/launch.cjs /usr/local/bin/skeinix-playwright-mcp && \
+    skeinix-playwright-mcp --version | grep -q "${PLAYWRIGHT_MCP_VERSION}"
 
 # API/worker images do not need a package installer. The dedicated sandboxd
 # image opts into pip because it owns the narrow, wheel-only, content-addressed

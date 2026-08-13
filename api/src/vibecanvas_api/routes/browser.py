@@ -2,16 +2,18 @@
 
 Two surfaces:
   POST /api/v1/browser/token  — auth'd mint of a short-lived scoped token (§15.A)
-  WS   /api/v1/browser/ws     — the tenant-scoped transport hub (one per browser)
+  WS   /api/v1/browser/ws     — the tenant-scoped Playwright relay (one per browser)
 
-Ping, command, and observation messages share one envelope and transport
-registry.
+The WebSocket carries lifecycle events and authenticated Playwright CDP relay
+frames. The retired Skeinix command/observation protocol is intentionally not
+accepted here.
 """
 
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import logging
 import time
 import uuid
 
@@ -33,14 +35,19 @@ from vibecanvas_api.browser.ws_auth import (
 )
 from vibecanvas_api.browser.envelope import encode, decode
 from vibecanvas_api.browser.registry import registry
-from vibecanvas_api.browser.commands import Cmd
-from vibecanvas_api.browser import (
-    host as _host,
-)  # lazy command_host access (testable swap)
+from vibecanvas_api.browser.playwright_registry import playwright_controllers
+from vibecanvas_api.browser.session_control import (
+    BrowserSessionLease,
+    confirm_sidepanel_browser_session,
+)
 from vibecanvas_api.storage.chat_repo import ChatRepo
 from vibecanvas_api.storage.db import session_scope
+from vibecanvas_api.services.platform_mcp.capability import (
+    verify_platform_mcp_capability,
+)
 
 router = APIRouter(prefix="/api/v1/browser", tags=["browser"])
+log = logging.getLogger(__name__)
 
 
 def _chat_id_from_channel(channel: str | None) -> str:
@@ -108,9 +115,9 @@ async def _handle_browser_event(msg: dict, scoped) -> dict | None:
             else:
                 return None
         else:
-            # ``attached`` is confirmed by browser_start_session's fenced DB
-            # transition. Only snapshot/lost/terminal lifecycle events mutate
-            # durable state through this WebSocket path.
+            # ``attached`` is confirmed by the authenticated Playwright CDP
+            # initialization. Only snapshot/lost/terminal lifecycle events
+            # mutate durable state through this WebSocket path.
             return None
     if not result.get("ok"):
         return None
@@ -182,62 +189,36 @@ async def _browser_session_is_live(scoped: ScopedAuth) -> bool:
         return membership is not None and membership.status == "active"
 
 
-class DebugSendIn(BaseModel):
-    cmd: str
-    args: dict = {}
-    target_id: str | None = None
+async def _platform_session_is_live(capability) -> bool:
+    """Revalidate the auth Session carried by a Platform MCP capability."""
+    try:
+        session_id = uuid.UUID(capability.session_id)
+        user_id = uuid.UUID(capability.user_id)
+    except (TypeError, ValueError):
+        return False
+    async with session_scope() as session:
+        repo = AuthRepo(session)
+        row = await repo.get_session_by_id(session_id, user_id=user_id)
+        if row is None or row.expires_at <= datetime.now(timezone.utc):
+            return False
+        if (
+            str(row.active_organization_id) != capability.organization_id
+            or int(row.generation) != capability.session_generation
+        ):
+            return False
+        membership = await repo.get_membership(
+            user_id=row.user_id,
+            organization_id=row.active_organization_id,
+        )
+        return membership is not None and membership.status == "active"
 
 
-@router.post("/debug/send")
-async def debug_send(body: DebugSendIn, auth: AuthContext = Depends(current_user)):
-    """DEV-ONLY (BROWSER_DEBUG_SEND=1): push a single command to this tenant's
-    connected extension and return the observation. Lets us manually verify a
-    backend command driving a real page during manual acceptance."""
-    if not config.browser_debug_send:
-        raise HTTPException(status_code=404, detail="debug send disabled")
-    transports = registry.user_transports(auth.tenant_id, auth.user_id)
-    transport_id = registry.find_for_user(auth.tenant_id, auth.user_id)
-    if transport_id is None:
-        raise HTTPException(
-            status_code=409, detail="no connected browser for this tenant"
-        )
-    try:
-        cmd = Cmd(body.cmd)
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"unknown cmd: {body.cmd}")
-    try:
-        obs = await _host.command_host.send_command(
-            transport_id=transport_id,
-            channel="debug",
-            cmd=cmd,
-            args=body.args,
-            target_id=body.target_id,
-            producer="debug",
-            timeout_s=15.0,
-        )
-    except asyncio.TimeoutError:
-        return {
-            "transport_id": transport_id,
-            "transports_seen": transports,
-            "error": "timeout: command sent but no observation in 15s — "
-            "check the extension offscreen/service-worker console",
-        }
-    except Exception as e:  # TransportClosed or any send error → informative, not 500
-        return {
-            "transport_id": transport_id,
-            "transports_seen": transports,
-            "error": f"{type(e).__name__}: {e}",
-        }
-    return {
-        "transport_id": transport_id,
-        "transports_seen": transports,
-        "observation": {
-            "ok": obs.ok,
-            "data": obs.data,
-            "error": obs.error,
-            "target_id": obs.target_id,
-        },
-    }
+def _bearer_token(ws: WebSocket) -> str:
+    authorization = str(ws.headers.get("authorization") or "")
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return ""
+    return token.strip()
 
 
 @router.websocket("/ws")
@@ -272,7 +253,11 @@ async def ws_hub(
     async def _send(raw: str) -> None:
         await ws.send_text(raw)
 
-    registry.register(transport_id, _send)
+    registry.register(
+        transport_id,
+        _send,
+        session_id=scoped.session_id,
+    )
     try:
         while True:
             remaining = scoped.exp - time.time()
@@ -298,9 +283,6 @@ async def ws_hub(
                         data=msg.get("data"),
                     )
                 )
-            elif msg["kind"] == "observation":
-                # match a pending send_command future (read lazily so tests can swap)
-                _host.command_host.resolve_observation(raw)
             elif msg["kind"] == "event":
                 ack = await _handle_browser_event(msg, scoped)
                 if ack is not None:
@@ -312,6 +294,15 @@ async def ws_hub(
                             transport=transport_id,
                             data=ack,
                         )
+                    )
+            elif msg["kind"] == "playwright_relay":
+                data = msg.get("data") or {}
+                message = data.get("message") if isinstance(data, dict) else None
+                if isinstance(message, dict):
+                    await playwright_controllers.forward_extension_message(
+                        transport_id=transport_id,
+                        channel=str(msg.get("channel") or ""),
+                        message=message,
                     )
     except WebSocketDisconnect:
         pass
@@ -342,3 +333,161 @@ async def ws_hub(
                 # Connection teardown must always finish; the next tool call's
                 # missing transport remains a second, fail-closed signal.
                 pass
+
+
+@router.websocket("/playwright/cdp")
+async def playwright_cdp(ws: WebSocket):
+    """Authenticated standard-CDP endpoint used by official Playwright.
+
+    The endpoint is not a public browser debug port. A turn-scoped Platform MCP
+    capability identifies the user and Chat; the live database browser lease
+    and connected extension are rechecked before the WebSocket is accepted.
+    Raw CDP frames are wrapped only while crossing the Skeinix extension WSS.
+    """
+
+    capability = verify_platform_mcp_capability(
+        _bearer_token(ws),
+        secret=config.signing_secret,
+        server="browser",
+    )
+    if capability is None:
+        log.warning(
+            "browser_playwright_cdp_rejected "
+            "reason=capability_invalid authorization_present=%s",
+            bool(_bearer_token(ws)),
+        )
+        await ws.close(code=4401)
+        return
+    if not await _platform_session_is_live(capability):
+        log.warning(
+            "browser_playwright_cdp_rejected "
+            "reason=session_invalid chat_id=%s session_generation=%s",
+            capability.chat_id,
+            capability.session_generation,
+        )
+        await ws.close(code=4401)
+        return
+
+    channel = f"chat:{capability.chat_id}"
+    transport_id = registry.find_for_session(
+        capability.organization_id,
+        capability.user_id,
+        capability.session_id,
+    )
+    if transport_id is None:
+        log.warning(
+            "browser_playwright_cdp_rejected "
+            "reason=extension_transport_missing chat_id=%s",
+            capability.chat_id,
+        )
+        await ws.close(code=4409)
+        return
+    async with session_scope(tenant_id=capability.organization_id) as session:
+        binding = await ChatRepo(session, capability.user_id).get_browser_binding(
+            capability.chat_id
+        )
+    if (
+        not binding
+        or binding.get("status") not in {"attaching", "attached"}
+        or not binding.get("browser_session_id")
+        or int(binding.get("browser_session_generation") or 0) <= 0
+    ):
+        log.warning(
+            "browser_playwright_cdp_rejected "
+            "reason=browser_lease_missing chat_id=%s browser_status=%s",
+            capability.chat_id,
+            str((binding or {}).get("status") or ""),
+        )
+        await ws.close(code=4409)
+        return
+
+    browser_session_id = str(binding["browser_session_id"])
+    browser_session_generation = int(binding["browser_session_generation"])
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    initialized: asyncio.Future[None] = loop.create_future()
+
+    async def _send_to_playwright(message: dict) -> None:
+        # Initialization acknowledgements belong to the bridge control plane,
+        # not CDP. Standard CDP responses have an id and events have a method.
+        result = message.get("result")
+        if isinstance(result, dict) and result.get("initialized") is True:
+            if not initialized.done():
+                initialized.set_result(None)
+            return
+        error = message.get("error")
+        if isinstance(error, dict) and not initialized.done():
+            initialized.set_exception(
+                RuntimeError(str(error.get("message") or "Playwright bridge failed"))
+            )
+            return
+        if "id" not in message and "method" not in message:
+            return
+        await ws.send_json(message)
+
+    playwright_controllers.register(
+        transport_id=transport_id,
+        channel=channel,
+        send=_send_to_playwright,
+    )
+
+    async def _send_extension(action: str, **data) -> None:
+        raw = encode(
+            "playwright_relay",
+            id=f"pw_{uuid.uuid4().hex}",
+            channel=channel,
+            transport=transport_id,
+            producer="playwright",
+            data={
+                "action": action,
+                "browser_session_id": browser_session_id,
+                "session_generation": browser_session_generation,
+                **data,
+            },
+        )
+        if not await registry.send_to(transport_id, raw):
+            raise WebSocketDisconnect(code=1011)
+
+    try:
+        await _send_extension("initialize")
+        # Do not consume queued Playwright commands until the extension has
+        # released the legacy debugger owner and constructed the CDP bridge.
+        await asyncio.wait_for(initialized, timeout=10.0)
+        await confirm_sidepanel_browser_session(
+            BrowserSessionLease(
+                tenant_id=capability.organization_id,
+                user_id=capability.user_id,
+                chat_id=capability.chat_id,
+                browser_session_id=browser_session_id,
+                session_generation=browser_session_generation,
+            )
+        )
+        while True:
+            remaining = capability.exp - time.time()
+            if remaining <= 0:
+                await ws.close(code=4401)
+                return
+            try:
+                message = await asyncio.wait_for(
+                    ws.receive_json(),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                await ws.close(code=4401)
+                return
+            if not isinstance(message, dict):
+                await ws.close(code=4400)
+                return
+            await _send_extension("request", request=message)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        playwright_controllers.unregister(
+            transport_id=transport_id,
+            channel=channel,
+            sender=_send_to_playwright,
+        )
+        try:
+            await _send_extension("close")
+        except Exception:
+            pass

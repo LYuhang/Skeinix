@@ -29,7 +29,7 @@ describe("envelope", () => {
   });
 
   it("carries an explicit producer when provided", () => {
-    const raw = encode("command", {
+    const raw = encode("event", {
       id: "c3",
       channel: "chat:1",
       transport: "t1:b1",

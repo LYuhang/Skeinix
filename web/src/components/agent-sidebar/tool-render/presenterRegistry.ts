@@ -66,7 +66,10 @@ export function selectToolPresenter({
   if (!isTrustedToolPresentation(call)) return hasUniversal ? 'universal' : 'plain-text';
 
   const semantic = semanticPresenter(call);
-  if (semantic === 'browser' && envelope) return 'browser';
+  // Official Playwright MCP returns standard MCP content. A legacy Browser MCP
+  // envelope is intentionally not selected here; it uses the generic read-only
+  // envelope renderer and cannot revive the retired protocol.
+  if (semantic === 'browser' && hasUniversal) return 'browser';
   if (semantic === 'terminal' && envelope?.output) return 'terminal';
   if (semantic === 'diff' && envelope?.output && typeof envelope.output.data === 'string') return 'diff';
 

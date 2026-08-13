@@ -26,6 +26,10 @@ import {
 
 class FatalResumeError extends Error {}
 
+function isTransientResumeStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
 // Reconciliation can be triggered by the periodic poll, focus, visibility,
 // and the online event at nearly the same time. The coordinator below extends
 // this replay-only promise dedupe across the POST submission stream as well:
@@ -233,7 +237,16 @@ async function resumeActiveTurnStream(
             useAuthStore.getState().handle401();
             throw new FatalResumeError('auth');
           }
-          if (!res.ok) throw new FatalResumeError(`resume failed: ${res.status}`);
+          if (!res.ok) {
+            // The resume endpoint is read-only and cursor based, so retrying a
+            // transient gateway/rate-limit/dependency failure cannot create a
+            // duplicate Turn. In particular, authorization dependencies may
+            // briefly surface a 503 while the live Runtime keeps running.
+            if (isTransientResumeStatus(res.status)) {
+              throw new Error(`resume temporarily unavailable: ${res.status}`);
+            }
+            throw new FatalResumeError(`resume failed: ${res.status}`);
+          }
           consecutiveConnectFailures = 0;
           // Live turn found — wire abort (so STOP works) + set up the store for the
           // replay (chatId + streaming + a fresh buffer the replay re-fills).

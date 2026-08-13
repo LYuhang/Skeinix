@@ -304,6 +304,38 @@ async def test_mirror_vfs_write_targets_mount_and_chat_workspace(tmp_path):
     assert (tmp_path / "workspace" / "data" / "input.txt").read_bytes() == b"hello"
     assert not await session.mirror_vfs_write("/unknown/file", b"x")
 
+    assert await session.mirror_vfs_rename(
+        "/data/input.txt", "/data/archive/input.txt",
+    )
+    assert not (tmp_path / "workspace" / "data" / "input.txt").exists()
+    assert (tmp_path / "workspace" / "data" / "archive" / "input.txt").read_bytes() == b"hello"
+
+    assert await session.mirror_vfs_delete("/data/archive")
+    assert not (tmp_path / "workspace" / "data" / "archive").exists()
+
+
+@pytest.mark.asyncio
+async def test_mirror_vfs_folder_rename_merges_existing_destination(tmp_path):
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=str(tmp_path / "workspace"),
+        overlay_dir=None,
+        provider=MagicMock(),
+        base_binds=[],
+        expose_run=False,
+    )
+    await session.mirror_vfs_write("/data/source/a.txt", b"A")
+    await session.mirror_vfs_write("/data/source/nested/b.txt", b"B")
+    await session.mirror_vfs_write("/data/destination/existing.txt", b"E")
+
+    assert await session.mirror_vfs_rename("/data/source", "/data/destination")
+    root = tmp_path / "workspace" / "data" / "destination"
+    assert (root / "a.txt").read_bytes() == b"A"
+    assert (root / "nested" / "b.txt").read_bytes() == b"B"
+    assert (root / "existing.txt").read_bytes() == b"E"
+    assert not (tmp_path / "workspace" / "data" / "source").exists()
+
 
 @pytest.mark.asyncio
 async def test_snapshot_manager_hibernates_then_releases_interactive_session():

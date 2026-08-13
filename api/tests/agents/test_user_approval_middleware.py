@@ -1,32 +1,40 @@
 from vibecanvas_api.agents.middleware.user_approval import requires_user_approval
 
 
-def test_fetch_resource_requires_pre_tool_approval_by_default():
+def test_official_file_upload_requires_pre_tool_approval_by_default():
     assert requires_user_approval(
-        "browser_fetch_resource",
-        {"url": "https://example.test/private.pdf"},
+        "browser_file_upload",
+        {"paths": ["/data/private.pdf"]},
         "agent",
     )
 
 
-def test_fetch_resource_can_explicitly_lower_auth_requirement():
+def test_official_file_upload_can_explicitly_lower_auth_requirement():
+    assert not requires_user_approval(
+        "browser_file_upload",
+        {
+            "paths": ["/data/public-logo.png"],
+            "require_user_auth": False,
+        },
+        "agent",
+    )
+
+
+def test_always_ask_overrides_file_upload_lowered_requirement():
+    assert requires_user_approval(
+        "browser_file_upload",
+        {
+            "paths": ["/data/public-logo.png"],
+            "require_user_auth": False,
+        },
+        "always_ask",
+    )
+
+
+def test_retired_fetch_resource_is_not_an_approval_or_execution_surface():
     assert not requires_user_approval(
         "browser_fetch_resource",
-        {
-            "url": "https://example.test/public-logo.png",
-            "require_user_auth": False,
-        },
-        "agent",
-    )
-
-
-def test_always_ask_overrides_fetch_resource_lowered_requirement():
-    assert requires_user_approval(
-        "browser_fetch_resource",
-        {
-            "url": "https://example.test/public-logo.png",
-            "require_user_auth": False,
-        },
+        {"url": "https://example.test/private.pdf"},
         "always_ask",
     )
 

@@ -230,13 +230,6 @@ class AgentContext(BaseModel):
     context_manifest: Dict[str, Any] = Field(default_factory=dict)
     runtime_mcp_catalog: List[dict] = Field(default_factory=list)
 
-    # Per-turn browser binding for a browser-mode turn: a
-    # browser.agent_channel.BrowserBinding (transport_id + chat channel) or None.
-    # None on every non-browser turn → browser tools soft-error "no_browser".
-    # Holds NO environment state across turns; rebuilt against the user's single
-    # live browser-control transport. Tabs/page facts are read through tools.
-    browser: Any = None
-
     # The active model config is inherited by bounded subagents. The stop event
     # lets the runtime cancel long-running model and tool operations.
     agent_cfg: Any = None
@@ -861,33 +854,6 @@ def _build_context_edits(agent_cfg=None, vfs_store=None, wf_id="",
     except Exception:
         pass
     return edits
-
-
-def _build_browser_channel(active_modes, tenant_id, user_id: str, chat_id: str):
-    """Build the per-turn browser binding when browser mode is active.
-
-    Return ``None`` when browser mode is inactive or the user has no live
-    browser-control transport. Browser
-    mode is driven purely by ``/browser`` (active_modes) — there is no separate
-    feature flag; control simply requires a live transport (the side panel).
-
-    V1 exposes one browser-control entity. The Agent does not receive browser,
-    window, panel, or tab ids as outer context; it discovers browser facts via
-    tools, while the transport layer selects the sole authenticated connection.
-
-    Returns a ``BrowserBinding(transport_id, channel)`` — routing coordinates only;
-    the AgentBrowser is materialized at tool-call time off AgentContext.browser
-    (build_agent_browser). Bound to ``<tenant>:<browser>`` + ``chat:<chat_id>`` (§4.3)."""
-    if "browser" not in (active_modes or set()):
-        return None
-    if not tenant_id or not user_id:
-        return None
-    from vibecanvas_api.browser.registry import registry
-    transport_id = registry.find_for_user(str(tenant_id), str(user_id))
-    if transport_id is None:
-        return None
-    from vibecanvas_api.browser.agent_channel import BrowserBinding
-    return BrowserBinding(transport_id=transport_id, channel=f"chat:{chat_id}")
 
 
 async def _load_dynamic_tools(
@@ -2159,11 +2125,6 @@ async def _run_agent_turn_inner(
         yield build_signal("NO_OP", {})
         return
 
-    # Build the per-turn browser binding only for browser mode with a live
-    # authenticated transport. Browser tools soft-error
-    # "no_browser" when None, so a non-browser turn is byte-for-byte unchanged.
-    browser_binding = _build_browser_channel(active_modes, tenant_id, username, chat_id)
-
     context = AgentContext(
         workflow=workflow,
         repo=repo,
@@ -2182,7 +2143,6 @@ async def _run_agent_turn_inner(
         run_id="",
         agent_cfg=agent_cfg,
         stop_event=stop_event,
-        browser=browser_binding,
         runtime_skill_catalog=list(runtime_skill_catalog or []),
         todo_items=list(todo_items_prev),
         interactive_artifact_refs=dict(interactive_artifact_refs_current),

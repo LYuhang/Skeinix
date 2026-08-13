@@ -58,10 +58,11 @@ Use `/browser` in the extension side panel to activate browser-control context:
 /browser compare the plans on this page and summarize the differences
 ```
 
-The command allows the Agent to start a controlled session and use browser
-tools for navigation, page reading, screenshots, tab management, form input,
-and other explicit browser actions. The active command context remains attached
-to the Browser Chat, so follow-up requests can continue the same task without
+The command attaches the Browser Chat to the pinned official Playwright MCP
+running inside that Chat's sandbox. Its reviewed tools cover navigation, page
+snapshots, screenshots, tab management, form input, dialogs, file upload, and
+other explicit browser actions. The active command context remains attached to
+the Browser Chat, so follow-up requests can continue the same task without
 repeating all prior context.
 
 `/browser` is intentionally available only on the extension's Browser surface.
@@ -111,11 +112,17 @@ The content script runs only in the top frame, in Chrome's isolated world, and
 the extension exposes no web-accessible resources. It does not provide the
 backend with arbitrary JavaScript execution.
 
-Browser operations use the closed command vocabulary in
-[`commands.ts`](src/shared/commands.ts). Every accepted command maps to a
-bundled handler under [`cdp/`](src/cdp/); unknown commands are rejected. Any
-new command or Chrome permission requires matching boundary tests and a manual
-privacy and security review before release.
+Browser semantics come from the pinned official Playwright MCP, not from a
+second Skeinix command vocabulary. The extension implements only the fixed CDP
+transport allow-list in
+[`relay-executor.ts`](src/playwright/relay-executor.ts) and the upstream-derived
+browser target model in
+[`browser-model.ts`](src/playwright/browser-model.ts). It scopes every request
+to tabs in the user-approved side-panel window and rejects unknown relay
+commands. Unrestricted Playwright page evaluation and remote-code tools are not
+exposed to the Agent. Any new relay command or Chrome permission requires
+matching boundary tests and a manual privacy and security review before
+release.
 
 Production builds generate `externally_connectable` and `host_permissions`
 from exact configured Skeinix Web bases. The service worker performs an
@@ -185,13 +192,12 @@ and [`web/Dockerfile`](../web/Dockerfile).
 | Path | Responsibility |
 | --- | --- |
 | [`src/sidepanel.ts`](src/sidepanel.ts) | Side-panel iframe host and Web/extension message bridge |
-| [`src/service-worker.ts`](src/service-worker.ts) | Browser session ownership, CDP execution, and extension message routing |
+| [`src/service-worker.ts`](src/service-worker.ts) | Browser session ownership, Playwright relay lifecycle, and extension message routing |
 | [`src/offscreen.ts`](src/offscreen.ts) | Persistent authenticated WebSocket transport |
-| [`src/cdp/`](src/cdp/) | Closed command router, handlers, target sessions, and page-state pruning |
+| [`src/playwright/`](src/playwright/) | Window-scoped CDP relay, upstream-derived target model, and boundary tests |
 | [`src/island/content.ts`](src/island/content.ts) | Isolated in-page control status and feedback surface |
 | [`src/shared/config.ts`](src/shared/config.ts) | Compiled Web/WS coordinates and runtime sender validation |
-| [`src/shared/commands.ts`](src/shared/commands.ts) | Browser command vocabulary and mutating-operation classification |
-| [`src/shared/envelope.ts`](src/shared/envelope.ts) | Command and observation wire envelope |
+| [`src/shared/envelope.ts`](src/shared/envelope.ts) | Lifecycle and authenticated Playwright relay envelope |
 | [`src/shared/ws-client.ts`](src/shared/ws-client.ts) | WebSocket lifecycle and reconnect behavior |
 | [`manifest.json`](manifest.json) | Source Manifest V3 permissions and entry points |
 | [`vite.config.ts`](vite.config.ts) | Build entries, generated allowlists, icons, and final manifest |

@@ -58,7 +58,7 @@ describe('groupToolActivity', () => {
         role: 'assistant',
         content: '',
         tool_calls: [
-          tool('a', 'browser_read_text'),
+          tool('a', 'browser_snapshot'),
           interactiveTool('b'),
           tool('c', 'browser_click'),
         ],
@@ -122,7 +122,7 @@ describe('groupToolActivity', () => {
     const messages: MergedMessage[] = [{
       role: 'assistant',
       content: '',
-      tool_calls: [tool('a', 'browser_read_text'), malformed, tool('c', 'browser_click')],
+      tool_calls: [tool('a', 'browser_snapshot'), malformed, tool('c', 'browser_click')],
     }];
 
     const items = groupToolActivity(messages);

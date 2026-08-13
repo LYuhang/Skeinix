@@ -5,8 +5,11 @@
     turn, no mode change — telling the user to use the side panel.
   - SIDE PANEL (surface="sidepanel"): activates browser mode + injects the
     browser tools, then runs a NORMAL agent turn (NO `MODE_CONTROL` handoff).
-Browser CONTROL is a tool (`browser_start_session`) the agent calls in the side
-panel. A normal (non-command) message is unaffected.
+Pressing Send in the browser-only side panel explicitly authorizes its current
+page for that Browser Turn. The API reserves a generation-fenced browser lease
+after the Run is durable; the authenticated Playwright CDP handshake confirms
+the lease only after the extension initializes. A normal (non-browser) message
+is unaffected.
 
 Auth: conftest async `client` + a real `register → session_token` (same harness
 as test_streaming_chat.py).

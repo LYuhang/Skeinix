@@ -1176,7 +1176,33 @@ class SandboxSession:
                         or self.wf_id
                     ),
                 )
-                await broker.send({"type": MSG_RUNTIME_REQUEST, "request": request})
+                try:
+                    await broker.send(
+                        {"type": MSG_RUNTIME_REQUEST, "request": request}
+                    )
+                except (ConnectionError, BrokenPipeError):
+                    # The guest can finish closing Turn-local receivers just as
+                    # the host observes a terminal boundary.  Never surface a
+                    # stale resident transport as a failed user Turn: stop that
+                    # process, restore one clean Runtime, and submit exactly
+                    # once more before any product event has been accepted.
+                    logger.warning(
+                        "agent_runtime_stale_transport_recovered",
+                        runtime_type=runtime_type,
+                        wf_id=self.wf_id,
+                        turn_id=runtime_turn_id,
+                    )
+                    await self._stop_agent_runtime_locked()
+                    broker, _ = await self._ensure_agent_runtime_locked(
+                        runtime_type=runtime_type,
+                        runtime_turn_id=runtime_turn_id,
+                        uses_codex_account=uses_codex_account,
+                    )
+                    async with self._runtime_broker_lock:
+                        self._runtime_brokers[runtime_turn_id] = broker
+                    await broker.send(
+                        {"type": MSG_RUNTIME_REQUEST, "request": request}
+                    )
                 first_bus_message = True
                 async for message in broker.messages():
                     if first_bus_message:
@@ -1318,6 +1344,7 @@ class SandboxSession:
         if (
             process_alive
             and self._runtime_broker is not None
+            and self._runtime_broker.is_connected()
             and self._runtime_type == runtime_type
             and self._runtime_uses_codex_account == uses_codex_account
         ):
@@ -1504,6 +1531,28 @@ class SandboxSession:
         package_root = codex_cli_readonly_root(executable)
         if package_root not in ro_binds:
             ro_binds.append(package_root)
+        # ``/usr/local/bin/skeinix-playwright-mcp`` is a deliberately small
+        # launcher symlink whose real package (launcher + node_modules) lives
+        # under ``/opt/playwright-mcp`` in the release image.  The generic
+        # system mounts expose the symlink but not its target, which otherwise
+        # produces a misleading ENOENT when the browser MCP is started inside
+        # gVisor.  Mount the resolved package root read-only alongside Codex;
+        # no browser credential or user data is contained in this image asset.
+        playwright_command = str(
+            os.environ.get("PLAYWRIGHT_MCP_COMMAND")
+            or "skeinix-playwright-mcp"
+        ).strip()
+        playwright_executable = (
+            playwright_command
+            if os.path.isabs(playwright_command)
+            else shutil.which(playwright_command)
+        )
+        if playwright_executable:
+            resolved_playwright = os.path.realpath(playwright_executable)
+            if os.path.isfile(resolved_playwright):
+                playwright_root = os.path.dirname(resolved_playwright)
+                if playwright_root not in ro_binds:
+                    ro_binds.append(playwright_root)
         node_runtime = codex_cli_node_runtime(executable)
         if executable.endswith(".js") and node_runtime is None:
             raise RuntimeError("codex_node_runtime_unavailable")
@@ -2397,22 +2446,10 @@ class SandboxSession:
         otherwise stay stale until the next session rebuild. This method keeps
         the live mount in sync without creating a sandbox.
         """
-        if self.closed:
+        resolved = self._external_vfs_target(path)
+        if self.closed or resolved is None:
             return False
-        norm = "/" + path.strip("/")
-        target: str | None = None
-        if norm.startswith("/mount/") and self.mount_dir:
-            rel = norm[len("/mount/"):]
-            target = os.path.join(self.mount_dir, *rel.split("/"))
-        else:
-            for folder in _RUN_WRITEBACK_FOLDERS:
-                prefix = f"/{folder}/"
-                if norm.startswith(prefix) and self.run_dir:
-                    rel = norm[len(prefix):]
-                    target = os.path.join(self.run_dir, folder, *rel.split("/"))
-                    break
-        if not target:
-            return False
+        _norm, target = resolved
 
         def _write() -> None:
             os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -2426,6 +2463,103 @@ class SandboxSession:
             # Browser/VFS activity retains the hibernated session without
             # waking its gVisor process.
             self._hibernated_at = now
+        return True
+
+    def _external_vfs_target(self, path: str) -> tuple[str, str] | None:
+        """Resolve one VFS path into this session's mounted host workspace."""
+        norm = "/" + str(path or "").strip("/")
+        if "\x00" in norm or any(part in {".", ".."} for part in norm.split("/")):
+            return None
+        root: str | None = None
+        relative = ""
+        if norm.startswith("/mount/") and self.mount_dir:
+            root = self.mount_dir
+            relative = norm[len("/mount/"):]
+        else:
+            for folder in _RUN_WRITEBACK_FOLDERS:
+                prefix = f"/{folder}/"
+                if norm.startswith(prefix) and self.run_dir:
+                    root = os.path.join(self.run_dir, folder)
+                    relative = norm[len(prefix):]
+                    break
+        if not root or not relative:
+            return None
+        root_real = os.path.realpath(root)
+        target = os.path.realpath(os.path.join(root_real, *relative.split("/")))
+        if not target.startswith(root_real + os.sep):
+            return None
+        return norm, target
+
+    async def mirror_vfs_delete(self, path: str) -> bool:
+        """Remove a durable VFS path/prefix from this live mounted workspace."""
+        resolved = self._external_vfs_target(path)
+        if self.closed or resolved is None:
+            return False
+        norm, target = resolved
+
+        def _delete() -> None:
+            if os.path.islink(target) or os.path.isfile(target):
+                os.unlink(target)
+            elif os.path.isdir(target):
+                shutil.rmtree(target)
+
+        async with self._external_vfs_lock:
+            await asyncio.to_thread(_delete)
+        now = time.monotonic()
+        self.last_used = now
+        if _session_lifecycle_state(self) == "hibernated":
+            self._hibernated_at = now
+        logger.info("agent_session_mirror_vfs_delete_done", wf_id=self.wf_id, path=norm)
+        return True
+
+    async def mirror_vfs_rename(self, old_path: str, new_path: str) -> bool:
+        """Project a durable file/folder rename into the live mounted workspace."""
+        old_resolved = self._external_vfs_target(old_path)
+        new_resolved = self._external_vfs_target(new_path)
+        if self.closed or old_resolved is None or new_resolved is None:
+            return False
+        old_norm, old_target = old_resolved
+        new_norm, new_target = new_resolved
+        if old_target == new_target:
+            return True
+
+        def _rename() -> None:
+            if not os.path.lexists(old_target):
+                return
+            if os.path.isdir(old_target) and not os.path.islink(old_target):
+                # Durable folder rename merges its child rows with an existing
+                # destination prefix. Reproduce that shape instead of nesting
+                # the old directory under the destination as shutil.move does.
+                for root, dirs, files in os.walk(old_target):
+                    relative = os.path.relpath(root, old_target)
+                    destination_root = (
+                        new_target if relative == "." else os.path.join(new_target, relative)
+                    )
+                    os.makedirs(destination_root, exist_ok=True)
+                    for name in files:
+                        source = os.path.join(root, name)
+                        destination = os.path.join(destination_root, name)
+                        os.makedirs(os.path.dirname(destination), exist_ok=True)
+                        os.replace(source, destination)
+                    for name in dirs:
+                        os.makedirs(os.path.join(destination_root, name), exist_ok=True)
+                shutil.rmtree(old_target)
+            else:
+                os.makedirs(os.path.dirname(new_target), exist_ok=True)
+                os.replace(old_target, new_target)
+
+        async with self._external_vfs_lock:
+            await asyncio.to_thread(_rename)
+        now = time.monotonic()
+        self.last_used = now
+        if _session_lifecycle_state(self) == "hibernated":
+            self._hibernated_at = now
+        logger.info(
+            "agent_session_mirror_vfs_rename_done",
+            wf_id=self.wf_id,
+            old_path=old_norm,
+            new_path=new_norm,
+        )
         return True
 
     async def acknowledge_external_vfs_commit(
@@ -3698,6 +3832,57 @@ class SandboxManager:
         if errors and not updated:
             return False
         return updated
+
+    async def _mirror_vfs_path_operation(
+        self,
+        tenant_id: str,
+        wf_id: str,
+        path: str,
+        method: str,
+        *args,
+    ) -> bool:
+        """Apply a non-creating VFS path operation to every matching session."""
+        key = (tenant_id, wf_id)
+        async with self._lock:
+            sessions = []
+            direct = self._sessions.get(key)
+            if direct is not None and not direct.closed:
+                sessions.append(direct)
+            if path.startswith("/mount/"):
+                for (tenant, _sid), session in self._sessions.items():
+                    if tenant != tenant_id or session.closed or session is direct:
+                        continue
+                    if getattr(session, "mount_scope_id", None) == wf_id:
+                        sessions.append(session)
+            if not sessions:
+                return False
+        updated = False
+        for session in sessions:
+            try:
+                operation = getattr(session, method)
+                updated = await operation(path, *args) or updated
+            except Exception:  # pragma: no cover - fail-soft sync aid
+                logger.warning(
+                    f"agent_session_{method}_failed",
+                    wf_id=wf_id,
+                    path=path,
+                    exc_info=True,
+                )
+        return updated
+
+    async def mirror_vfs_delete(
+        self, tenant_id: str, wf_id: str, path: str,
+    ) -> bool:
+        return await self._mirror_vfs_path_operation(
+            tenant_id, wf_id, path, "mirror_vfs_delete",
+        )
+
+    async def mirror_vfs_rename(
+        self, tenant_id: str, wf_id: str, old_path: str, new_path: str,
+    ) -> bool:
+        return await self._mirror_vfs_path_operation(
+            tenant_id, wf_id, old_path, "mirror_vfs_rename", new_path,
+        )
 
     async def _build_session(self, tenant_id: str, wf_id: str,
                              user_id: str | None = None,

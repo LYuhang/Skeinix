@@ -84,6 +84,40 @@ def test_platform_mcp_authorization_ceiling_is_runtime_neutral() -> None:
     assert codex.runtime_session_id == "runtime-codex"
 
 
+def test_browser_platform_mcp_uses_official_playwright_without_cli_secret() -> None:
+    descriptor = platform_mcp_descriptors(
+        ["browser"],
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        user_id="22222222-2222-2222-2222-222222222222",
+        chat_id="chat-browser",
+        turn_id="turn-browser",
+        workspace_scope_id="workspace-browser",
+        runtime_session_id="runtime-browser",
+        session_id="33333333-3333-3333-3333-333333333333",
+        session_generation=4,
+        membership_id="44444444-4444-4444-4444-444444444444",
+    )[0]
+    connection = descriptor.connection
+    assert connection["transport"] == "stdio"
+    assert connection["command"] == "skeinix-playwright-mcp"
+    assert all("Bearer" not in argument for argument in connection["args"])
+    assert connection["cwd"] == "/data"
+    assert connection["skeinix_persistent_session"] is True
+    output_index = connection["args"].index("--output-dir")
+    assert connection["args"][output_index + 1] == "/data/browser-media"
+    assert connection["env"]["SKEINIX_PLAYWRIGHT_CDP_ENDPOINT"].startswith(
+        ("ws://", "wss://")
+    )
+    token = connection["env"]["SKEINIX_PLAYWRIGHT_CDP_BEARER"]
+    capability = verify_platform_mcp_capability(
+        token,
+        secret=config.signing_secret,
+        server="browser",
+    )
+    assert capability is not None
+    assert capability.chat_id == "chat-browser"
+
+
 def test_runtime_mcp_descriptor_accepts_standard_connections() -> None:
     stdio = RuntimeMcpServer(
         name="files",
@@ -179,6 +213,39 @@ async def test_runtime_loader_uses_official_adapter_and_qualifies_names(monkeypa
     assert calls[0][1]["connections"] == {"docs": server.connection}
     assert calls[0][1]["handle_tool_errors"] is True
     assert calls[1] == ("list", {"server_name": "docs"})
+
+
+@pytest.mark.asyncio
+async def test_runtime_loader_filters_playwright_to_reviewed_surface(monkeypatch) -> None:
+    _clear_runtime_mcp_tool_cache()
+
+    class FakeClient:
+        def __init__(self, _connections, **_kwargs):
+            pass
+
+        async def get_tools(self, *, server_name=None):
+            assert server_name == "browser"
+            return [
+                SimpleNamespace(name="browser_snapshot"),
+                SimpleNamespace(name="browser_evaluate"),
+                SimpleNamespace(name="browser_run_code_unsafe"),
+                SimpleNamespace(name="browser_click"),
+                SimpleNamespace(name="browser_cookie_list"),
+            ]
+
+    monkeypatch.setattr(
+        "langchain_mcp_adapters.client.MultiServerMCPClient", FakeClient
+    )
+    tools, catalog = await load_runtime_mcp_tools([
+        RuntimeMcpServer(
+            name="browser",
+            source="platform",
+            connection={"transport": "stdio", "command": "playwright", "args": []},
+        )
+    ])
+
+    assert [tool.name for tool in tools] == ["browser_snapshot", "browser_click"]
+    assert catalog[0]["tool_count"] == 2
 
 
 @pytest.mark.asyncio

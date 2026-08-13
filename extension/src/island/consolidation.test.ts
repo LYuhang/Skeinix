@@ -20,5 +20,9 @@ describe('browser-control surface consolidation', () => {
     expect(source).toContain('PAGE_HIGHLIGHT');
     expect(source).toContain('pointer-events: none');
     expect(source).toContain('prefers-reduced-motion');
+    // Resetting every property on a visible shadow host can force pathological
+    // style/compositor invalidation on large transformed canvases.
+    expect(source).not.toContain(':host { all: initial;');
+    expect(source).toContain(':host { color-scheme: dark; }');
   });
 });

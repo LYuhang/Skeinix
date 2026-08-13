@@ -81,4 +81,24 @@ describe('tool presenter registry', () => {
       hasUniversal: false,
     })).toBe('plain-text');
   });
+
+  it('uses the browser presenter for official Playwright standard MCP output', () => {
+    expect(selectToolPresenter({
+      call: call({
+        name: 'browser_take_screenshot',
+        invocation: {
+          schemaVersion: 1,
+          invocationId: 'browser-1',
+          runtime: { type: 'codex' },
+          origin: { kind: 'platform_mcp', serverName: 'browser' },
+          capability: 'browser',
+          name: 'browser_take_screenshot',
+          status: 'success',
+          input: {},
+        },
+      }),
+      envelope: null,
+      hasUniversal: true,
+    })).toBe('browser');
+  });
 });

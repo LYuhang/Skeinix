@@ -1,4 +1,4 @@
-"""Shared envelope for browser ping, command, and observation messages."""
+"""Shared envelope for browser ping, lifecycle, and Playwright relay frames."""
 from __future__ import annotations
 import json
 
