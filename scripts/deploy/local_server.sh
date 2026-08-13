@@ -171,7 +171,7 @@ apply_public_url_config() {
 backfill_public_url_config() {
   local value
   value="$(env_value VIBECANVAS_PUBLIC_URL)"
-  [[ -n "$value" ]] || return
+  [[ -n "$value" ]] || return 0
   parse_public_url "$value"
   ensure_env_value WEB_ALLOWED_HOSTS "$PUBLIC_HOST"
   ensure_env_value VIBECANVAS_API_CORS_ORIGINS "$PUBLIC_ORIGIN"

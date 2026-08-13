@@ -33,6 +33,7 @@ def test_local_server_init_is_secure_and_idempotent(tmp_path: Path) -> None:
 
     assert env_file.stat().st_mode & 0o777 == 0o600
     assert values["VIBECANVAS_BIND_ADDRESS"] == "127.0.0.1"
+    assert values["VIBECANVAS_INTERNAL_BIND_ADDRESS"] == "127.0.0.1"
     assert values["VIBECANVAS_PUBLIC_URL"] == "http://localhost:9001"
     assert values["ENABLE_TEST_USER"] == "false"
     assert values["ENTERPRISE_SSO_ENABLED"] == "false"
@@ -77,6 +78,7 @@ def test_local_server_init_backfills_missing_upgrade_settings(tmp_path: Path) ->
     values = _dotenv(env_file)
 
     assert values["POSTGRES_PASSWORD"] == "keep-existing-secret"
+    assert values["VIBECANVAS_INTERNAL_BIND_ADDRESS"] == "127.0.0.1"
     assert len(values["OPENFGA_ERASURE_PASSWORD"]) >= 32
     assert values["SANDBOX_EGRESS_MODE"] == "proxy"
     assert values["SANDBOX_EGRESS_POLICY"] == "public"
@@ -88,9 +90,11 @@ def test_local_server_init_backfills_missing_upgrade_settings(tmp_path: Path) ->
 
 def test_compose_published_ports_default_to_loopback() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
-    for service_name in ("postgres", "redis", "openfga", "api", "celery_worker", "web"):
+    for service_name in ("postgres", "redis", "openfga", "api", "celery_worker"):
         for port in compose["services"][service_name].get("ports", []):
-            assert "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:" in port
+            assert "${VIBECANVAS_INTERNAL_BIND_ADDRESS:-127.0.0.1}:" in port
+    for port in compose["services"]["web"].get("ports", []):
+        assert "${VIBECANVAS_BIND_ADDRESS:-127.0.0.1}:" in port
 
 
 def test_only_sandboxd_is_privileged_and_owns_snapshot_storage() -> None:

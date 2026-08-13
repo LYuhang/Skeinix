@@ -55,6 +55,14 @@ assert_value "$https_env" VIBECANVAS_EXTENSION_ALLOWED_ORIGINS http://203.0.113.
 assert_value "$https_env" WEB_SESSION_COOKIE_SECURE false
 assert_value "$https_env" POSTGRES_PASSWORD "$original_postgres_password"
 
+legacy_env="$TEMPORARY_DIRECTORY/legacy.env"
+printf '%s\n' \
+  'POSTGRES_PASSWORD=keep-existing-secret' \
+  'VIBECANVAS_BIND_ADDRESS=127.0.0.1' >"$legacy_env"
+VIBECANVAS_ENV_FILE="$legacy_env" "$LAUNCHER" init >/dev/null
+assert_value "$legacy_env" POSTGRES_PASSWORD keep-existing-secret
+assert_value "$legacy_env" VIBECANVAS_INTERNAL_BIND_ADDRESS 127.0.0.1
+
 if VIBECANVAS_ENV_FILE="$TEMPORARY_DIRECTORY/invalid.env" \
   "$LAUNCHER" init --public-url 'https://user@example.com' \
   >/dev/null 2>&1; then
