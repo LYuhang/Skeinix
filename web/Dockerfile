@@ -59,7 +59,7 @@ RUN pnpm build && test -f dist/manifest.json && test -f dist/sidepanel.html
 
 # Python's standard library creates the deployment-local ZIP without adding a
 # package manager or archive utility to the final nginx runtime image.
-FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS extension-package
+FROM python:3.11.16-slim-trixie@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7 AS extension-package
 COPY --from=extension-build /app/extension/dist /extension
 RUN mkdir -p /out && \
     cd /extension && \

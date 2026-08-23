@@ -175,11 +175,11 @@ command -v uv >/dev/null || {
   exit 1
 }
 
-echo "[5/7] Creating the repo-local Python 3.11.15 environment"
+echo "[5/7] Creating the repo-local Python 3.11.16 environment"
 cd "$REPO_ROOT"
-uv python install 3.11.15
+uv python install 3.11.16
 if [[ ! -x .venv/bin/python ]]; then
-  uv venv --python 3.11.15 --seed .venv
+  uv venv --python 3.11.16 --seed .venv
 fi
 uv pip install --python .venv/bin/python --require-hashes \
   --requirement requirements-build.txt

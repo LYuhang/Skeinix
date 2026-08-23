@@ -134,10 +134,11 @@ def test_security_workflow_runs_the_container_gate_and_pins_actions() -> None:
     assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", ref) for ref in action_refs)
 
 
-def test_python_ci_installs_elk_and_probes_rootless_gvisor_profile() -> None:
+def test_python_ci_probes_rootless_gvisor_without_retired_elk_setup() -> None:
     workflow = _CI_WORKFLOW.read_text(encoding="utf-8")
-    assert "Install the frozen ELK layout dependency graph" in workflow
-    assert "pnpm install --frozen-lockfile" in workflow
+    python_job = workflow.split("  web:", maxsplit=1)[0]
+    assert "Install the frozen ELK layout dependency graph" not in python_job
+    assert "pnpm install --frozen-lockfile" not in python_job
     assert "kernel.apparmor_restrict_unprivileged_userns=0" in workflow
     assert "SANDBOX_GVISOR_PLATFORM: ptrace" in workflow
     assert "rootless_gvisor_full_profile=" in workflow

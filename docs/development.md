@@ -39,7 +39,7 @@ is available in
 
 The supported toolchain follows the versions used by CI:
 
-- Python 3.11.15 in `.venv/`;
+- Python 3.11.16 in `.venv/`;
 - Node.js 22 (CI pins 22.23.2) and pnpm 10.34.4;
 - PostgreSQL server binaries, a Redis-compatible local server, and gVisor; and
 - OpenFGA, started automatically with the local stack.

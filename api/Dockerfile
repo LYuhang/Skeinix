@@ -64,7 +64,7 @@ COPY api/drawio-runtime/launch.mjs /opt/drawio-mcp/launch.mjs
 RUN chmod 0755 /opt/drawio-mcp/launch.mjs && \
     test "$(node /opt/drawio-mcp/launch.mjs --version)" = "1.5.0"
 
-FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
+FROM python:3.11.16-slim-trixie@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 ARG CODEX_CLI_VERSION
 ARG PLAYWRIGHT_MCP_VERSION
 ARG DRAWIO_DESKTOP_VERSION
