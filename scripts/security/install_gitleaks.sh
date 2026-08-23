@@ -25,7 +25,7 @@ esac
 work_dir="$(mktemp -d)"
 trap 'rm -r "$work_dir"' EXIT
 archive="$work_dir/$artifact"
-curl -fsSL --retry 3 \
+curl -fsSL --retry 3 --retry-all-errors --retry-delay 1 \
   "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${artifact}" \
   -o "$archive"
 printf '%s  %s\n' "$digest" "$archive" | sha256sum -c -

@@ -11,6 +11,7 @@ import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 _INSTALLER = _ROOT / "scripts/security/install_sbom_tools.sh"
+_GITLEAKS_INSTALLER = _ROOT / "scripts/security/install_gitleaks.sh"
 _SCANNER = _ROOT / "scripts/security/scan_container_images.sh"
 _POLICY_EVALUATOR = _ROOT / "scripts/security/evaluate_container_vulnerabilities.py"
 _POLICY = _ROOT / "scripts/security/container-vulnerability-policy.json"
@@ -95,6 +96,12 @@ def test_sbom_tool_installer_is_pinned_and_checksum_verified() -> None:
     assert "sha256sum -c -" in installer
     assert "get.anchore.io" not in installer
     assert "latest" not in installer.lower()
+
+
+def test_gitleaks_installer_retries_transport_errors_and_verifies_checksum() -> None:
+    installer = _GITLEAKS_INSTALLER.read_text(encoding="utf-8")
+    assert "--retry 3 --retry-all-errors --retry-delay 1" in installer
+    assert "sha256sum -c -" in installer
 
 
 def test_supply_chain_shell_scripts_parse() -> None:
