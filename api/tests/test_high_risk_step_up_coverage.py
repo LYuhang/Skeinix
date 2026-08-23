@@ -10,7 +10,6 @@ from vibecanvas_api.routes import (
     llm_credentials,
     mcp_servers,
     organizations,
-    skills,
     tasks,
     webauthn,
     workflows,
@@ -43,8 +42,6 @@ DIRECT_STEP_UP_ENDPOINTS = (
     tasks.revoke_task_access,
     kb.grant_kb_access,
     kb.revoke_kb_access,
-    skills.grant_skill_access,
-    skills.revoke_skill_access,
     webauthn.delete_credential,
 )
 

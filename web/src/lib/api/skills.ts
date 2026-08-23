@@ -1,5 +1,8 @@
 import { getApiBase } from '@/lib/base-path';
-import type { ResourceAccess } from '@/lib/api/organizations';
+import type {
+  ResourceAccess,
+  ResourceProvenance,
+} from '@/lib/api/organizations';
 
 export type SkillCatalogSource = 'openai' | 'anthropic';
 export type SkillSource = SkillCatalogSource | 'custom';
@@ -18,6 +21,7 @@ export interface Skill {
   created_at: string | null;
   updated_at: string | null;
   access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export interface SkillDetail extends Skill {
@@ -37,6 +41,8 @@ export interface SkillDraft {
   files: string[];
   has_changes: boolean;
   updated_at: string | null;
+  access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export interface SkillRevision {
@@ -47,6 +53,8 @@ export interface SkillRevision {
   files: string[];
   size_bytes: number;
   created_at: string | null;
+  access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export interface SkillRevisionDetail extends SkillRevision {
@@ -86,6 +94,32 @@ export interface SkillCatalogResult {
 }
 
 const BASE = getApiBase();
+const CATALOG_TIMEOUT_MS = 25_000;
+
+function withCatalogTimeout(init: RequestInit = {}): { init: RequestInit; cleanup: () => void } {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CATALOG_TIMEOUT_MS);
+  const cleanup = () => window.clearTimeout(timeout);
+  if (init.signal) init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  return { init: { ...init, signal: controller.signal }, cleanup };
+}
+
+async function catalogFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const bounded = withCatalogTimeout(init);
+  try {
+    return await authedFetch(path, bounded.init);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(
+        'The Skill catalog did not respond in time. Check the catalog connection and try again.',
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    bounded.cleanup();
+  }
+}
 
 async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const { useAuthStore } = await import('@/stores/auth');
@@ -141,7 +175,7 @@ export async function searchSkillCatalog(
   limit = 40,
 ): Promise<SkillCatalogResult> {
   const params = new URLSearchParams({ source, search, limit: String(limit) });
-  const response = await authedFetch(`/api/v1/skills/catalog?${params}`);
+  const response = await catalogFetch(`/api/v1/skills/catalog?${params}`);
   return jsonOrThrow<SkillCatalogResult>(response, 'searchSkillCatalog');
 }
 
@@ -150,7 +184,7 @@ export async function resolveSkillCatalogItem(
   sourceId: string,
 ): Promise<SkillCatalogItem> {
   const params = new URLSearchParams({ source, source_id: sourceId });
-  const response = await authedFetch(`/api/v1/skills/catalog/resolve?${params}`);
+  const response = await catalogFetch(`/api/v1/skills/catalog/resolve?${params}`);
   return jsonOrThrow<SkillCatalogItem>(response, 'resolveSkillCatalogItem');
 }
 

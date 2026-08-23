@@ -42,8 +42,8 @@ production checks are defined in the
 
 | Store | Typical contents | Lifecycle behavior |
 | --- | --- | --- |
-| **PostgreSQL** | Users, Organizations, memberships, Chats, Workflows, versions, runs, Tasks, Deployments, Knowledge metadata and chunks, authorization state, and audit records | Tenant-scoped business rows are protected by RLS. Account erasure removes the personal tenant and user-scoped identity data; Organization-owned content follows the rules described below. |
-| **Object storage** | VFS file content, Knowledge sources, generated artifacts, run files, and Task outputs | Objects use tenant, resource, or Task prefixes. Account erasure removes the personal-tenant prefixes and the user's mounted-file objects. |
+| **PostgreSQL** | Users, Organizations, memberships, Chats, Workflows, versions, runs, Tasks, Deployments, Knowledge package metadata and derived search chunks, authorization state, and audit records | Tenant-scoped business rows are protected by RLS. Account erasure removes the personal tenant and user-scoped identity data; Organization-owned content follows the rules described below. |
+| **Object storage** | VFS file content, authoritative Knowledge package files, generated artifacts, run files, and Task outputs | Objects use tenant, resource, or Task prefixes. Account erasure removes the personal-tenant prefixes and the user's mounted-file objects. |
 | **Runtime checkpoints** | LangChain checkpoints and compatibility state used to resume a Chat | Personal-tenant state is removed. Checkpoints for Chats created by the deleted user in another Organization are removed without deleting that Organization. |
 | **Valkey** | Celery broker data, short-lived event copies, locks, and transient coordination | User and personal-tenant keys are removed where they can be addressed directly. Remaining queue messages are bounded by broker policy and cannot restore a deleted identity or authorization capability. |
 | **Sandbox and host storage** | Live or hibernated runtime state, overlay directories, VFS volumes, SDK state, and user-mounted files | Locally owned sandboxes are closed, file synchronization is stopped, and validated user and personal-tenant directories are removed. Ordinary sandbox leases and TTLs remain a secondary cleanup boundary. |
@@ -140,7 +140,7 @@ The purge worker processes the following durable phases in order:
    role, and removes local authorization edges that could continue to grant
    access or retain the erased user identifier.
 5. **Database:** removes personal-tenant business data and user-scoped identity,
-   session, MFA, membership, preference, and OAuth rows.
+   session, passkey, membership, preference, and OAuth rows.
 6. **Backup retention:** records the boundary between erased active stores and
    encrypted backups that must age out under operator policy.
 

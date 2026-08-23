@@ -7,7 +7,7 @@ from vibecanvas_api.services.agent_runtime.context_manifest import (
 )
 from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeInstruction,
-    RuntimeMcpServer,
+    HostMcpServerAuthority,
 )
 
 
@@ -16,14 +16,14 @@ def test_context_manifest_is_deterministic_and_runtime_neutral() -> None:
         instruction_id="command:build:v1",
         kind="command_context",
         scope="chat",
-        name="build",
+        name="workflow",
         version=1,
         content="Build safely.",
     )
-    server = RuntimeMcpServer(
-        name="build",
+    server = HostMcpServerAuthority(
+        name="workflow",
         source="platform",
-        connection={"transport": "streamable_http", "url": "https://host.test/mcp"},
+        connection={"transport": "host_gateway", "capability": "private"},
     )
     common = dict(
         rollout_mode="active",
@@ -35,7 +35,7 @@ def test_context_manifest_is_deterministic_and_runtime_neutral() -> None:
         todo_items=[],
         artifact_refs={},
         workspace_scope_id="workspace-1",
-        active_modes=["build"],
+        active_modes=["workflow"],
     )
     langchain = build_context_manifest(runtime_type="langchain", **common)
     codex = build_context_manifest(runtime_type="codex", **common)

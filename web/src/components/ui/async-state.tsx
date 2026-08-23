@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Ban,
   CheckCircle2,
@@ -39,7 +40,7 @@ export function AsyncState({
   actionLabel,
   onAction,
   technicalDetails,
-  technicalDetailsLabel = 'Technical details',
+  technicalDetailsLabel,
   className,
 }: {
   kind: AsyncStateKind;
@@ -51,6 +52,7 @@ export function AsyncState({
   technicalDetailsLabel?: ReactNode;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const Icon = stateIcon[kind];
   return (
     <div
@@ -79,7 +81,7 @@ export function AsyncState({
       {technicalDetails ? (
         <details className="mt-3 max-w-full text-left text-xs text-content-tertiary">
           <summary className="cursor-pointer select-none text-center font-medium hover:text-content-secondary">
-            {technicalDetailsLabel}
+            {technicalDetailsLabel ?? t('common.technicalDetails')}
           </summary>
           <pre className="mt-2 max-h-40 max-w-xl overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-sunken px-3 py-2 font-mono text-xs leading-5 text-content-secondary">
             {technicalDetails}

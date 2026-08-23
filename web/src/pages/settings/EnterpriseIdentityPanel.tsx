@@ -180,8 +180,8 @@ export function EnterpriseIdentityPanel({
                   {provider.issuer_url}
                 </p>
                 <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-                  <p className="break-all">SCIM: {provider.scim_base_url ?? '—'}</p>
-                  <p className="break-all">Callback: {provider.oidc_callback_url ?? '—'}</p>
+                  <p className="break-all">{t('organization.identity.scimEndpoint', 'SCIM endpoint')}: {provider.scim_base_url ?? '—'}</p>
+                  <p className="break-all">{t('organization.identity.callbackUrl', 'Callback URL')}: {provider.oidc_callback_url ?? '—'}</p>
                   <p>
                     {t('organization.identity.tokenGeneration', 'SCIM token generation')}: {provider.scim_token_generation}
                     {' · '}
@@ -245,7 +245,7 @@ export function EnterpriseIdentityPanel({
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="identity-display-name">{t('organization.name', 'Name')}</Label>
-              <Input id="identity-display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Corporate identity" />
+              <Input id="identity-display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={t('organization.identity.namePlaceholder', 'Corporate identity')} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="identity-issuer">{t('organization.identity.issuer', 'OIDC issuer URL')}</Label>

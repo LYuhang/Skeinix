@@ -33,7 +33,7 @@ export interface ActionCtx {
 
 export interface Action {
   id: string;
-  label: string;
+  labelKey: string;
   shortcut?: string;
   group: 'navigate' | 'workflow' | 'view';
   handler: (ctx: ActionCtx) => void;
@@ -72,31 +72,31 @@ function pasteAnchor(): { x: number; y: number } {
 export const ACTIONS: Action[] = [
   {
     id: 'goto-workspace',
-    label: 'Go to workspace',
+    labelKey: 'commandPalette.action.gotoWorkspace',
     group: 'navigate',
     handler: ({ navigate }) => navigate('/workspace'),
   },
   {
     id: 'goto-tasks',
-    label: 'Go to tasks',
+    labelKey: 'commandPalette.action.gotoTasks',
     group: 'navigate',
     handler: ({ navigate }) => navigate('/tasks'),
   },
   {
     id: 'goto-deployments',
-    label: 'Go to deployments',
+    labelKey: 'commandPalette.action.gotoDeployments',
     group: 'navigate',
     handler: ({ navigate }) => navigate('/deployments'),
   },
   {
     id: 'goto-settings',
-    label: 'Settings',
+    labelKey: 'commandPalette.action.gotoSettings',
     group: 'navigate',
     handler: ({ navigate }) => navigate('/settings'),
   },
   {
     id: 'save',
-    label: 'Save workflow',
+    labelKey: 'commandPalette.action.saveWorkflow',
     shortcut: '⌘S',
     group: 'workflow',
     // The real toolbar affordance is `canvas-save` (scoped so future
@@ -106,7 +106,7 @@ export const ACTIONS: Action[] = [
   },
   {
     id: 'check',
-    label: 'Check workflow',
+    labelKey: 'commandPalette.action.checkWorkflow',
     group: 'workflow',
     // Check lives in the More menu, which is unmounted until the
     // menu opens, so a `[data-action="check"]` DOM-click would silently no-op.
@@ -116,21 +116,21 @@ export const ACTIONS: Action[] = [
   },
   {
     id: 'undo',
-    label: 'Undo',
+    labelKey: 'commandPalette.action.undo',
     shortcut: '⌘Z',
     group: 'workflow',
     handler: () => clickToolbarAction('undo'),
   },
   {
     id: 'redo',
-    label: 'Redo',
+    labelKey: 'commandPalette.action.redo',
     shortcut: '⌘⇧Z',
     group: 'workflow',
     handler: () => clickToolbarAction('redo'),
   },
   {
     id: 'copy-node',
-    label: 'Copy selected node',
+    labelKey: 'commandPalette.action.copyNode',
     shortcut: '⌘C',
     group: 'workflow',
     // Clipboard/delete commands call the store DIRECTLY — unlike save /
@@ -143,14 +143,14 @@ export const ACTIONS: Action[] = [
   },
   {
     id: 'paste-node',
-    label: 'Paste node',
+    labelKey: 'commandPalette.action.pasteNode',
     shortcut: '⌘V',
     group: 'workflow',
     handler: () => useWorkflowEditStore.getState().pasteNodes(pasteAnchor()),
   },
   {
     id: 'duplicate-node',
-    label: 'Duplicate selected node',
+    labelKey: 'commandPalette.action.duplicateNode',
     shortcut: '⌘D',
     group: 'workflow',
     handler: () => {
@@ -163,7 +163,7 @@ export const ACTIONS: Action[] = [
   },
   {
     id: 'delete-selection',
-    label: 'Delete selected node / edge',
+    labelKey: 'commandPalette.action.deleteSelection',
     shortcut: '⌫',
     group: 'workflow',
     handler: () => {
@@ -179,19 +179,19 @@ export const ACTIONS: Action[] = [
   },
   {
     id: 'execute',
-    label: 'Execute workflow',
+    labelKey: 'commandPalette.action.executeWorkflow',
     group: 'workflow',
     handler: () => clickToolbarAction('execute'),
   },
   {
     id: 'cancel-exec',
-    label: 'Cancel execution',
+    labelKey: 'commandPalette.action.cancelExecution',
     group: 'workflow',
     handler: () => clickToolbarAction('cancel'),
   },
   {
     id: 'back-to-workspace',
-    label: 'Back to workspace',
+    labelKey: 'commandPalette.action.backToWorkspace',
     group: 'navigate',
     handler: () => clickToolbarAction('back'),
   },

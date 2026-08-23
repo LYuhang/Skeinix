@@ -111,11 +111,12 @@ async def _actor(pg_engine, organization_id: str) -> PrincipalRef:
     return PrincipalRef(PrincipalType.USER, str(user_id))
 
 
-def _binding(organization_id: str) -> RelationshipBinding:
+async def _binding(pg_engine, organization_id: str) -> RelationshipBinding:
+    recipient = await _actor(pg_engine, organization_id)
     return RelationshipBinding(
         subject=RelationshipSubject(
             RelationshipSubjectType.USER,
-            str(uuid.uuid4()),
+            recipient.id,
         ),
         relation="viewer",
         resource=ResourceRef(
@@ -133,7 +134,7 @@ async def test_grant_commits_intent_applies_and_is_idempotent(pg_engine):
         client=store,
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     actor = await _actor(pg_engine, organization_id)
 
     first = await coordinator.request_binding(
@@ -170,7 +171,7 @@ async def test_idempotency_key_cannot_change_immutable_intent(pg_engine):
         client=_TupleStore(),
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     actor = await _actor(pg_engine, organization_id)
     await coordinator.request_binding(
         actor=actor,
@@ -194,7 +195,7 @@ async def test_failed_revoke_stays_guarded_until_reconciled(pg_engine):
         client=store,
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     actor = await _actor(pg_engine, organization_id)
     await coordinator.request_binding(
         actor=actor,
@@ -269,7 +270,7 @@ async def test_due_failed_mutation_is_reapplied_from_durable_ledger(
         client=store,
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     actor = await _actor(pg_engine, organization_id)
 
     with pytest.raises(OpenFgaUnavailableError):
@@ -315,7 +316,7 @@ async def test_older_revision_is_superseded_and_cannot_replay(pg_engine):
         client=store,
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     edge = MutationEdge.from_binding(binding)
 
     async with session_scope(organization_id) as session:
@@ -355,7 +356,7 @@ async def test_mutation_payload_trigger_and_rls_are_enforced(pg_engine):
         client=_TupleStore(),
         organization_id=organization_id,
     )
-    binding = _binding(organization_id)
+    binding = await _binding(pg_engine, organization_id)
     mutation = await coordinator.request_binding(
         actor=await _actor(pg_engine, organization_id),
         binding=binding,

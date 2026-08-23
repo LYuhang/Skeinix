@@ -141,7 +141,7 @@ def run_in_short_session(
 # ---------------------------------------------------------------------------
 #
 # The celery-BEAT periodic tasks (reconciler, kb gc / orphan sweepers,
-# cron dispatcher, invoke-counter flush, concurrency reconciler) run in a
+# invoke-counter flush, concurrency reconciler) run in a
 # single long-lived prefork worker process and each does
 # ``asyncio.run(_async_body())`` per tick. They used the *process-global*
 # pooled admin engine (``db.get_admin_engine`` / ``session_scope_admin``),

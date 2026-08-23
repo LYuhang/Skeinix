@@ -21,17 +21,7 @@ export type ChatPreviewItem =
   | {
       id: string;
       title: string;
-      resource: Extract<PreviewResourceRefV1, { kind: 'diagram_draft' }>;
-    }
-  | {
-      id: string;
-      title: string;
       resource: Extract<PreviewResourceRefV1, { kind: 'background_jobs' }>;
-    }
-  | {
-      id: string;
-      title: string;
-      resource: Extract<PreviewResourceRefV1, { kind: 'execution_plan' }>;
     };
 
 export function filePreviewItem(fileRef: FileRefV1, title: string): ChatPreviewItem {

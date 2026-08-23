@@ -6,7 +6,7 @@
  * (`ChatMessageList`) runs both through the same reducer so this component
  * never sees raw `'tool'` chunks. Tool invocations are rendered by
  * `ChatMessageList` as separate activity groups, not nested inside message
- * bubbles.
+ * response blocks.
  *
  */
 import { memo } from 'react';
@@ -147,18 +147,18 @@ function MessageItemComponent({
       {!compact && !isUser && (showAvatar ? <MessageAvatar label="A" tone="agent" /> : <div className="h-9 w-9 shrink-0" />)}
       <div
         className={cn(
-          'px-3.5 py-2.5',
-          compact
-            ? cn(
-                'rounded-xl px-3 py-2',
-                isUser ? 'max-w-[88%]' : 'max-w-[94%]',
-              )
-            : isUser ? 'max-w-[82%]' : 'max-w-[92%]',
+          'min-w-0 text-foreground',
           isUser
-            ? 'rounded-2xl rounded-br-sm border border-focus/15 bg-focus/10 text-foreground'
-            : 'rounded-2xl rounded-bl-sm border border-edge-subtle bg-surface-sunken/70 text-foreground',
+            ? cn(
+                'rounded-2xl rounded-br-sm border border-focus/15 bg-focus/10 px-3.5 py-2.5',
+                compact ? 'max-w-[88%] rounded-xl px-3 py-2' : 'max-w-[82%]',
+              )
+            : compact
+              ? 'max-w-[94%] py-1'
+              : 'max-w-[min(100%,820px)] py-1.5 pr-3',
         )}
         data-message-role={message.role}
+        data-message-surface={isUser ? 'bubble' : 'plain'}
         data-message-content-rail={!isUser ? 'assistant' : undefined}
       >
         {isUser && fileAttachments.length > 0 ? (
@@ -237,5 +237,5 @@ function sameVisibleMessage(previous: MessageItemProps, next: MessageItemProps):
 
 // Streaming updates replace only the active assistant message. The transcript
 // renderer still walks the list to maintain tool grouping, while memoization
-// keeps completed Markdown bubbles from re-rendering on every token frame.
+// keeps completed Markdown responses from re-rendering on every token frame.
 export const MessageItem = memo(MessageItemComponent, sameVisibleMessage);

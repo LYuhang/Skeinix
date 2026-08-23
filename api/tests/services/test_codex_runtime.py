@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from vibecanvas_api.services.agent_runtime.codex import (
@@ -24,16 +25,26 @@ from vibecanvas_api.services.agent_runtime.codex import (
     _interaction_definition,
     _interaction_response,
     _interactive_artifact_from_item,
-    _mcp_config,
     _McpItemCorrelator,
     _normalize_codex_plan,
     _RuntimeControlRouter,
     _safe_codex_notice,
     _tool_completion_status,
     _tool_projection,
-    run_codex_turn,
+    run_codex_turn as _run_codex_turn,
+)
+from vibecanvas_api.services.agent_runtime.codex_app_server import (
+    CodexAppServerError,
 )
 from vibecanvas_api.services.agent_runtime.protocol import RuntimeTurnRequest
+from vibecanvas_api.services.agent_runtime.mcp_hub import SandboxMcpHub
+from vibecanvas_api.services.agent_runtime.mcp_hub_adapter import (
+    SandboxMcpRuntimeAdapter,
+)
+from vibecanvas_api.services.agent_runtime.mcp_runtime_protocol import (
+    McpDesiredState,
+    McpExecutionContext,
+)
 from vibecanvas_engine.sandbox_bus import MSG_RUNTIME_RESULT
 
 _BROKER_MODEL = {
@@ -45,6 +56,10 @@ _LOCKED_CODEX_VERSION = "codex-cli 0.147.0"
 _LOCKED_CODEX_SCHEMA_SHA256 = (
     "babfd5c98cd978dd858b4762cdfbc9fba941e1a0e4053de0050e4082ae1f075a"
 )
+_RESIDENT_TEST_HUBS: dict[
+    int,
+    tuple[SandboxMcpRuntimeAdapter, SandboxMcpHub, dict[str, object]],
+] = {}
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +72,81 @@ def _isolate_broker_capability_file(monkeypatch):
         "vibecanvas_api.services.agent_runtime.codex._remove_broker_capability",
         lambda: None,
     )
+
+
+async def run_codex_turn(channel, request, **kwargs):
+    """Run direct adapter tests through the mandatory aggregate Hub."""
+    if request.mcp_desired_state is not None:
+        return await _run_codex_turn(channel, request, **kwargs)
+    now = datetime.now(timezone.utc)
+    desired = McpDesiredState(
+        organization_id=request.tenant_id,
+        user_id=request.user_id,
+        chat_id=request.chat_id,
+        runtime_session_id=request.runtime_session_id,
+        sandbox_id="test-sandbox",
+        sandbox_generation=1,
+        chat_mcp_config_revision=request.mcp_config_revision,
+        platform_contract_revision="test-platform",
+        skill_catalog_revision="test-skills",
+        servers=[],
+    )
+    execution = McpExecutionContext(
+        organization_id=request.tenant_id,
+        user_id=request.user_id,
+        chat_id=request.chat_id,
+        runtime_session_id=request.runtime_session_id,
+        sandbox_generation=1,
+        turn_id=request.turn_id,
+        agent_run_id=request.turn_id,
+        active_platform_capabilities=[],
+        selected_mcp_revision=request.mcp_config_revision,
+        approval_mode=request.approval_mode,
+        surface=request.surface,
+        authorization_generation="test-authorization",
+        issued_at=now,
+        expires_at=now + timedelta(minutes=5),
+        capability="test-capability",
+    )
+
+    async def unused_gateway(*_args, **_kwargs):
+        raise AssertionError("empty test Hub must not call the Host Gateway")
+
+    resident_threads = kwargs.get("resident_threads")
+    cache_key = id(resident_threads) if resident_threads is not None else None
+    bundle = _RESIDENT_TEST_HUBS.get(cache_key) if cache_key is not None else None
+    if bundle is None:
+        adapter = SandboxMcpRuntimeAdapter(unused_gateway)
+        hub = SandboxMcpHub(adapter)
+        registry: dict[str, object] = {}
+        if cache_key is not None:
+            _RESIDENT_TEST_HUBS[cache_key] = (adapter, hub, registry)
+    else:
+        adapter, hub, registry = bundle
+    try:
+        return await _run_codex_turn(
+            channel,
+            request.model_copy(update={
+                "mcp_runtime_stage": "sandbox",
+                "mcp_host_servers": [],
+                "mcp_desired_state": desired,
+                "mcp_execution_context": execution,
+            }),
+            mcp_hub=hub,
+            mcp_adapter=adapter,
+            hub_gateway_registry=registry,
+            **kwargs,
+        )
+    finally:
+        keep_resident = cache_key is not None and request.runtime_state_ref is None
+        if keep_resident:
+            return
+        if cache_key is not None:
+            _RESIDENT_TEST_HUBS.pop(cache_key, None)
+        gateway = registry.get("aggregate")
+        if gateway is not None:
+            await gateway.close()
+        await hub.close()
 
 
 def test_codex_approval_modes_map_to_native_policy() -> None:
@@ -614,132 +704,6 @@ def test_codex_normalizes_native_tool_terminal_status(item: dict, expected: str)
     assert _tool_completion_status(item) == expected
 
 
-def test_codex_mcp_config_isolates_unsupported_custom_transport() -> None:
-    request = RuntimeTurnRequest(
-        tenant_id="tenant",
-        user_id="user",
-        chat_id="chat",
-        turn_id="turn",
-        runtime_type="codex",
-        runtime_session_id="runtime-session",
-        runtime_root="/runtime/.codex",
-        message={"role": "user", "content": "hello"},
-        model=_BROKER_MODEL,
-        mcp_servers=[
-            {
-                "name": "legacy",
-                "source": "custom",
-                "connection": {
-                    "transport": "sse",
-                    "url": "https://example.test/sse",
-                },
-            },
-            {
-                "name": "modern",
-                "source": "custom",
-                "connection": {
-                    "transport": "streamable_http",
-                    "url": "https://example.test/mcp",
-                },
-            },
-        ],
-    )
-
-    config, skipped = _mcp_config(request)
-
-    assert config == {
-        "mcp_servers": {
-            "modern": {
-                "url": "https://example.test/mcp",
-                "required": False,
-            }
-        }
-    }
-    assert skipped == [
-        {
-            "name": "legacy",
-            "transport": "sse",
-            "reason": "unsupported_transport",
-        }
-    ]
-
-
-def test_codex_mcp_config_keeps_platform_capabilities_fail_closed() -> None:
-    request = RuntimeTurnRequest(
-        tenant_id="tenant",
-        user_id="user",
-        chat_id="chat",
-        turn_id="turn",
-        runtime_type="codex",
-        runtime_session_id="runtime-session",
-        runtime_root="/runtime/.codex",
-        message={"role": "user", "content": "hello"},
-        model=_BROKER_MODEL,
-        active_platform_mcps=["workflow"],
-        mcp_servers=[
-            {
-                "name": "workflow",
-                "source": "platform",
-                "connection": {
-                    "transport": "sse",
-                    "url": "https://example.test/sse",
-                },
-            }
-        ],
-    )
-
-    with pytest.raises(RuntimeError, match="does not support MCP transport"):
-        _mcp_config(request)
-
-
-def test_codex_platform_gateway_hides_capability_and_native_mcp_prompt() -> None:
-    request = RuntimeTurnRequest(
-        tenant_id="tenant",
-        user_id="user",
-        chat_id="chat",
-        turn_id="turn",
-        runtime_type="codex",
-        runtime_session_id="runtime-session",
-        runtime_root="/runtime/.codex",
-        message={"role": "user", "content": "/browser click submit"},
-        model=_BROKER_MODEL,
-        active_platform_mcps=["browser"],
-        mcp_servers=[
-            {
-                "name": "browser",
-                "source": "platform",
-                "connection": {
-                    "transport": "streamable_http",
-                    "url": "https://platform.test/browser",
-                    "headers": {"Authorization": "Bearer private"},
-                },
-            }
-        ],
-    )
-
-    config, skipped = _mcp_config(
-        request,
-        connection_overrides={
-            "browser": {
-                "transport": "streamable_http",
-                "url": "http://127.0.0.1:43210/",
-            }
-        },
-    )
-
-    assert skipped == []
-    assert config == {
-        "mcp_servers": {
-            "browser": {
-                "url": "http://127.0.0.1:43210/",
-                "required": True,
-                "default_tools_approval_mode": "approve",
-                "tool_timeout_sec": 86400,
-            }
-        }
-    }
-
-
 @pytest.mark.asyncio
 async def test_runtime_control_router_separates_native_and_platform_requests() -> None:
     router = _RuntimeControlRouter()
@@ -904,6 +868,146 @@ async def test_codex_resident_thread_suppresses_repeated_mcp_startup(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_codex_reuses_one_aggregate_hub_endpoint_across_turns(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+            self.turn_number = 0
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                servers = params["config"]["mcp_servers"]
+                assert list(servers) == ["skeinix"]
+                assert servers["skeinix"]["url"].startswith(
+                    "http://127.0.0.1:"
+                )
+                return {"thread": {"id": "codex-hub-thread", "turns": []}}
+            if method == "turn/start":
+                self.turn_number += 1
+                return {"turn": {"id": f"codex-hub-turn-{self.turn_number}"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "id": f"codex-hub-turn-{self.turn_number}",
+                        "status": "completed",
+                    }
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def unused_host_gateway(*_args, **_kwargs):
+        raise AssertionError("an empty Hub must not call the Host Gateway")
+
+    desired = McpDesiredState(
+        organization_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        runtime_session_id="runtime-session",
+        sandbox_id="sandbox",
+        sandbox_generation=1,
+        chat_mcp_config_revision=0,
+        platform_contract_revision="platform-1",
+        skill_catalog_revision="skills-1",
+        servers=[],
+    )
+
+    def execution(turn_id: str) -> McpExecutionContext:
+        now = datetime.now(timezone.utc)
+        return McpExecutionContext(
+            organization_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            runtime_session_id="runtime-session",
+            sandbox_generation=1,
+            turn_id=turn_id,
+            agent_run_id=turn_id,
+            active_platform_capabilities=[],
+            selected_mcp_revision=0,
+            approval_mode="agent",
+            surface="main",
+            authorization_generation="auth-1",
+            issued_at=now,
+            expires_at=now + timedelta(minutes=5),
+            capability="test-capability",
+        )
+
+    adapter = SandboxMcpRuntimeAdapter(unused_host_gateway)
+    hub = SandboxMcpHub(adapter)
+    hub_gateways: dict[str, object] = {}
+    resident_threads: dict[str, str] = {}
+    client = FakeAppServer()
+    base_request = dict(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model=_BROKER_MODEL,
+        mcp_runtime_stage="sandbox",
+        mcp_desired_state=desired,
+    )
+    try:
+        first_gateway = None
+        for turn_number in range(1, 6):
+            turn_id = f"platform-turn-{turn_number}"
+            await run_codex_turn(
+                _Channel(),
+                RuntimeTurnRequest(
+                    turn_id=turn_id,
+                    runtime_state_ref=(
+                        "codex-hub-thread" if turn_number > 1 else None
+                    ),
+                    mcp_execution_context=execution(turn_id),
+                    **base_request,
+                ),
+                client=client,
+                close_client=False,
+                mcp_hub=hub,
+                mcp_adapter=adapter,
+                hub_gateway_registry=hub_gateways,
+                resident_threads=resident_threads,
+            )
+            if first_gateway is None:
+                first_gateway = hub_gateways["aggregate"]
+            assert hub_gateways["aggregate"] is first_gateway
+
+        assert [method for method, _params in client.requests] == [
+            "thread/start",
+            "turn/start",
+            "turn/start",
+            "turn/start",
+            "turn/start",
+            "turn/start",
+        ]
+    finally:
+        gateway = hub_gateways.get("aggregate")
+        if gateway is not None:
+            await gateway.close()
+        await hub.close()
+
+
+@pytest.mark.asyncio
 async def test_codex_forks_loaded_thread_when_turn_config_changes(monkeypatch):
     class FakeAppServer:
         def __init__(self):
@@ -958,7 +1062,7 @@ async def test_codex_forks_loaded_thread_when_turn_config_changes(monkeypatch):
             runtime_session_id="runtime-session",
             runtime_root="/runtime/.codex",
             runtime_state_ref="codex-thread-old",
-            message={"role": "user", "content": "/build create a workflow"},
+            message={"role": "user", "content": "/workflow create a workflow"},
             model=_BROKER_MODEL,
         ),
         client=client,
@@ -981,6 +1085,87 @@ async def test_codex_forks_loaded_thread_when_turn_config_changes(monkeypatch):
         {
             "state_ref": "codex-thread-refreshed",
             "previous_state_ref": "codex-thread-old",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_replaces_only_an_explicitly_missing_native_rollout(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/resume":
+                raise CodexAppServerError(
+                    "codex_app_server_request_failed",
+                    "no rollout found for thread id codex-thread-missing",
+                )
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread-recovered"}}
+            if method == "turn/start":
+                text = params["input"][0]["text"]
+                assert "previous native Codex thread was unavailable" in text
+                assert "continue the durable diagram" in text
+                return {"turn": {"id": "codex-turn"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "codex-turn", "status": "completed"}},
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    channel = _Channel()
+    await run_codex_turn(
+        channel,
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="platform-turn",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            runtime_state_ref="codex-thread-missing",
+            message={"role": "user", "content": "continue the durable diagram"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/resume",
+        "thread/start",
+        "turn/start",
+    ]
+    checkpoints = [
+        message["event"]["payload"]
+        for message in channel.sent
+        if message.get("event", {}).get("type") == "checkpoint"
+    ]
+    assert checkpoints == [
+        {
+            "state_ref": "codex-thread-recovered",
+            "previous_state_ref": "codex-thread-missing",
         }
     ]
 
@@ -1213,18 +1398,29 @@ async def test_codex_request_user_input_resumes_the_same_native_turn(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch):
+async def test_codex_aggregate_hub_emits_runtime_neutral_approval(monkeypatch):
     gateways = []
 
     class FakeGateway:
-        def __init__(self, **kwargs):
-            self.descriptor = kwargs["descriptor"]
-            self.request_approval = kwargs["request_approval"]
+        def __init__(self, _hub, _adapter):
+            self.request_approval = None
             self.url = None
             gateways.append(self)
 
-        async def start(self):
+        async def activate(
+            self,
+            *,
+            desired_servers,
+            request_approval,
+            requires_approval,
+        ):
+            del desired_servers, requires_approval
+            self.request_approval = request_approval
             self.url = f"http://127.0.0.1:{43210 + len(gateways)}/"
+            return []
+
+        def deactivate(self):
+            return None
 
         async def close(self):
             return None
@@ -1239,12 +1435,7 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
         async def request(self, method, _params, **_kwargs):
             if method == "thread/start":
                 servers = _params["config"]["mcp_servers"]
-                assert set(servers) == {
-                    "config",
-                    "interactive",
-                    "workflow",
-                    "browser",
-                }
+                assert set(servers) == {"skeinix"}
                 assert all(
                     server["url"].startswith("http://127.0.0.1:")
                     and "http_headers" not in server
@@ -1271,12 +1462,8 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
                     }
                 },
             }
-            browser_gateway = next(
-                gateway
-                for gateway in gateways
-                if gateway.descriptor.name == "browser"
-            )
-            action = await browser_gateway.request_approval(
+            assert gateways[0].request_approval is not None
+            action = await gateways[0].request_approval(
                 "browser_click",
                 {
                     "handle": "submit",
@@ -1295,7 +1482,7 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
             return None
 
     monkeypatch.setattr(
-        "vibecanvas_api.services.agent_runtime.codex.CodexPlatformMcpGateway",
+        "vibecanvas_api.services.agent_runtime.codex.CodexMcpHubGateway",
         FakeGateway,
     )
     monkeypatch.setattr(
@@ -1327,15 +1514,14 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
         model=_BROKER_MODEL,
         approval_mode="agent",
         active_platform_mcps=["config", "interactive", "workflow", "browser"],
-        mcp_servers=[
+        mcp_host_servers=[
             *[
                 {
                     "name": name,
                     "source": "platform",
                     "connection": {
-                        "transport": "streamable_http",
-                        "url": f"https://platform.test/{name}",
-                        "headers": {"Authorization": f"Bearer {name}-private"},
+                        "transport": "host_gateway",
+                        "capability": f"{name}-private",
                     },
                 }
                 for name in ("config", "interactive", "workflow")
@@ -1344,9 +1530,8 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
                 "name": "browser",
                 "source": "platform",
                 "connection": {
-                    "transport": "streamable_http",
-                    "url": "https://platform.test/browser",
-                    "headers": {"Authorization": "Bearer private"},
+                    "transport": "browser_gateway",
+                    "capability": "private",
                 },
             }
         ],
@@ -1354,12 +1539,7 @@ async def test_codex_browser_gateway_emits_runtime_neutral_approval(monkeypatch)
 
     await run_codex_turn(channel, request)
 
-    assert {gateway.descriptor.name for gateway in gateways} == {
-        "config",
-        "interactive",
-        "workflow",
-        "browser",
-    }
+    assert len(gateways) == 1
 
     events = [message["event"] for message in channel.sent if "event" in message]
     assert [event["type"] for event in events] == [

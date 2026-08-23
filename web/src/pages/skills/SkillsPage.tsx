@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import { BadgeCheck, BookOpenText, ChevronDown, FileArchive, Loader2, MoreHorizontal, Pencil, Plus, Search, Share2, Trash2 } from 'lucide-react';
+import { BadgeCheck, BookOpenText, ChevronDown, FileArchive, Loader2, MoreHorizontal, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -13,10 +13,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDeleteSkill, useSaveCustomSkill, useSkillCatalog, useSkills } from '@/lib/api/queries/skills';
 import type { Skill, SkillCatalogItem, SkillCatalogSource } from '@/lib/api/skills';
 import { ManagementPageShell, ManagementToolbar } from '@/components/layout/management-page-shell';
-import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { AsyncState } from '@/components/ui/async-state';
 import { ResourceIcon } from '@/components/presentation/ResourceIcon';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
 
 type PageTab = 'installed' | 'discover' | 'custom';
 type InstalledSource = 'all' | SkillCatalogSource;
@@ -28,7 +29,7 @@ function sourceLabel(source: string | null | undefined, t: (key: string, fallbac
   return t('skills.source.unknown', 'Imported');
 }
 
-function SkillCard({ skill, onDelete, onShare }: { skill: Skill; onDelete: (skill: Skill) => void; onShare: (skill: Skill) => void }) {
+function SkillCard({ skill, onDelete }: { skill: Skill; onDelete: (skill: Skill) => void }) {
   const { t } = useTranslation();
   const capabilities = new Set(skill.access?.capabilities ?? []);
   return (
@@ -78,12 +79,6 @@ function SkillCard({ skill, onDelete, onShare }: { skill: Skill; onDelete: (skil
                   </Link>
                 </DropdownMenuItem>
               ) : null}
-              {capabilities.has('manage_access') ? (
-                <DropdownMenuItem onSelect={() => onShare(skill)}>
-                  <Share2 />
-                  {t('skills.share', 'Share Skill')}
-                </DropdownMenuItem>
-              ) : null}
               {capabilities.has('delete') ? (
                 <DropdownMenuItem
                   data-testid="skill-menu-delete"
@@ -101,6 +96,7 @@ function SkillCard({ skill, onDelete, onShare }: { skill: Skill; onDelete: (skil
       <p className="line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-muted-foreground">
         {skill.description || t('skills.no_description', 'No Description')}
       </p>
+      <ResourceProvenanceLine provenance={skill.provenance} />
       <div className="mt-auto flex flex-wrap gap-1 border-t pt-3">
         {skill.allowed_tools.slice(0, 4).map((tool) => (
           <span key={tool} className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-secondary-foreground">{tool}</span>
@@ -167,7 +163,6 @@ export function SkillsPage() {
   const [lastTriggeredSearch, setLastTriggeredSearch] = useState<string | null>(null);
   const [discoverLimit, setDiscoverLimit] = useState(10);
   const [confirmDelete, setConfirmDelete] = useState<Skill | null>(null);
-  const [shareTarget, setShareTarget] = useState<Skill | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [customBundle, setCustomBundle] = useState<File | null>(null);
 
@@ -286,7 +281,7 @@ export function SkillsPage() {
             </ManagementToolbar>
 
             <div className="page-scroll-region flex-1 pr-1">
-            {skillsQuery.isLoading ? <div className="empty-state">{t('skills.loading', 'Loading…')}</div> : skillsQuery.isError ? (
+            {skillsQuery.isLoading ? <AsyncState kind="loading" title={t('skills.loading', 'Loading…')} /> : skillsQuery.isError ? (
               <ActionableError
                 title={t('skills.load_error', 'Failed To Load Skills.')}
                 description={t('skills.load_error_hint', 'Check your connection, then reload the installed skills.')}
@@ -310,7 +305,7 @@ export function SkillsPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {filtered.map((skill) => <SkillCard key={skill.id} skill={skill} onDelete={setConfirmDelete} onShare={setShareTarget} />)}
+                {filtered.map((skill) => <SkillCard key={skill.id} skill={skill} onDelete={setConfirmDelete} />)}
               </div>
             )}
             </div>
@@ -378,7 +373,7 @@ export function SkillsPage() {
             </ManagementToolbar>
 
             <div className="page-scroll-region flex-1 pr-1">
-            {catalogQuery.isLoading ? <div className="empty-state">{t('skills.catalog.loading', 'Loading Catalog…')}</div> : catalogQuery.isError ? (
+            {catalogQuery.isLoading ? <AsyncState kind="loading" title={t('skills.catalog.loading', 'Loading Catalog…')} /> : catalogQuery.isError ? (
               <ActionableError
                 title={t('skills.catalog.failed', 'Failed To Load The Skill Catalog.')}
                 description={t('skills.catalog.failed_hint', 'Check the catalog connection, then try loading it again.')}
@@ -439,7 +434,7 @@ export function SkillsPage() {
               ) : (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {customItems.map((skill) => (
-                    <SkillCard key={skill.id} skill={skill} onDelete={setConfirmDelete} onShare={setShareTarget} />
+                    <SkillCard key={skill.id} skill={skill} onDelete={setConfirmDelete} />
                   ))}
                 </div>
               )}
@@ -460,17 +455,6 @@ export function SkillsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {shareTarget ? (
-        <ResourceShareDialog
-          open
-          onOpenChange={(open) => !open && setShareTarget(null)}
-          resourceKind="skill"
-          resourceId={shareTarget.id}
-          resourceName={shareTarget.name}
-          effectiveRole={shareTarget.access?.effective_role}
-          accessSource={shareTarget.access?.source}
-        />
-      ) : null}
       <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>

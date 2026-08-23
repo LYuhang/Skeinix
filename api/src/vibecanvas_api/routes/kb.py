@@ -1,4 +1,4 @@
-"""KB / RAG REST API — CRUD + /files + /search + /reindex (spec sec 8).
+"""Knowledge package REST API — packages, files, sharing, and search.
 
 Mirrors the auth + session shape of every other business route in this
 package: ``current_user`` resolves the bearer token (AuthContext from
@@ -33,6 +33,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     Header,
     HTTPException,
     Query,
@@ -65,6 +66,9 @@ from vibecanvas_api.authorization.mutations import AuthzMutationError
 from vibecanvas_api.authorization.openfga_client import (
     OpenFgaUnavailableError,
 )
+from vibecanvas_api.authorization.share_resolution import (
+    binding_from_share_resolution,
+)
 from vibecanvas_api.authorization.projection import (
     apply_committed_structural_mutations,
     enqueue_structural_delta,
@@ -91,10 +95,12 @@ from vibecanvas_api.celery_app import celery_app
 from vibecanvas_api.config import config
 from vibecanvas_api.security.upload_scanner import require_clean_upload
 from vibecanvas_api.schemas.access import (
+    DirectBindingGrantIn,
     DirectBindingIn,
     DirectBindingListOut,
     DirectBindingOut,
     ResourceAccessOut,
+    ResourceProvenanceOut,
     access_from_decision,
     decision_allows_content,
 )
@@ -102,11 +108,25 @@ from vibecanvas_api.services.kb_search import (
     EncryptedKbSearchLimitError,
     KbSearchService,
 )
+from vibecanvas_api.services.knowledge_packages import (
+    MAX_PACKAGE_BYTES,
+    PackageFile,
+    enqueue_package_indexing,
+    normalize_imported_package,
+    normalize_package_path,
+    package_files_from_zip,
+    replace_package,
+    resolve_package_content_type,
+)
+from vibecanvas_api.services.access_presentation import direct_binding_out
 from vibecanvas_api.services.object_store import (
     get_object_store,
 )
 from vibecanvas_api.services.parsers import detect_parser_type
 from vibecanvas_api.services.queue_routing import route_for
+from vibecanvas_api.services.resource_provenance import (
+    ResourceProvenanceBuilder,
+)
 from vibecanvas_api.storage.repo_kb import KbRepo
 
 
@@ -148,14 +168,17 @@ class KbOut(BaseModel):
     description: Optional[str]
     summary: Optional[str]
     retrieval_strategy: str = "agentic_lexical"
+    package_version: int
     created_at: str
     updated_at: str
     access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
 
 
 class KbListOut(KbOut):
     file_count: int = 0
     chunk_count: int = 0
+    stored_count: int = 0
     pending_count: int = 0
     indexing_count: int = 0
     indexed_count: int = 0
@@ -173,31 +196,14 @@ class KbFileOut(BaseModel):
     id: str
     name: str
     parser_type: str
+    mime_type: str
     file_size: int
     status: str
     error_message: Optional[str]
     chunk_count: int
     created_at: str
     access: ResourceAccessOut
-
-
-class KbFileContentChunkOut(BaseModel):
-    index: int
-    text: str
-
-
-class KbFileContentOut(BaseModel):
-    """One bounded page of the normalized text that the Agent can read."""
-
-    file_id: str
-    file_name: str
-    parser_type: str
-    status: str
-    offset: int
-    next_offset: int
-    total_chunks: int
-    has_more: bool
-    chunks: list[KbFileContentChunkOut]
+    provenance: ResourceProvenanceOut
 
 
 class SearchRequest(BaseModel):
@@ -340,7 +346,7 @@ def _binding_out(binding: RelationshipBinding) -> DirectBindingOut:
 
 
 def _binding_from_body(
-    body: DirectBindingIn,
+    body: DirectBindingIn | DirectBindingGrantIn,
     *,
     ctx: AuthContext,
     knowledge_base_id: uuid.UUID,
@@ -364,7 +370,11 @@ def _require_sharing_enabled() -> None:
         )
 
 
-def _kb_to_out(kb, decision: Decision) -> KbOut:
+async def _kb_to_out(
+    kb,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> KbOut:
     """KnowledgeBase ORM -> KbOut. Coerces UUID + datetime to JSON-safe
     strings. Centralised so every read endpoint emits identical shape."""
     return KbOut(
@@ -375,50 +385,51 @@ def _kb_to_out(kb, decision: Decision) -> KbOut:
         ),
         summary=(kb.summary if decision_allows_content(decision) else None),
         retrieval_strategy="agentic_lexical",
+        package_version=kb.package_version,
         created_at=kb.created_at.isoformat(),
         updated_at=kb.updated_at.isoformat(),
         access=access_from_decision(decision),
+        provenance=await provenance.build(creator_user_id=kb.user_id),
     )
 
 
-def _kb_file_to_out(f, decision: Decision) -> KbFileOut:
+async def _kb_file_to_out(
+    f,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> KbFileOut:
     return KbFileOut(
         id=str(f.id),
         name=f.name,
         parser_type=f.parser_type,
+        mime_type=f.mime_type,
         file_size=f.file_size,
         status=f.status,
         error_message=f.error_message,
         chunk_count=f.chunk_count,
         created_at=f.created_at.isoformat(),
         access=access_from_decision(decision),
+        provenance=await provenance.build(
+            creator_user_id=f.user_id,
+            origin_type="uploaded",
+        ),
     )
 
 
 # ----------------------------------------------------------------- KB CRUD
 
 
-@router.post(
-    "",
-    response_model=KbOut,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_kb(
+async def _create_knowledge_package(
+    *,
     body: KbCreate,
+    package_files: list[PackageFile],
+    derive_index: bool,
     request: Request,
-    ctx: AuthContext = Depends(current_user),
-    session: AsyncSession = Depends(tenant_db),
-    service: AuthzService = Depends(get_authz_service),
-):
-    """Create a new knowledge base under the current tenant.
-
-    409 on duplicate name (partial UNIQUE on the active tenant/name digest).
-    """
-    await _authorize_organization_create(
-        request=request,
-        ctx=ctx,
-        service=service,
-    )
+    ctx: AuthContext,
+    session: AsyncSession,
+    service: AuthzService,
+) -> KbOut:
+    """Persist one authoritative package and its authorization projection."""
     repo = KbRepo(session)
     try:
         kb = await repo.create_kb(
@@ -428,14 +439,20 @@ async def create_kb(
             description=body.description,
         )
         await session.flush()
-    except IntegrityError:
-        # The tenant_db dependency rolls back on raised exceptions —
-        # surfacing as 409 prevents leaking the unique-index name to
-        # the client.
+        _, pending_index_files = await replace_package(
+            session,
+            kb_id=kb.id,
+            actor_user_id=uuid.UUID(ctx.user_id),
+            expected_version=1,
+            files=package_files,
+            increment_version=False,
+            derive_index=derive_index,
+        )
+    except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="kb_name_conflict",
-        )
+        ) from exc
     coordinator = mutation_coordinator_for_request(
         request,
         ctx.active_organization_id,
@@ -459,6 +476,11 @@ async def create_kb(
     )
     await session.commit()
     await apply_committed_structural_mutations(coordinator, mutation_ids)
+    await enqueue_package_indexing(
+        tenant_id=str(kb.tenant_id),
+        user_id=ctx.user_id,
+        file_ids=pending_index_files,
+    )
     await _rebind_tenant_guc(session, ctx.active_organization_id)
     decision = await service.check(
         principal_for_auth(ctx),
@@ -474,7 +496,121 @@ async def create_kb(
         raise OpenFgaUnavailableError(
             "authorization_projection_not_visible"
         )
-    return _kb_to_out(kb, decision)
+    return await _kb_to_out(
+        kb,
+        decision,
+        ResourceProvenanceBuilder(session),
+    )
+
+
+@router.post(
+    "",
+    response_model=KbOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_kb(
+    body: KbCreate,
+    request: Request,
+    ctx: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
+    service: AuthzService = Depends(get_authz_service),
+):
+    """Create a new knowledge base under the current tenant.
+
+    409 on duplicate name (partial UNIQUE on the active tenant/name digest).
+    """
+    await _authorize_organization_create(
+        request=request,
+        ctx=ctx,
+        service=service,
+    )
+    readme = (
+        f"# {body.name}\n\n"
+        f"{body.description or 'Describe the purpose and scope of this knowledge package.'}\n\n"
+        "## Directory\n\n"
+        "- `README.md` — package purpose, scope, structure, and file guide.\n"
+    ).encode("utf-8")
+    return await _create_knowledge_package(
+        body=body,
+        package_files=[PackageFile("README.md", readme, "text/markdown")],
+        derive_index=False,
+        request=request,
+        ctx=ctx,
+        session=session,
+        service=service,
+    )
+
+
+@router.post(
+    "/import",
+    response_model=KbOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_kb(
+    request: Request,
+    name: str = Form(...),
+    description: Optional[str] = Form(default=None),
+    archive: Optional[UploadFile] = File(default=None),
+    files: Optional[list[UploadFile]] = File(default=None),
+    paths: Optional[list[str]] = Form(default=None),
+    ctx: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
+    service: AuthzService = Depends(get_authz_service),
+):
+    """Create Knowledge from one complete folder upload or ZIP archive."""
+    await _authorize_organization_create(
+        request=request,
+        ctx=ctx,
+        service=service,
+    )
+    try:
+        body = KbCreate(name=name, description=description or None)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="knowledge_package_metadata_invalid",
+        ) from exc
+    supplied_files = files or []
+    supplied_paths = paths or []
+    if (archive is None) == (not supplied_files):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="knowledge_package_source_required",
+        )
+    try:
+        if archive is not None:
+            blob = await archive.read(MAX_PACKAGE_BYTES + 1)
+            if len(blob) > MAX_PACKAGE_BYTES:
+                raise ValueError("Knowledge ZIP exceeds the upload limit")
+            await require_clean_upload(blob)
+            package_files = package_files_from_zip(blob)
+        else:
+            if len(supplied_files) != len(supplied_paths):
+                raise ValueError("Every uploaded file requires a relative path")
+            pending: list[PackageFile] = []
+            for upload, path in zip(
+                supplied_files, supplied_paths, strict=True,
+            ):
+                data = await upload.read(MAX_FILE_SIZE_BYTES + 1)
+                if len(data) > MAX_FILE_SIZE_BYTES:
+                    raise ValueError("Knowledge package contains an oversized file")
+                await require_clean_upload(data)
+                pending.append(PackageFile(path, data, upload.content_type or ""))
+            package_files = normalize_imported_package(pending)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "knowledge_package_invalid", "message": str(exc)},
+        ) from exc
+    return await _create_knowledge_package(
+        body=body,
+        package_files=package_files,
+        derive_index=True,
+        request=request,
+        ctx=ctx,
+        session=session,
+        service=service,
+    )
 
 
 @router.get("", response_model=list[KbListOut])
@@ -507,8 +643,9 @@ async def list_kbs(
         context=context,
     )
     result: list[KbListOut] = []
+    provenance = ResourceProvenanceBuilder(session)
     for kb, resource in zip(kbs, resources, strict=True):
-        base = _kb_to_out(kb, decisions[resource])
+        base = await _kb_to_out(kb, decisions[resource], provenance)
         stats = stats_by_id.get(str(kb.id), {})
         latest = stats.get("latest_updated_at")
         if not isinstance(latest, datetime) or latest < kb.updated_at:
@@ -517,6 +654,7 @@ async def list_kbs(
             **base.model_dump(),
             file_count=int(stats.get("file_count", 0)),
             chunk_count=int(stats.get("chunk_count", 0)),
+            stored_count=int(stats.get("stored_count", 0)),
             pending_count=int(stats.get("pending_count", 0)),
             indexing_count=int(stats.get("indexing_count", 0)),
             indexed_count=int(stats.get("indexed_count", 0)),
@@ -564,12 +702,16 @@ async def get_kb(
         description=kb.description,
         summary=kb.summary,
         retrieval_strategy="agentic_lexical",
+        package_version=kb.package_version,
         created_at=kb.created_at.isoformat(),
         updated_at=kb.updated_at.isoformat(),
         file_count=len(files),
         chunk_count=chunk_count,
         latest_updated_at=latest.isoformat(),
         access=access_from_decision(authorized.decision),
+        provenance=await ResourceProvenanceBuilder(session).build(
+            creator_user_id=kb.user_id,
+        ),
     )
 
 
@@ -618,7 +760,11 @@ async def update_kb(
         )
     # Re-read so we pick up the trigger-bumped ``updated_at``.
     kb = await repo.get_active(kb_id)
-    return _kb_to_out(kb, authorized.decision)
+    return await _kb_to_out(
+        kb,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -716,18 +862,13 @@ async def upload_file(
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ):
-    """Upload a file to the KB. 5-step DB-first ordering (spec sec 8).
+    """Add one raw file to a Knowledge package.
 
-    Returns ``{file_id, task_id, status: "pending"}`` on success.
+    Supported document types are queued for the replaceable search index.
+    Other file types remain available as authoritative package files with a
+    ``stored`` status.
     Errors:
       * 413 ``kb_file_too_large`` — payload > 50 MB.
-      * 400 ``kb_unsupported_file_type`` — filename + MIME mismatch or
-        not in the supported set (PDF, DOCX, PPTX, XLSX, CSV/TSV, JSON,
-        HTML, Markdown, or plain text).
-      * 409 ``kb_duplicate_content_hash`` — a live file with the same
-        SHA-256 already exists in this KB (per-KB dedup). Body includes
-        ``existing_file_name`` so the UI can show "already uploaded as
-        <name>".
       * 404 ``kb_not_found`` — KB missing or soft-deleted.
     """
     await _authorize_knowledge_base(
@@ -753,14 +894,27 @@ async def upload_file(
             detail="kb_file_too_large",
         )
     await require_clean_upload(blob)
-    parser_type = detect_parser_type(
-        file.filename or "", file.content_type or "",
-    )
-    if parser_type is None:
+    try:
+        package_path = normalize_package_path(file.filename or "")
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="kb_unsupported_file_type",
+            detail="knowledge_package_path_invalid",
+        ) from exc
+    if any(
+        existing.name.casefold() == package_path.casefold()
+        for existing in await repo.list_files(kb_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="knowledge_package_path_exists",
         )
+    mime_type = resolve_package_content_type(
+        package_path,
+        blob,
+        file.content_type,
+    )
+    parser_type = detect_parser_type(package_path, mime_type) or "binary"
     content_hash = hashlib.sha256(blob).hexdigest()
 
     await _authorize_knowledge_base(
@@ -772,40 +926,20 @@ async def upload_file(
         consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
     )
 
-    # Step 2: DB INSERT FIRST. The partial UNIQUE on
-    # ``(kb_id, content_hash) WHERE deleted_at IS NULL`` (migration 007)
-    # fires on duplicate-content; surface as 409 with the existing file
-    # name so the UI can be friendly.
-    try:
-        kb_file = await repo.create_file(
+    kb_file = await repo.create_file(
             kb_id=kb_id,
             tenant_id=kb.tenant_id,
             user_id=uuid.UUID(ctx.user_id),
-            name=file.filename or "unnamed",
+            name=package_path,
             parser_type=parser_type,
-            mime_type=file.content_type or "application/octet-stream",
+            mime_type=mime_type,
             file_size=len(blob),
             content_hash=content_hash,
-            status="pending",
+            status="pending" if parser_type != "binary" else "stored",
             object_store_key=None,
         )
-        await session.commit()
-        # is_local=true GUC died with the txn; rebind before the next
-        # statement so FORCE RLS still has a tenant.
-        await _rebind_tenant_guc(session, ctx.active_organization_id)
-    except IntegrityError:
-        await session.rollback()
-        # Same reason as the success path — the rolled-back txn's GUC is
-        # gone; ``find_by_content_hash`` needs RLS to see this tenant.
-        await _rebind_tenant_guc(session, ctx.active_organization_id)
-        existing = await repo.find_by_content_hash(kb_id, content_hash)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "kb_duplicate_content_hash",
-                "existing_file_name": existing.name if existing else None,
-            },
-        )
+    await session.commit()
+    await _rebind_tenant_guc(session, ctx.active_organization_id)
 
     # Step 3: write blob to object_store (BLOCKING — to_thread).
     # ``put_bytes`` returns a URI; we store the BARE KEY on the row
@@ -818,33 +952,35 @@ async def upload_file(
     store = get_object_store()
     await asyncio.to_thread(
         store.put_bytes, object_key, blob,
-        file.content_type or "application/octet-stream",
+        mime_type,
     )
 
     # Step 4: update DB row with the key.
     await repo.set_object_store_key(kb_file.id, object_key)
+    await repo.bump_package_version(kb_id)
     await session.commit()
     await _rebind_tenant_guc(session, ctx.active_organization_id)
 
     # Step 5: enqueue Celery. KB indexing state is tracked by kb_files, not by
     # the platform Task center.
-    task_id = uuid.uuid4()
-    await asyncio.to_thread(
-        celery_app.send_task,
-        "kb.index_file",
-        task_id=str(task_id),
-        queue=route_for("kb_index_file"),
-        kwargs=dict(
+    task_id = uuid.uuid4() if parser_type != "binary" else None
+    if task_id is not None:
+        await asyncio.to_thread(
+            celery_app.send_task,
+            "kb.index_file",
             task_id=str(task_id),
-            tenant_id=str(kb.tenant_id),
-            file_id=str(kb_file.id),
-            user_id=ctx.user_id,
-        ),
-    )
+            queue=route_for("kb_index_file"),
+            kwargs=dict(
+                task_id=str(task_id),
+                tenant_id=str(kb.tenant_id),
+                file_id=str(kb_file.id),
+                user_id=ctx.user_id,
+            ),
+        )
     return {
         "file_id": str(kb_file.id),
-        "task_id": str(task_id),
-        "status": "pending",
+        "task_id": str(task_id) if task_id else None,
+        "status": kb_file.status,
     }
 
 
@@ -879,73 +1015,48 @@ async def list_files(
             detail="kb_not_found",
         )
     files = await repo.list_files(kb_id, status=file_status)
-    return [_kb_file_to_out(f, authorized.decision) for f in files]
+    provenance = ResourceProvenanceBuilder(session)
+    return [
+        await _kb_file_to_out(f, authorized.decision, provenance)
+        for f in files
+    ]
 
 
-@router.get(
-    "/{kb_id}/files/{file_id}/content",
-    response_model=KbFileContentOut,
-)
-async def get_file_content(
+@router.get("/{kb_id}/files/{file_id}/raw")
+async def get_file_raw(
     kb_id: uuid.UUID,
     file_id: uuid.UUID,
     request: Request,
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=100),
     ctx: AuthContext = Depends(current_user),
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ):
-    """Return the read-only parsed source shown to the Agent.
-
-    The original blob remains encrypted in the configured ObjectStore. The UI
-    reads the same normalized, encrypted chunks exposed through the Knowledge
-    Agent tools, one bounded page at a time, so Office/PDF sources do not need
-    unsafe browser-side rendering or a public object URL.
-    """
+    """Stream one authoritative package file after content authorization."""
     await _authorize_knowledge_base_file(
-        request=request,
-        ctx=ctx,
-        service=service,
-        file_id=file_id,
-        action=Action.VIEW,
+        request=request, ctx=ctx, service=service,
+        file_id=file_id, action=Action.VIEW,
     )
-    repo = KbRepo(session)
-    file_obj = await repo.get_file(file_id)
-    if file_obj is None or file_obj.kb_id != kb_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="kb_file_not_found",
+    file_obj = await KbRepo(session).get_file(file_id)
+    if (
+        file_obj is None
+        or file_obj.kb_id != kb_id
+        or not file_obj.object_store_key
+    ):
+        raise HTTPException(status_code=404, detail="kb_file_not_found")
+    try:
+        blob = await asyncio.to_thread(
+            get_object_store().fetch_bytes,
+            file_obj.object_store_key,
         )
-
-    chunks = []
-    if file_obj.status == "indexed":
-        resolved_file, chunks = await repo.read_file_chunks(
-            kb_id=kb_id,
-            file_id=file_id,
-            offset=offset,
-            limit=limit,
-        )
-        if resolved_file is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="kb_file_not_found",
-            )
-
-    next_offset = offset + len(chunks)
-    return KbFileContentOut(
-        file_id=str(file_obj.id),
-        file_name=file_obj.name,
-        parser_type=file_obj.parser_type,
-        status=file_obj.status,
-        offset=offset,
-        next_offset=next_offset,
-        total_chunks=file_obj.chunk_count,
-        has_more=next_offset < file_obj.chunk_count,
-        chunks=[
-            KbFileContentChunkOut(index=chunk.chunk_index, text=chunk.text)
-            for chunk in chunks
-        ],
+    except (KeyError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="kb_file_content_missing") from exc
+    return Response(
+        content=blob,
+        media_type=file_obj.mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'inline; filename="{file_obj.id}"',
+            "Cache-Control": "private, max-age=60",
+        },
     )
 
 
@@ -983,6 +1094,11 @@ async def delete_file(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="kb_file_not_found",
         )
+    if file_obj.name.casefold() == "readme.md":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="knowledge_root_readme_required",
+        )
     await _authorize_knowledge_base_file(
         request=request,
         ctx=ctx,
@@ -992,82 +1108,8 @@ async def delete_file(
         consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
     )
     await repo.soft_delete_file(file_id)
+    await repo.bump_package_version(kb_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post("/{kb_id}/files/{file_id}/reindex")
-async def reindex_file(
-    kb_id: uuid.UUID,
-    file_id: uuid.UUID,
-    request: Request,
-    ctx: AuthContext = Depends(current_user),
-    session: AsyncSession = Depends(tenant_db),
-    service: AuthzService = Depends(get_authz_service),
-):
-    """Re-index an existing file (no re-upload).
-
-    Wipes any existing chunks for the file, resets ``kb_files`` state
-    (status='pending', error_message=NULL, deleted_at=NULL), inserts a
-    new Celery index job. Idempotent in the sense that the broker dedupes
-    on ``task_id``; a second click during the same indexing run is a no-op.
-
-    Returns ``{file_id, task_id, status: "pending"}``.
-    """
-    await _authorize_knowledge_base_file(
-        request=request,
-        ctx=ctx,
-        service=service,
-        file_id=file_id,
-        action=Action.UPDATE,
-    )
-    repo = KbRepo(session)
-    kb = await repo.get_active(kb_id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="kb_not_found",
-        )
-    # Resolve the file BEFORE wiping chunks — a missing or cross-KB
-    # file_id must 404, not silently no-op + enqueue a phantom indexer
-    # run (which would then fail inside `_get_active_file` anyway).
-    file_obj = await repo.get_file(file_id)
-    if not file_obj or file_obj.kb_id != kb_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="kb_file_not_found",
-        )
-    await _authorize_knowledge_base_file(
-        request=request,
-        ctx=ctx,
-        service=service,
-        file_id=file_id,
-        action=Action.UPDATE,
-        consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-    )
-    # Reset chunks + file state in the same transaction so the indexer
-    # never sees a half-cleared file.
-    await repo.delete_chunks_for_file(file_id)
-    await repo.reset_for_reindex(file_id)
-
-    task_id = uuid.uuid4()
-    await session.commit()
-    await asyncio.to_thread(
-        celery_app.send_task,
-        "kb.index_file",
-        task_id=str(task_id),
-        queue=route_for("kb_index_file"),
-        kwargs=dict(
-            task_id=str(task_id),
-            tenant_id=str(kb.tenant_id),
-            file_id=str(file_id),
-            user_id=ctx.user_id,
-        ),
-    )
-    return {
-        "file_id": str(file_id),
-        "task_id": str(task_id),
-        "status": "pending",
-    }
 
 
 # ----------------------------------------------------------------- sharing
@@ -1082,6 +1124,7 @@ async def list_kb_access(
     request: Request,
     continuation_token: str = "",
     ctx: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> DirectBindingListOut:
     _require_sharing_enabled()
@@ -1106,7 +1149,10 @@ async def list_kb_access(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DirectBindingListOut(
-        items=[_binding_out(item) for item in page.bindings],
+        items=[
+            await direct_binding_out(session, item)
+            for item in page.bindings
+        ],
         continuation_token=page.continuation_token,
     )
 
@@ -1130,10 +1176,20 @@ async def _change_kb_access(
         action=Action.MANAGE_ACCESS,
         consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
     )
-    binding = _binding_from_body(
-        body,
-        ctx=ctx,
-        knowledge_base_id=kb_id,
+    binding = (
+        binding_from_share_resolution(
+            body.resolution_token,
+            relation=body.relation,
+            actor_user_id=ctx.user_id,
+            session_id=ctx.session_id,
+            resource=_knowledge_base_resource(ctx, kb_id),
+        )
+        if desired_present and isinstance(body, DirectBindingGrantIn)
+        else _binding_from_body(
+            body,
+            ctx=ctx,
+            knowledge_base_id=kb_id,
+        )
     )
     try:
         result = await (
@@ -1178,7 +1234,7 @@ async def _change_kb_access(
 )
 async def grant_kb_access(
     kb_id: uuid.UUID,
-    body: DirectBindingIn,
+    body: DirectBindingGrantIn,
     request: Request,
     idempotency_key: str = Header(
         min_length=1,

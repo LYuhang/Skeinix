@@ -74,8 +74,17 @@ describe('ChatPreviewPane dirty-file leave protocol', () => {
     await screen.findByText('Active file');
 
     fireEvent.click(screen.getByRole('button', { name: /^close preview$/i }));
-
     expect(fileViewer.requestLeave).toHaveBeenCalledOnce();
     expect(props.onToggleOpen).not.toHaveBeenCalled();
+  });
+
+  it('constrains long file content to the Preview viewport', async () => {
+    renderPane();
+    await screen.findByText('Active file');
+
+    expect(document.querySelector('[data-role="chat-preview-content"]')).toHaveClass(
+      'min-h-0',
+      'overflow-hidden',
+    );
   });
 });

@@ -88,7 +88,7 @@ test.afterAll(async () => {
   }
 });
 
-test('repeated /build Turns keep product history and expose the same Platform MCP', async ({
+test('repeated /workflow Turns keep product history and expose the same Platform MCP', async ({
   page,
 }: {
   page: Page;
@@ -101,7 +101,7 @@ test('repeated /build Turns keep product history and expose the same Platform MC
   await chooseAlwaysAllow(page);
 
   const first = [
-    '/build',
+    '/workflow',
     'Call the create_workflow tool exactly once with',
     `name "${workflowNames[0]}".`,
     'After the tool succeeds, reply BUILD_FIRST_DONE.',
@@ -109,7 +109,7 @@ test('repeated /build Turns keep product history and expose the same Platform MC
   await sendBuildTurn(page, first, 'BUILD_FIRST_DONE');
 
   const second = [
-    '/build',
+    '/workflow',
     'Call the create_workflow tool exactly once with',
     `name "${workflowNames[1]}".`,
     'After the tool succeeds, reply BUILD_SECOND_DONE.',

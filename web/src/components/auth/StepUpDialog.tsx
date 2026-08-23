@@ -26,13 +26,13 @@ import {
   finishWebAuthnAuthentication,
   finishWebAuthnRegistration,
   getWebAuthnStatus,
-} from '@/lib/api/mfa';
+} from '@/lib/api/passkeys';
 
 type Mode = 'loading' | 'authenticate' | 'enroll';
 
-function messageFor(error: unknown): string {
+function messageFor(error: unknown, cancelled: string): string {
   if (error instanceof DOMException && error.name === 'NotAllowedError') {
-    return 'Passkey verification was cancelled or timed out.';
+    return cancelled;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -44,7 +44,7 @@ export function StepUpDialog() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [password, setPassword] = useState('');
-  const [credentialName, setCredentialName] = useState('Passkey');
+  const [credentialName, setCredentialName] = useState(() => t('security.defaultPasskeyName', 'Passkey'));
   const requestRef = useRef<StepUpRequestDetail | null>(null);
 
   const finish = (succeeded: boolean) => {
@@ -67,7 +67,7 @@ export function StepUpDialog() {
       void getWebAuthnStatus()
         .then((status) => setMode(status.enabled ? 'authenticate' : 'enroll'))
         .catch((reason) => {
-          setError(messageFor(reason));
+          setError(messageFor(reason, t('security.passkeyVerificationCancelled', 'Passkey verification was cancelled or timed out.')));
           setMode('authenticate');
         });
     };
@@ -77,7 +77,7 @@ export function StepUpDialog() {
       requestRef.current?.complete(false);
       requestRef.current = null;
     };
-  }, []);
+  }, [t]);
 
   const authenticate = async () => {
     setBusy(true);
@@ -88,7 +88,7 @@ export function StepUpDialog() {
       await finishWebAuthnAuthentication(credential);
       finish(true);
     } catch (reason) {
-      setError(messageFor(reason));
+      setError(messageFor(reason, t('security.passkeyVerificationCancelled', 'Passkey verification was cancelled or timed out.')));
       setBusy(false);
     }
   };
@@ -102,11 +102,11 @@ export function StepUpDialog() {
       const credential = await createWebAuthnCredential(options);
       await finishWebAuthnRegistration(
         credential,
-        credentialName.trim() || 'Passkey',
+        credentialName.trim() || t('security.defaultPasskeyName', 'Passkey'),
       );
       finish(true);
     } catch (reason) {
-      setError(messageFor(reason));
+      setError(messageFor(reason, t('security.passkeyCancelled', 'Passkey creation was cancelled or timed out.')));
       setBusy(false);
     }
   };

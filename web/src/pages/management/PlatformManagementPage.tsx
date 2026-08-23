@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 
 import { StatusBadge } from '@/components/ui/status';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -27,6 +28,8 @@ import {
   type PlatformManagementOverview,
 } from '@/lib/api/platform-management';
 import { cn } from '@/lib/utils';
+import { ActionableError } from '@/components/presentation/ActionableError';
+import { Button } from '@/components/ui/button';
 
 const AUDIT_CATEGORIES: PlatformAuditCategory[] = [
   'identity',
@@ -268,7 +271,22 @@ export function PlatformManagementPage() {
   });
 
   if (overview.isPending) return <div className="page-shell"><div className="page-content"><div className="rounded-xl border border-edge-subtle p-10 text-center text-sm text-muted-foreground">{t('common.loading', 'Loading…')}</div></div></div>;
-  if (!overview.data) return <div className="page-shell"><div className="page-content"><div className="rounded-xl border border-destructive/20 bg-destructive/5 p-6 text-sm text-destructive">{t('management.unavailable', 'Platform management is not available for this account.')}</div></div></div>;
+  if (!overview.data) return (
+    <div className="page-shell">
+      <div className="page-content max-w-3xl">
+        <ActionableError
+          title={t('management.unavailable', 'Platform management is not available for this account.')}
+          description={t('management.unavailableHint', 'This area is limited to platform operators. Workspace owners can manage members, identity, and service accounts from Organization settings.')}
+          actionLabel={t('retry', 'Retry')}
+          onAction={() => void overview.refetch()}
+          technicalDetails={overview.error instanceof Error ? overview.error.message : undefined}
+        />
+        <Button asChild variant="outline" className="mt-4">
+          <Link to="/settings?tab=organization">{t('management.openOrganization', 'Open Organization settings')}</Link>
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="page-shell">

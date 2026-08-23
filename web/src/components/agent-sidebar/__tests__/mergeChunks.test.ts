@@ -210,6 +210,39 @@ describe('mergeChunks', () => {
     });
   });
 
+  it('restores a persisted tool error from its canonical invocation envelope', () => {
+    const merged = mergeChunks([
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'call_conflict', name: 'knowledge_update', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: '{"error":"knowledge_version_conflict"}',
+        tool_call_id: 'call_conflict',
+        invocation: {
+          schemaVersion: 1,
+          invocationId: 'call_conflict',
+          runtime: { type: 'codex' },
+          origin: { kind: 'platform_mcp', toolName: 'knowledge_update' },
+          capability: 'knowledge',
+          name: 'knowledge_update',
+          status: 'error',
+          input: {},
+          output: { isError: true },
+          error: { message: 'knowledge_version_conflict' },
+        },
+      },
+    ]);
+
+    expect(merged[0].tool_calls[0]).toMatchObject({
+      id: 'call_conflict',
+      result: '{"error":"knowledge_version_conflict"}',
+      status: 'error',
+    });
+  });
+
   it('coalesces cumulative assistant text frames into one growing row', () => {
     const chunks: RawChunk[] = [
       { role: 'user', content: 'explain' },

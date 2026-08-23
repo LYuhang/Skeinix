@@ -31,7 +31,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vibecanvas_api.storage.models import Base
@@ -61,8 +61,20 @@ class LlmCredential(Base):
     runtime_scope: Mapped[str] = mapped_column(
         Text, nullable=False, default="langchain", server_default=text("'langchain'"),
     )
+    connection_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, default="manual", server_default=text("'manual'"),
+    )
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     model_context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Provider-derived, non-secret metadata. API keys and OAuth verifier
+    # material always remain in encrypted_secrets instead.
+    model_catalog: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"),
+    )
+    catalog_refreshed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    catalog_error_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     api_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Optional HTTP/HTTPS proxy for this provider's outbound calls. May carry
     # ``user:pass@host`` — private (NEVER on the public list shape), like
@@ -103,6 +115,10 @@ class LlmCredential(Base):
             name="ck_llm_credentials_runtime_scope",
         ),
         CheckConstraint(
+            "connection_kind IN ('manual', 'openrouter_oauth')",
+            name="ck_llm_credentials_connection_kind",
+        ),
+        CheckConstraint(
             "position('?' in coalesce(api_url,''))=0 AND "
             "position('?' in coalesce(proxy,''))=0 AND "
             "coalesce(api_url,'') !~ "
@@ -115,3 +131,35 @@ class LlmCredential(Base):
 
     # The partial UNIQUE index on (tenant_id, name) WHERE deleted_at IS NULL and
     # the RLS policies live in migration 021.
+
+
+class OpenRouterOauthState(Base):
+    """Single-use, user-bound PKCE state. The verifier is envelope-encrypted."""
+
+    __tablename__ = "openrouter_oauth_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    state_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    verifier_secret_ref: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encrypted_secrets.secret_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )

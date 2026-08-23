@@ -1,8 +1,23 @@
+import asyncio
+
+import httpx
+import pytest
+
+from vibecanvas_api.services import mcp_catalog
 from vibecanvas_api.services.mcp_catalog import (
     normalize_official_entry,
     normalize_smithery_detail,
     normalize_smithery_entry,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_catalog_caches():
+    mcp_catalog._cache.clear()
+    mcp_catalog._detail_cache.clear()
+    yield
+    mcp_catalog._cache.clear()
+    mcp_catalog._detail_cache.clear()
 
 
 def test_official_remote_entry_is_installable_and_exposes_only_declared_config():
@@ -175,3 +190,77 @@ def test_smithery_schema_maps_header_and_query_fields():
     assert item["config_fields"][0]["secret"] is True
     assert item["config_fields"][1]["target"] == "query:region"
     assert item["config_fields"][1]["choices"] == ["us", "eu"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_uses_explicit_control_plane_proxy(monkeypatch):
+    request_arguments = {}
+
+    async def fake_request(method, url, **kwargs):
+        request_arguments.update({"method": method, "url": url, **kwargs})
+        return httpx.Response(
+            200,
+            json={"servers": []},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(mcp_catalog, "request_pinned_public_url", fake_request)
+    monkeypatch.setattr(
+        mcp_catalog.config,
+        "control_plane_http_proxy",
+        "http://proxy.internal:7897",
+    )
+
+    payload = await mcp_catalog._fetch_json(mcp_catalog._OFFICIAL_URL)
+
+    assert payload == {"servers": []}
+    assert request_arguments["proxy"] == "http://proxy.internal:7897"
+
+
+@pytest.mark.asyncio
+async def test_catalog_detail_is_cached_after_first_resolution(monkeypatch):
+    fetches = 0
+
+    async def fake_fetch_json(url, *, params=None):
+        nonlocal fetches
+        fetches += 1
+        return {
+            "server": {
+                "name": "io.github.example/cached",
+                "title": "Cached MCP",
+                "packages": [{"registryType": "npm", "identifier": "cached-mcp"}],
+            },
+        }
+
+    monkeypatch.setattr(mcp_catalog, "_fetch_json", fake_fetch_json)
+
+    first = await mcp_catalog.resolve_catalog_item(
+        source="official", source_id="io.github.example/cached",
+    )
+    second = await mcp_catalog.resolve_catalog_item(
+        source="official", source_id="io.github.example/cached",
+    )
+
+    assert first == second
+    assert fetches == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_auth_discovery_has_an_overall_deadline(monkeypatch):
+    async def never_returns(*args, **kwargs):
+        await asyncio.sleep(mcp_catalog._REMOTE_AUTH_DISCOVERY_TIMEOUT_S + 1)
+
+    monkeypatch.setattr(mcp_catalog, "request_pinned_public_url", never_returns)
+    monkeypatch.setattr(mcp_catalog, "_REMOTE_AUTH_DISCOVERY_TIMEOUT_S", 0.01)
+    item = {
+        "connection": {
+            "transport": "streamable_http",
+            "endpoint": "https://example.test/mcp",
+        },
+        "config_fields": [],
+        "auth_mode": "connection_discovery",
+    }
+
+    resolved = await mcp_catalog._discover_remote_auth(item)
+
+    assert resolved["auth_mode"] == "connection_discovery"

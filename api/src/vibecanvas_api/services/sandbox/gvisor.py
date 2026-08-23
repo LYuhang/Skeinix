@@ -672,29 +672,6 @@ from vibecanvas_api.config import config  # noqa: E402
 from .workflow_guard import classify_workflow  # noqa: E402
 
 
-def _prepare_rootful_codex_auth_bind(path: str) -> None:
-    """Grant only the rootful gVisor workload group access to account auth.
-
-    Root inside a gVisor container intentionally has no host DAC override for a
-    bind-mounted file. The API creates the account cache as ``10001:10001 0600``;
-    keep that owner, but grant host group 0 read/write while the private file is
-    eligible for the explicit account-only mount. The volume is mounted only by
-    API and sandboxd, and no other sandbox receives this source path.
-    """
-    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("Codex account auth bind must be a regular file")
-        os.fchown(descriptor, -1, 0)
-        os.fchmod(descriptor, 0o660)
-    finally:
-        os.close(descriptor)
-
-
 class RootlessGvisorProvider:
     """One-shot rootless-gVisor command runner (boot → run → capture → teardown).
 
@@ -1557,22 +1534,12 @@ class RootlessGvisorProvider:
         for destination, source in extra_rw_binds or []:
             if destination in seen_destinations:
                 continue
-            # Most writable mounts are directories and may be created lazily,
-            # but account-backed Codex deliberately mounts one existing
-            # credential *file* at /runtime/.codex/auth.json. Calling
-            # ``makedirs`` on that file raises FileExistsError before runsc is
-            # launched. Preserve the directory convenience while accepting an
-            # already-materialized regular file as a valid bind source.
+            # Most writable mounts are directories and may be created lazily.
+            # Existing regular files remain valid for generic callers.
             if not os.path.exists(source):
                 os.makedirs(source, exist_ok=True)
             elif not (os.path.isdir(source) or os.path.isfile(source)):
                 raise ValueError("writable bind source must be a file or directory")
-            if (
-                not self._rootless
-                and destination == "/runtime/.codex/auth.json"
-                and os.path.isfile(source)
-            ):
-                _prepare_rootful_codex_auth_bind(source)
             rw_binds.append((destination, source))
             seen_destinations.add(destination)
         bus_host_dir = os.path.dirname(bus_socket)

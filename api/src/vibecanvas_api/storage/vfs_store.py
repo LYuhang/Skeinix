@@ -42,7 +42,7 @@ _EXT = {
     # binary content types (2b binary VFS)
     "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
     "audio/mpeg": "mp3", "audio/wav": "wav", "application/pdf": "pdf",
-    "application/vnd.vibecanvas.diagram+json": "vdiagram.json",
+    "application/vnd.jgraph.mxfile": "drawio",
     "application/octet-stream": "bin",
 }
 _SEQ_RE = re.compile(r"_(\d+)\.[^.]+$")
@@ -84,7 +84,7 @@ def _is_text_ct(ct: str) -> bool:
     ct = ct or ""
     return (ct.startswith("text/") or ct in {
                 "application/json",
-                "application/vnd.vibecanvas.diagram+json",
+                "application/vnd.jgraph.mxfile",
             }
             or ct.startswith("table/") or ct in ("json", "text"))
 
@@ -248,8 +248,8 @@ class VfsRepo:
             if current_data == data:
                 # Workspace write-through is followed by a turn-end safety
                 # sweep. Rewriting identical bytes here would create a new
-                # revision and immediately make the exact DiagramRef returned
-                # by check_diagram stale even though the file never changed.
+                # revision and immediately make an exact contentHash returned
+                # by the sandbox Diagram MCP stale even though bytes did not change.
                 return True
         content_revision = str(uuid.uuid4())
         abstract_values = await protect_vfs_abstract(

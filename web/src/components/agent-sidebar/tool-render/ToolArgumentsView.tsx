@@ -1,4 +1,5 @@
 import { JsonTree } from './JsonTree';
+import { useTranslation } from 'react-i18next';
 
 function parseArguments(value: string): unknown {
   if (!value.trim()) return null;
@@ -38,6 +39,7 @@ export function ToolArgumentsView({
   toolName: string;
   argumentsText: string;
 }) {
+  const { t } = useTranslation();
   const parsed = parseArguments(argumentsText);
   const safeParsed = redact(parsed);
   const object = objectValue(safeParsed);
@@ -67,7 +69,7 @@ export function ToolArgumentsView({
         </div>
         <details className="mt-2">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            Exact text details
+            {t('tool.arguments.exactText', 'Exact text details')}
           </summary>
           <div className="mt-2 grid gap-2 lg:grid-cols-2">
             <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-state-danger/10 p-2 font-mono text-xs">

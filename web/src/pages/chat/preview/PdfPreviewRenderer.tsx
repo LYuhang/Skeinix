@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Minus, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, Minus, Plus } from 'lucide-react';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import { Button } from '@/components/ui/button';
+import { useTranslation } from 'react-i18next';
+import { fetchPreviewRendition } from '@/lib/api/previews';
 import type { PreviewErrorInfo } from '@/lib/preview/protocol';
 import { PreviewErrorState } from './PreviewErrorState';
+import { initialPdfPreviewZoom, MIN_PDF_ZOOM } from './pdf-preview-layout';
 import type { PreviewRendererProps } from './renderer-types';
 
 // The worker asset content hash predates the nginx `.mjs` MIME fix. Keep a
 // URL-level revision so browsers that cached the old octet-stream response do
 // not reuse its invalid Content-Type after an application upgrade.
 const PDF_WORKER_CACHE_REVISION = 'module-mime-v1';
+const PREVIEW_WIDTH_SAMPLE_PAGES = 64;
 
 export function PdfPreviewRenderer({ descriptor }: PreviewRendererProps) {
-  const url = descriptor.content?.url;
+  const rendition = descriptor.rendition?.format === 'pdf'
+    ? descriptor.rendition
+    : null;
+  const url = rendition?.url ?? descriptor.content?.url;
   if (!url) {
     return (
       <PreviewErrorState
@@ -27,6 +34,7 @@ export function PdfPreviewRenderer({ descriptor }: PreviewRendererProps) {
     <PdfPreviewContent
       key={`${descriptor.revision}:${url}`}
       url={url}
+      authenticated={Boolean(rendition)}
       descriptor={descriptor}
     />
   );
@@ -34,34 +42,61 @@ export function PdfPreviewRenderer({ descriptor }: PreviewRendererProps) {
 
 function PdfPreviewContent({
   url,
+  authenticated,
   descriptor,
 }: {
   url: string;
+  authenticated: boolean;
   descriptor: PreviewRendererProps['descriptor'];
 }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const pageRef = useRef<PDFPageProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1.25);
+  const [naturalWidth, setNaturalWidth] = useState(0);
+  const [fitToWidth, setFitToWidth] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<PreviewErrorInfo | null>(null);
 
   useEffect(() => {
     let disposed = false;
+    const controller = new AbortController();
     let task: ReturnType<typeof import('pdfjs-dist')['getDocument']> | null = null;
     void import('pdfjs-dist').then(async (pdfjs) => {
       pdfjs.GlobalWorkerOptions.workerSrc = `${pdfWorkerUrl}?v=${PDF_WORKER_CACHE_REVISION}`;
-      task = pdfjs.getDocument({
-        url,
-        rangeChunkSize: 64 * 1024,
-        disableAutoFetch: true,
-      });
+      const source = authenticated
+        ? {
+            data: new Uint8Array(
+              await fetchPreviewRendition(url, controller.signal),
+            ),
+          }
+        : {
+            url,
+            rangeChunkSize: 64 * 1024,
+            disableAutoFetch: true,
+          };
+      if (disposed) return;
+      task = pdfjs.getDocument(source);
       const document = await task.promise;
       if (disposed) return;
       documentRef.current = document;
       setPageCount(document.numPages);
+      let maximumNaturalWidth = 0;
+      const sampledPages = Math.min(document.numPages, PREVIEW_WIDTH_SAMPLE_PAGES);
+      for (let index = 1; index <= sampledPages; index += 1) {
+        const page = await document.getPage(index);
+        if (disposed) return;
+        maximumNaturalWidth = Math.max(
+          maximumNaturalWidth,
+          page.getViewport({ scale: 1 }).width,
+        );
+        page.cleanup();
+      }
+      setNaturalWidth(maximumNaturalWidth);
     }).catch(() => {
       if (!disposed) setError({ code: 'render_failed', params: {} });
     }).finally(() => {
@@ -69,12 +104,25 @@ function PdfPreviewContent({
     });
     return () => {
       disposed = true;
+      controller.abort();
       pageRef.current?.cleanup();
       pageRef.current = null;
       documentRef.current = null;
       if (task) void task.destroy();
     };
-  }, [url]);
+  }, [authenticated, url]);
+
+  useEffect(() => {
+    const container = scrollAreaRef.current;
+    if (!container || !fitToWidth || naturalWidth <= 0) return;
+    const updateZoom = () => {
+      setZoom(initialPdfPreviewZoom(naturalWidth, container.clientWidth));
+    };
+    updateZoom();
+    const observer = new ResizeObserver(updateZoom);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [fitToWidth, naturalWidth]);
 
   useEffect(() => {
     const document = documentRef.current;
@@ -114,7 +162,7 @@ function PdfPreviewContent({
           variant="ghost"
           size="icon"
           disabled={pageNumber <= 1}
-          aria-label="Previous page"
+          aria-label={t('preview.pdf.previousPage', 'Previous page')}
           onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
         >
           <ChevronLeft className="h-4 w-4" />
@@ -126,7 +174,7 @@ function PdfPreviewContent({
           variant="ghost"
           size="icon"
           disabled={!pageCount || pageNumber >= pageCount}
-          aria-label="Next page"
+          aria-label={t('preview.pdf.nextPage', 'Next page')}
           onClick={() => setPageNumber((value) => Math.min(pageCount, value + 1))}
         >
           <ChevronRight className="h-4 w-4" />
@@ -135,8 +183,11 @@ function PdfPreviewContent({
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Zoom out"
-          onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}
+          aria-label={t('preview.action.zoomOut', 'Zoom out')}
+          onClick={() => {
+            setFitToWidth(false);
+            setZoom((value) => Math.max(MIN_PDF_ZOOM, value - 0.25));
+          }}
         >
           <Minus className="h-4 w-4" />
         </Button>
@@ -144,14 +195,35 @@ function PdfPreviewContent({
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Zoom in"
-          onClick={() => setZoom((value) => Math.min(3, value + 0.25))}
+          aria-label={t('preview.action.zoomIn', 'Zoom in')}
+          onClick={() => {
+            setFitToWidth(false);
+            setZoom((value) => Math.min(3, value + 0.25));
+          }}
         >
           <Plus className="h-4 w-4" />
         </Button>
+        <Button
+          variant={fitToWidth ? 'secondary' : 'ghost'}
+          size="icon"
+          aria-label={t('preview.pdf.fitWidth', 'Fit width')}
+          aria-pressed={fitToWidth}
+          onClick={() => {
+            setFitToWidth(true);
+            setZoom(initialPdfPreviewZoom(
+              naturalWidth,
+              scrollAreaRef.current?.clientWidth ?? 0,
+            ));
+          }}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-surface-sunken p-4 text-center">
-        {loading ? <div className="p-4 text-sm text-muted-foreground">Loading PDF…</div> : null}
+      <div
+        ref={scrollAreaRef}
+        className="min-h-0 flex-1 overflow-auto bg-surface-sunken p-4 text-center"
+      >
+        {loading ? <div className="p-4 text-sm text-muted-foreground">{t('preview.pdf.loading', 'Loading PDF…')}</div> : null}
         <canvas ref={canvasRef} className="mx-auto bg-white shadow-sm" />
       </div>
     </div>

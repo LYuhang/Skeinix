@@ -37,16 +37,16 @@ async def test_high_risk_step_up_requires_fresh_webauthn(monkeypatch):
     monkeypatch.setattr(config, "high_risk_step_up_required", True)
     future = datetime.now(timezone.utc) + timedelta(minutes=5)
 
-    totp = AuthContext(
+    password = AuthContext(
         user_id="user",
         tenant_id="tenant",
         email="person@example.com",
-        authentication_strength="totp",
+        authentication_strength="password",
         step_up_expires_at=future,
         session_id="session",
     )
     with pytest.raises(HTTPException) as exc:
-        await require_recent_step_up(totp)
+        await require_recent_step_up(password)
     assert exc.value.status_code == 403
     assert exc.value.detail == {
         "code": "step_up_required",

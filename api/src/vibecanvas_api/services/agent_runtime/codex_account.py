@@ -1,8 +1,9 @@
 """User-scoped ChatGPT authentication for the optional Codex account mode.
 
 The account cache is deliberately separate from every Chat's Codex state.
-Only the single official ``auth.json`` file is mounted into an account-backed
-Runtime; one Chat can never inspect another Chat's thread database.
+The official ``auth.json`` is staged into one Chat's private Runtime at process
+startup and reconciled at a quiescent boundary, so Codex can atomically refresh
+credentials without exposing another Chat's thread database.
 """
 
 from __future__ import annotations

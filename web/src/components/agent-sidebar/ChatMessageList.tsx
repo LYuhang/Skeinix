@@ -12,17 +12,12 @@ import { useTranslation } from 'react-i18next';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MessageAvatar, MessageItem } from '@/components/agent-sidebar/MessageItem';
 import { ToolCallBlock } from '@/components/agent-sidebar/ToolCallBlock';
-import {
-  executionPlanFromToolCall,
-  workflowIdFromToolCall,
-  type ExecutionPlanToolTarget,
-} from '@/components/agent-sidebar/tool-call-utils';
+import { workflowIdFromToolCall } from '@/components/agent-sidebar/tool-call-utils';
 import {
   InteractiveArtifactBlock,
   type InteractiveArtifact,
   type SubmitInteractiveAsNewTurn,
 } from '@/components/agent-sidebar/tool-render/InteractiveArtifactBlock';
-import { DiagramPresentationBlock } from '@/components/agent-sidebar/tool-render/DiagramPresentationBlock';
 import { mergeChunks } from '@/components/agent-sidebar/types';
 import type { MergedMessage, MergedToolCall, RawChunk } from '@/components/agent-sidebar/types';
 import { groupToolActivity } from '@/components/agent-sidebar/chat-render-groups';
@@ -152,7 +147,6 @@ export interface ChatMessageListProps {
   compact?: boolean;
   workflowViewerId?: string | null;
   onOpenWorkflowPreview?: (workflowId: string) => void;
-  onOpenExecutionPlanPreview?: (target: ExecutionPlanToolTarget) => void;
   historyItems?: RawChunk[];
   historyLoading?: boolean;
   historyFetching?: boolean;
@@ -222,7 +216,6 @@ function ToolActivityGroup({
   vfsScopeId,
   workflowViewerId,
   onOpenWorkflowPreview,
-  onOpenExecutionPlanPreview,
   onOpenFilePreview,
   sourceMessageId,
   showAvatar = true,
@@ -235,7 +228,6 @@ function ToolActivityGroup({
   vfsScopeId?: string;
   workflowViewerId?: string | null;
   onOpenWorkflowPreview?: (workflowId: string) => void;
-  onOpenExecutionPlanPreview?: (target: ExecutionPlanToolTarget) => void;
   onOpenFilePreview?: (path: string) => void;
   sourceMessageId?: string | null;
   showAvatar?: boolean;
@@ -265,10 +257,6 @@ function ToolActivityGroup({
     .find((id): id is string => !!id);
   const hasUpdateCanvas = effectiveCalls.some((call) => call.name === 'update_canvas');
   const viewerWorkflowTarget = updateCanvasWorkflowId ?? (hasUpdateCanvas ? workflowViewerId : null);
-  const executionPlanTarget = [...effectiveCalls]
-    .reverse()
-    .map(executionPlanFromToolCall)
-    .find((target): target is ExecutionPlanToolTarget => target !== null);
 
   return (
     <div
@@ -356,17 +344,6 @@ function ToolActivityGroup({
             {t('chat.viewWorkflow', 'View workflow')}
           </button>
         )}
-        {executionPlanTarget && onOpenExecutionPlanPreview ? (
-          <button
-            type="button"
-            className="ml-1 inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-feedback hover:bg-accent/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => onOpenExecutionPlanPreview(executionPlanTarget)}
-            data-action="view-execution-plan"
-          >
-            <Eye className="h-3 w-3" />
-            {t('chat.viewExecutionPlan', 'View plan graph')}
-          </button>
-        ) : null}
       </div>
     </div>
   );
@@ -378,7 +355,6 @@ const StableToolActivityGroup = memo(ToolActivityGroup, (previous, next) => (
   && previous.vfsScopeId === next.vfsScopeId
   && previous.workflowViewerId === next.workflowViewerId
   && previous.onOpenWorkflowPreview === next.onOpenWorkflowPreview
-  && previous.onOpenExecutionPlanPreview === next.onOpenExecutionPlanPreview
   && previous.onOpenFilePreview === next.onOpenFilePreview
   && previous.sourceMessageId === next.sourceMessageId
   && previous.showAvatar === next.showAvatar
@@ -423,7 +399,6 @@ export function ChatMessageList({
   compact = false,
   workflowViewerId,
   onOpenWorkflowPreview,
-  onOpenExecutionPlanPreview,
   historyItems: historyItemsProp,
   historyLoading: historyLoadingProp,
   hasOlderHistory = false,
@@ -763,11 +738,15 @@ export function ChatMessageList({
               {renderItems.map((item) => {
                 const key = item.kind === 'tool_group'
                   ? toolGroupKey(item)
-                  : item.kind === 'interactive_artifact' || item.kind === 'diagram_presentation'
+                  : item.kind === 'interactive_artifact'
                     ? interactiveArtifactKey(item)
                     : messageKey(item.message, item.index);
                 return (
-                  <div key={key} data-chat-render-key={key} className="min-w-0">
+                  <div
+                    key={key}
+                    data-chat-render-key={key}
+                    className="min-w-0 [content-visibility:auto] [contain-intrinsic-size:auto_120px]"
+                  >
                     {item.kind === 'tool_group' ? (
                       <StableToolActivityGroup
                         calls={item.calls}
@@ -776,7 +755,6 @@ export function ChatMessageList({
                         vfsScopeId={vfsScopeId}
                         workflowViewerId={workflowViewerId}
                         onOpenWorkflowPreview={onOpenWorkflowPreview}
-                        onOpenExecutionPlanPreview={onOpenExecutionPlanPreview}
                         onOpenFilePreview={onOpenFilePreview}
                         sourceMessageId={merged[item.startIndex]?.id}
                         showAvatar={item.showAvatar}
@@ -792,16 +770,6 @@ export function ChatMessageList({
                         onOpenInteractivePreview={onOpenInteractivePreview}
                         onSubmitAsNewMessage={onSubmitInteractiveAsNewMessage}
                       />
-                    ) : item.kind === 'diagram_presentation' ? (
-                      activeChatId ? (
-                        <DiagramPresentationBlock
-                          call={item.call}
-                          chatId={activeChatId}
-                          showAvatar={item.showAvatar}
-                          compact={compact}
-                          onOpenFilePreview={onOpenFilePreview}
-                        />
-                      ) : null
                     ) : (
                       <MessageItem
                         message={item.message}

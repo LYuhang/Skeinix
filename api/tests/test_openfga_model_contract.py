@@ -52,7 +52,14 @@ def test_shareable_and_private_types_do_not_drift():
         if OPENFGA_OBJECT_TYPES[resource_type] != "template":
             assert "operator" in relations
 
-    for object_type in {"chat", "mcp_installation", "llm_credential"}:
+    for object_type in {
+        "chat",
+        "template",
+        "storage_root",
+        "skill_installation",
+        "mcp_installation",
+        "llm_credential",
+    }:
         relations = set(types[object_type]["relations"])
         # Credentials have an internal ``manager`` relation for
         # use-without-reveal administration. It is deliberately not exposed
@@ -60,6 +67,9 @@ def test_shareable_and_private_types_do_not_drift():
         assert not relations & {"viewer", "editor", "operator"}
     assert {
         ResourceType.CHAT,
+        ResourceType.TEMPLATE,
+        ResourceType.STORAGE_ROOT,
+        ResourceType.SKILL_INSTALLATION,
         ResourceType.MCP_INSTALLATION,
         ResourceType.LLM_CREDENTIAL,
     }.isdisjoint(SHAREABLE_RESOURCE_TYPES)

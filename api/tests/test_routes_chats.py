@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
-import hashlib
-import json
 from pathlib import Path
 import uuid
 
@@ -26,12 +24,7 @@ from vibecanvas_api.storage.chat_repo import ChatRepo
 from vibecanvas_api.storage.db import session_scope
 from vibecanvas_api.storage.hitl_repo import HitlRepo
 from vibecanvas_api.storage.models import Chat
-from vibecanvas_api.storage.models import VfsArtifact
-from vibecanvas_api.storage.vfs_store import VfsRepo
 from vibecanvas_api.services.chat_workspace import chat_workspace_scope_id
-from vibecanvas_api.services.file_revision import vfs_row_revision
-from vibecanvas_api.services.object_store import get_object_store
-from vibecanvas_api.diagrams.registry import get_diagram_type
 
 
 async def _register(client) -> str:
@@ -232,113 +225,6 @@ async def test_chat_can_be_renamed_without_changing_its_identity(client, pg_engi
     assert item["chat_context"] == "Architecture review"
 
 
-@pytest.mark.asyncio
-async def test_active_diagram_view_route_rejects_stale_and_unknown_selection(
-    client,
-    pg_engine,
-):
-    tok = await _register(client)
-    headers = _hdr(tok)
-    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
-    scope_id = (await client.get(
-        "/api/v1/chats/bootstrap", headers=headers,
-    )).json()["carrier_scope_id"]
-    chat_id = f"c_diagram_view_{uuid.uuid4().hex[:8]}"
-    created = await client.post(
-        f"/api/v1/chat-scopes/{scope_id}/chats/{chat_id}/attachments",
-        files={"file": ("seed.txt", b"seed", "text/plain")},
-        headers=headers,
-    )
-    assert created.status_code == 200, created.text
-
-    spec = get_diagram_type("flow", "basic")
-    assert spec is not None
-    source = {
-        "schemaVersion": 1,
-        "id": "route-context",
-        "title": "Route context",
-        "diagram": {"family": "flow", "type": "basic"},
-        "model": {
-            "nodes": [
-                {"id": "start", "kind": "start", "label": "Start"},
-                {"id": "done", "kind": "end", "label": "Done"},
-            ],
-            "edges": [{
-                "id": "start-done", "source": "start", "target": "done",
-                "kind": "flow",
-            }],
-            "groups": [], "embeds": [], "resources": [],
-        },
-        "intent": {
-            "direction": "RIGHT", "density": "comfortable",
-            "stability": "preserve", "primaryPath": ["start", "done"],
-            "constraints": [],
-        },
-        "view": {"layoutMode": "auto", "overrides": {}, "frames": []},
-        "metadata": {
-            "createdBy": "agent", "specVersion": "2026.08.1",
-            "specHash": spec.spec_hash,
-        },
-    }
-    raw = json.dumps(source, sort_keys=True).encode()
-    path = "/data/diagrams/route-context.vdiagram.json"
-    source_hash = f"sha256:{hashlib.sha256(raw).hexdigest()}"
-    workspace = chat_workspace_scope_id(chat_id)
-    async with session_scope(tenant_id=me["tenant_id"]) as session:
-        await VfsRepo(session, object_store=get_object_store()).upsert_artifact_bytes(
-            wf_id=workspace,
-            tenant=me["tenant_id"],
-            path=path,
-            data=raw,
-            content_type="application/vnd.vibecanvas.diagram+json",
-        )
-        row = await session.get(VfsArtifact, (workspace, path))
-        assert row is not None
-        revision = vfs_row_revision(row)
-        await ChatRepo(session, me["user_id"]).set_active_diagram(
-            chat_id,
-            {
-                "path": path,
-                "revision": revision,
-                "source_hash": source_hash,
-                "bundle_hash": source_hash,
-                "scene_ref": "scene://sha256:route-context",
-                "compiler_version": "1.1.0",
-                "theme_version": "1.0.0",
-            },
-            family="flow",
-            diagram_type="basic",
-        )
-        await session.commit()
-
-    payload = {
-        "path": path,
-        "revision": revision,
-        "source_hash": source_hash,
-        "selected_element_ids": ["start"],
-        "viewport_bounds": {"x": 0, "y": 0, "width": 900, "height": 600},
-    }
-    updated = await client.patch(
-        f"/api/v1/chats/{chat_id}/active-diagram/view",
-        json=payload,
-        headers=headers,
-    )
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["active_diagram"]["selected_element_ids"] == ["start"]
-
-    stale = await client.patch(
-        f"/api/v1/chats/{chat_id}/active-diagram/view",
-        json={**payload, "revision": "sha256:stale"},
-        headers=headers,
-    )
-    assert stale.status_code == 409
-    unknown = await client.patch(
-        f"/api/v1/chats/{chat_id}/active-diagram/view",
-        json={**payload, "selected_element_ids": ["missing"]},
-        headers=headers,
-    )
-    assert unknown.status_code == 422
-
 
 @pytest.mark.asyncio
 async def test_chat_attachment_type_rejects_mismatched_media(client, pg_engine):
@@ -386,7 +272,6 @@ async def test_delete_chat_session_deletes_checkpoint_and_runtime_volume(
     client, app_engine, monkeypatch, tmp_path,
 ):
     from vibecanvas_api.config import config
-    from vibecanvas_api.services.chat_workspace import chat_workspace_scope_id
     from vibecanvas_api.services.vfs_volume import get_chat_runtime_volume_provider
     from vibecanvas_api.storage.chat_repo import ChatRepo
 
@@ -733,12 +618,12 @@ async def test_browser_reconnect_snapshot_restores_matching_lost_session(
 
 
 @pytest.mark.asyncio
-async def test_existing_chat_build_command_commits_metadata_before_stream(
+async def test_existing_chat_workflow_command_commits_metadata_before_stream(
     client, pg_engine, monkeypatch, openfga_allow_all,
 ):
     """Regression for create_workflow hanging on persist_chat_binding.
 
-    An existing chat that receives `/build` updates chats.meta.active_modes
+    An existing chat that receives `/workflow` updates chats.meta.active_modes
     before the SSE producer starts. That write must be committed immediately;
     otherwise the later create_workflow tool writes current_workflow_id through a
     short-session repo and waits on this route transaction's row lock.
@@ -783,7 +668,6 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
     base_platform_mcps = [
         "config",
         "interactive",
-        "workflow",
     ]
     assert dispatched_turns[0].active_platform_mcps == base_platform_mcps
     from vibecanvas_api.config import config
@@ -808,40 +692,33 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
 
     r = await client.post(
         f"/api/v1/chat-scopes/{wf_id}/chats/c_build/messages",
-        json={"role": "user", "content": "/build create something"},
+        json={"role": "user", "content": "/workflow create something"},
         headers=headers,
     )
     assert r.status_code == 200, r.text
     assert len(commit_calls) == 2
     assert dispatched_turns[1].active_platform_mcps == [
         *base_platform_mcps,
+        "workflow",
         "build",
     ]
     assert dispatched_turns[1].message["content"] == "create something"
-    assert [item.name for item in dispatched_turns[1].instructions] == ["build"]
+    assert [item.name for item in dispatched_turns[1].instructions] == ["workflow"]
     assert dispatched_turns[1].instructions[0].activated_this_turn is True
-    assert "BUILD mode" in dispatched_turns[1].instructions[0].content
-    assert "workflow" not in dispatched_turns[1].command_context.model_dump()
+    assert "WORKFLOW mode" in dispatched_turns[1].instructions[0].content
+    assert dispatched_turns[1].command_context.active_modes == ["workflow"]
     build_server = next(
         server
-        for server in dispatched_turns[1].mcp_servers
+        for server in dispatched_turns[1].mcp_host_servers
         if server.source == "platform" and server.name == "build"
     )
-    assert build_server.connection["transport"] == "streamable_http"
-    assert build_server.connection["url"].endswith(
-        "/api/internal/mcp/build/"
-    )
-    assert build_server.connection["headers"]["Authorization"].startswith(
-        "Bearer "
-    )
+    assert build_server.connection["transport"] == "host_gateway"
     from vibecanvas_api.services.platform_mcp.capability import (
         verify_platform_mcp_capability,
     )
 
     build_capability = verify_platform_mcp_capability(
-        build_server.connection["headers"]["Authorization"].removeprefix(
-            "Bearer "
-        ),
+        build_server.connection["capability"],
         secret=config.signing_secret,
         server="build",
     )
@@ -859,7 +736,7 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
     assert "workflow:*" in build_capability.resources
 
     # Command activation is durable Chat metadata. A later plain message must
-    # receive the Workflow MCP again without repeating `/build`.
+    # receive the Workflow MCP again without repeating `/workflow`.
     r = await client.post(
         f"/api/v1/chat-scopes/{wf_id}/chats/c_build/messages",
         json={"role": "user", "content": "continue"},
@@ -869,11 +746,53 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
     assert len(commit_calls) == 3
     assert dispatched_turns[2].active_platform_mcps == [
         *base_platform_mcps,
+        "workflow",
         "build",
     ]
     assert dispatched_turns[2].message["content"] == "continue"
-    assert [item.name for item in dispatched_turns[2].instructions] == ["build"]
+    assert [item.name for item in dispatched_turns[2].instructions] == ["workflow"]
     assert dispatched_turns[2].instructions[0].activated_this_turn is False
+
+    # The Runtime remains fixed for the Chat, while the user may select a
+    # different compatible API/model and reasoning effort for each idle Turn.
+    credential_ids: list[str] = []
+    for label, model_name in (("Primary API", "gpt-audit-a"), ("Backup API", "gpt-audit-b")):
+        created_credential = await client.post(
+            "/api/v1/llm-credentials",
+            json={
+                "name": label,
+                "provider": "openai",
+                "model_name": model_name,
+                "model_context_tokens": 128_000,
+                "api_url": "https://api.openai.com/v1",
+                "proxy": "",
+                "api_key": f"fixture-{model_name}",
+            },
+            headers=headers,
+        )
+        assert created_credential.status_code == 201, created_credential.text
+        credential_ids.append(created_credential.json()["id"])
+
+    for index, (credential_id, effort) in enumerate(
+        zip(credential_ids, ("low", "high"), strict=True),
+        start=1,
+    ):
+        selected_model_id = f"langchain:credential:{credential_id}"
+        switched = await client.post(
+            f"/api/v1/chat-scopes/{wf_id}/chats/c_build/messages",
+            json={
+                "role": "user",
+                "content": f"model switch {index}",
+                "agent_settings": {
+                    "model_id": selected_model_id,
+                    "reasoning_effort": effort,
+                },
+            },
+            headers=headers,
+        )
+        assert switched.status_code == 200, switched.text
+        assert dispatched_turns[2 + index].reasoning_effort == effort
+        assert dispatched_turns[2 + index].model["id"] == f"gpt-audit-{'ab'[index - 1]}"
 
     # Capability headers are private turn-transport data. Durable product Run
     # snapshots keep runtime/model choices, but never bearer tokens or MCP
@@ -893,22 +812,51 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
         snapshots = [
             (await run_repo.get(run_id)).input_snapshot for run_id in run_ids
         ]
-    assert len(snapshots) == 3
+        chat_binding = (
+            await session.execute(
+                text(
+                    "SELECT runtime_model_id, runtime_connection_id, "
+                    "runtime_agent_settings FROM chats WHERE chat_id='c_build'"
+                )
+            )
+        ).one()
+    assert len(snapshots) == 5
     assert all("mcp_servers" not in snapshot for snapshot in snapshots)
     assert all("Authorization" not in str(snapshot) for snapshot in snapshots)
+    assert snapshots[-2] | {
+        "runtime_type": "langchain",
+        "model_id": f"langchain:credential:{credential_ids[0]}",
+        "provider_model_id": "gpt-audit-a",
+        "model_provider": "openai",
+        "api_source": "manual",
+        "api_protocol": "langchain_provider_adapter",
+        "reasoning_effort": "low",
+    } == snapshots[-2]
+    assert snapshots[-1] | {
+        "runtime_type": "langchain",
+        "model_id": f"langchain:credential:{credential_ids[1]}",
+        "provider_model_id": "gpt-audit-b",
+        "model_provider": "openai",
+        "api_source": "manual",
+        "api_protocol": "langchain_provider_adapter",
+        "reasoning_effort": "high",
+    } == snapshots[-1]
+    assert chat_binding.runtime_model_id == f"langchain:credential:{credential_ids[1]}"
+    assert chat_binding.runtime_connection_id == (
+        f"langchain:credential:{credential_ids[1]}"
+    )
+    assert chat_binding.runtime_agent_settings["reasoning_effort"] == "high"
 
     # A real host-side Platform MCP request can rebuild the context while the
     # exact Turn is active, but the same already-issued descriptor is rejected
     # immediately after its browser Session generation changes.
     final_build_server = next(
         server
-        for server in dispatched_turns[2].mcp_servers
+        for server in dispatched_turns[2].mcp_host_servers
         if server.source == "platform" and server.name == "build"
     )
     final_capability = verify_platform_mcp_capability(
-        final_build_server.connection["headers"]["Authorization"].removeprefix(
-            "Bearer "
-        ),
+        final_build_server.connection["capability"],
         secret=config.signing_secret,
         server="build",
     )
@@ -925,14 +873,14 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
             ),
             {"run_id": final_capability.turn_id},
         )
-    from vibecanvas_api.services.platform_mcp import server as platform_server
+    from vibecanvas_api.services.platform_mcp import invocation as platform_invocation
 
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "_OPENFGA_CLIENT",
         openfga_allow_all,
     )
-    live_context = await platform_server._context_for(final_capability)
+    live_context = await platform_invocation._context_for(final_capability)
     assert live_context.chat_id == "c_build"
     assert live_context.runtime_session_id == final_capability.runtime_session_id
     assert live_context.authorization_session_generation == (
@@ -948,7 +896,7 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
             {"session_id": uuid.UUID(final_capability.session_id)},
         )
     with pytest.raises(PermissionError, match="identity has been revoked"):
-        await platform_server._context_for(final_capability)
+        await platform_invocation._context_for(final_capability)
 
     from vibecanvas_api.services.platform_mcp.capability import (
         mint_platform_mcp_capability,
@@ -975,7 +923,7 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
         server="build",
     )
     assert rotated_capability is not None
-    assert (await platform_server._context_for(rotated_capability)).chat_id == (
+    assert (await platform_invocation._context_for(rotated_capability)).chat_id == (
         "c_build"
     )
 
@@ -992,7 +940,7 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
             {"membership_id": uuid.UUID(rotated_capability.membership_id)},
         )
     with pytest.raises(PermissionError, match="identity has been revoked"):
-        await platform_server._context_for(rotated_capability)
+        await platform_invocation._context_for(rotated_capability)
 
     async with pg_engine.begin() as connection:
         await connection.execute(
@@ -1014,7 +962,7 @@ async def test_existing_chat_build_command_commits_metadata_before_stream(
             {"chat_id": rotated_capability.chat_id},
         )
     with pytest.raises(PermissionError, match="Runtime binding is stale"):
-        await platform_server._context_for(rotated_capability)
+        await platform_invocation._context_for(rotated_capability)
 
 
 @pytest.mark.asyncio

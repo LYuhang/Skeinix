@@ -261,7 +261,7 @@ class AgentRuntimeRepo:
                 raise ValueError("runtime state ref conflict")
         return self._binding(chat)
 
-    async def set_runtime_model_id(
+    async def set_runtime_model_selection(
         self,
         chat_id: str,
         *,
@@ -270,7 +270,13 @@ class AgentRuntimeRepo:
         connection_id: str,
         agent_settings: dict,
     ) -> dict | None:
-        """Freeze the effective Runtime configuration on the first Turn."""
+        """Persist the model/settings used by the next accepted Turn.
+
+        The Runtime type remains fixed for the Chat, while a user may switch
+        models, reasoning effort, or API sources between idle Turns.  The row
+        lock makes the latest accepted selection authoritative for Resume.
+        Each AgentRun separately stores its immutable execution snapshot.
+        """
         if not model_id.strip() or not connection_id.strip():
             raise ValueError("runtime model id is required")
         chat = (
@@ -288,25 +294,11 @@ class AgentRuntimeRepo:
             return None
         if chat.runtime_type != runtime_type:
             raise ValueError("runtime binding changed during model selection")
-        if chat.runtime_connection_id is None:
-            chat.runtime_connection_id = connection_id
-        elif chat.runtime_connection_id != connection_id:
-            raise ValueError("runtime connection is immutable after first turn")
         normalized_settings = {**agent_settings, "model_id": model_id}
-        if chat.runtime_model_id is None:
-            chat.runtime_model_id = model_id
-            chat.runtime_agent_settings = normalized_settings
-            await self._session.flush()
-        elif chat.runtime_model_id != model_id:
-            raise ValueError("runtime configuration is immutable after first turn")
-        elif chat.runtime_agent_settings is None:
-            # One-time upgrade for Chats created before revision 115. Their
-            # already-persisted model remains authoritative; the remaining
-            # fields are filled from this first post-upgrade resume.
-            chat.runtime_agent_settings = normalized_settings
-            await self._session.flush()
-        elif chat.runtime_agent_settings != normalized_settings:
-            raise ValueError("runtime configuration is immutable after first turn")
+        chat.runtime_connection_id = connection_id
+        chat.runtime_model_id = model_id
+        chat.runtime_agent_settings = normalized_settings
+        await self._session.flush()
         return self._binding(chat)
 
     @staticmethod

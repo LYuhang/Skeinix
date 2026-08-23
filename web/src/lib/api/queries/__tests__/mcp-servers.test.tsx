@@ -14,7 +14,7 @@ describe('useMcpServers', () => {
   beforeEach(() => vi.restoreAllMocks());
   it('returns the listed servers', async () => {
     vi.spyOn(client, 'listMcpServers').mockResolvedValue([
-      { id: 's1', name: 'A', tool_prefix: 'a', transport: 'sse', endpoint: 'http://x', auth_mode: 'none', connection_status: 'not_required', auth_config: null, enabled: true, last_handshake_status: 'ok', last_tool_count: 2, last_tool_names: null, last_handshake_at: null, created_at: '', updated_at: '' },
+      { id: 's1', name: 'A', tool_prefix: 'a', transport: 'sse', endpoint: 'http://x', auth_mode: 'none', connection_status: 'not_required', auth_config: null, enabled: true, last_handshake_status: 'ok', last_tool_count: 2, last_tool_names: null, last_handshake_at: null, created_at: '', updated_at: '', provenance: { ownership_scope: 'personal', origin_type: 'created', owner: { type: 'user', display_name: 'Owner' }, created_by: { type: 'user', display_name: 'Owner' } } },
     ]);
     const { result } = renderHook(() => useMcpServers(), { wrapper });
     await waitFor(() => expect(result.current.data?.length).toBe(1));

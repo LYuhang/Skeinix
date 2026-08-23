@@ -95,6 +95,7 @@ async def request_pinned_public_url(
     max_redirects: int = 4,
     max_response_bytes: int = 8 * 1024 * 1024,
     trusted_proxy_cidrs: Iterable[str] = (),
+    proxy: str | None = None,
     **request_kwargs,
 ) -> httpx.Response:
     """Validate and dial exactly the validated public DNS answers.
@@ -119,6 +120,7 @@ async def request_pinned_public_url(
         visited.add(target.url)
         transport = PinnedAsyncHTTPTransport(
             addresses={target.hostname: target.addresses},
+            proxy=proxy,
         )
         async with httpx.AsyncClient(
             transport=transport,

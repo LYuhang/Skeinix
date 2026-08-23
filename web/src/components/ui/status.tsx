@@ -93,6 +93,7 @@ const stateIcons = {
 export interface ProgressStateProps extends React.HTMLAttributes<HTMLDivElement> {
   status?: SemanticStatus;
   label: React.ReactNode;
+  progressLabel?: string;
   detail?: React.ReactNode;
   value?: number;
   max?: number;
@@ -101,6 +102,7 @@ export interface ProgressStateProps extends React.HTMLAttributes<HTMLDivElement>
 export function ProgressState({
   status = 'neutral',
   label,
+  progressLabel,
   detail,
   value,
   max = 100,
@@ -108,6 +110,7 @@ export function ProgressState({
   ...props
 }: ProgressStateProps) {
   const Icon = stateIcons[status];
+  const labelId = React.useId();
   const percent = typeof value === 'number' && max > 0
     ? Math.min(100, Math.max(0, (value / max) * 100))
     : null;
@@ -118,14 +121,15 @@ export function ProgressState({
           className={cn('h-4 w-4 shrink-0', statusColor[status], status === 'running' && 'motion-safe:animate-spin')}
           aria-hidden="true"
         />
-        <span className="min-w-0 flex-1 font-medium">{label}</span>
+        <span id={labelId} className="min-w-0 flex-1 font-medium">{label}</span>
         {detail ? <span className="text-xs text-muted-foreground">{detail}</span> : null}
       </div>
       {percent !== null ? (
         <div
           className="h-1.5 overflow-hidden rounded-full bg-surface-sunken"
           role="progressbar"
-          aria-label={typeof label === 'string' ? label : 'Progress'}
+          aria-label={progressLabel}
+          aria-labelledby={progressLabel ? undefined : labelId}
           aria-valuemin={0}
           aria-valuemax={max}
           aria-valuenow={value}

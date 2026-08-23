@@ -373,15 +373,23 @@ async def test_storage_root_and_workflow_vfs_authorization(
                 )
             ).status_code == 404
 
-        binding = {
-            "relation": "viewer",
-            "subject_type": "user",
-            "subject_id": viewer["user_id"],
-            "subject_relation": None,
-        }
+        resolved_viewer = await client.post(
+            f"/api/v1/resource-access/workflow/{workflow_id}/resolve-target",
+            json={
+                "target_type": "user",
+                "identifier": viewer["email"],
+            },
+            headers=_headers(owner_token),
+        )
+        assert resolved_viewer.status_code == 200, resolved_viewer.text
+        viewer_target = resolved_viewer.json()["target"]
+        assert viewer_target is not None
         granted = await client.post(
             f"/api/v1/workflows/{workflow_id}/access",
-            json=binding,
+            json={
+                "relation": "viewer",
+                "resolution_token": viewer_target["resolution_token"],
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "storage-viewer-grant"},
@@ -389,13 +397,23 @@ async def test_storage_root_and_workflow_vfs_authorization(
         )
         assert granted.status_code == 201, granted.text
 
-        guest_binding = {
-            **binding,
-            "subject_id": guest["user_id"],
-        }
+        resolved_guest = await client.post(
+            f"/api/v1/resource-access/workflow/{workflow_id}/resolve-target",
+            json={
+                "target_type": "user",
+                "identifier": guest["email"],
+            },
+            headers=_headers(owner_token),
+        )
+        assert resolved_guest.status_code == 200, resolved_guest.text
+        guest_target = resolved_guest.json()["target"]
+        assert guest_target is not None
         guest_granted = await client.post(
             f"/api/v1/workflows/{workflow_id}/access",
-            json=guest_binding,
+            json={
+                "relation": "viewer",
+                "resolution_token": guest_target["resolution_token"],
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "storage-guest-grant"},
@@ -483,7 +501,12 @@ async def test_storage_root_and_workflow_vfs_authorization(
         revoked = await client.request(
             "DELETE",
             f"/api/v1/workflows/{workflow_id}/access",
-            json=binding,
+            json={
+                "relation": "viewer",
+                "subject_type": "user",
+                "subject_id": viewer["user_id"],
+                "subject_relation": None,
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "storage-viewer-revoke"},
@@ -493,7 +516,12 @@ async def test_storage_root_and_workflow_vfs_authorization(
         guest_revoked = await client.request(
             "DELETE",
             f"/api/v1/workflows/{workflow_id}/access",
-            json=guest_binding,
+            json={
+                "relation": "viewer",
+                "subject_type": "user",
+                "subject_id": guest["user_id"],
+                "subject_relation": None,
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "storage-guest-revoke"},

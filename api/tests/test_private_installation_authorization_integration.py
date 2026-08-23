@@ -13,9 +13,9 @@ from vibecanvas_api.authorization.openfga_client import (
     OpenFgaReadPage,
     OpenFgaTuple,
 )
-from vibecanvas_api.services.agent_runtime.mcp import (
+from vibecanvas_api.services.agent_runtime.mcp_host_resolution import (
     McpSelectionError,
-    custom_mcp_descriptors,
+    resolve_custom_mcp_authority,
 )
 
 
@@ -400,7 +400,7 @@ async def test_private_installations_never_become_tenant_wide(
         ).status_code == 404
 
         with pytest.raises(McpSelectionError):
-            await custom_mcp_descriptors(
+            await resolve_custom_mcp_authority(
                 owner["tenant_id"],
                 user_id=outsider["user_id"],
                 chat_id="chat-private-mcp-test",

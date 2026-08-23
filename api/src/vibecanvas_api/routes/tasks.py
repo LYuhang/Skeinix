@@ -13,7 +13,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -46,6 +46,9 @@ from vibecanvas_api.authorization.mutations import AuthzMutationError
 from vibecanvas_api.authorization.openfga_client import (
     OpenFgaUnavailableError,
 )
+from vibecanvas_api.authorization.share_resolution import (
+    binding_from_share_resolution,
+)
 from vibecanvas_api.authorization.projection import (
     apply_committed_structural_mutations,
     enqueue_structural_delta,
@@ -74,6 +77,7 @@ from vibecanvas_api.authorization.types import (
 from vibecanvas_api.celery_app import celery_app
 from vibecanvas_api.config import config as _config
 from vibecanvas_api.schemas.access import (
+    DirectBindingGrantIn,
     DirectBindingIn,
     DirectBindingListOut,
     DirectBindingOut,
@@ -81,8 +85,12 @@ from vibecanvas_api.schemas.access import (
     decision_allows_content,
 )
 from vibecanvas_api.services.batch_output import serialize_results
+from vibecanvas_api.services.access_presentation import direct_binding_out
 from vibecanvas_api.services.object_store import get_object_store, uri_to_key
 from vibecanvas_api.services.queue_routing import route_for
+from vibecanvas_api.services.resource_provenance import (
+    ResourceProvenanceBuilder,
+)
 from vibecanvas_api.services.scheduled_runs import (
     DEFAULT_NOTIFICATION_POLICY,
     compute_next_run_at,
@@ -175,7 +183,11 @@ _RESUMABLE_BATCH_STATUSES = (
 )
 
 
-def _task_to_out(t, decision: Decision) -> dict:
+async def _task_to_out(
+    t,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> dict:
     """Serialize a ``Task`` ORM row to the JSON contract.
 
     Datetime columns become ISO-8601 strings; ``None`` stays ``None``.
@@ -202,6 +214,9 @@ def _task_to_out(t, decision: Decision) -> dict:
         "started_at": t.started_at.isoformat() if t.started_at else None,
         "finished_at": t.finished_at.isoformat() if t.finished_at else None,
         "access": access_from_decision(decision).model_dump(mode="json"),
+        "provenance": (
+            await provenance.build(creator_user_id=t.user_id)
+        ).model_dump(mode="json"),
     }
 
 
@@ -326,7 +341,7 @@ def _binding_out(binding: RelationshipBinding) -> DirectBindingOut:
 
 
 def _binding_from_body(
-    body: DirectBindingIn,
+    body: DirectBindingIn | DirectBindingGrantIn,
     *,
     ctx: AuthContext,
     task_id: uuid.UUID,
@@ -420,11 +435,13 @@ async def list_tasks(
         resources=resources,
         context=context,
     )
+    provenance = ResourceProvenanceBuilder(session)
+    output_items = [
+        await _task_to_out(item, decisions[resource], provenance)
+        for item, resource in zip(items, resources, strict=True)
+    ]
     return {
-        "items": [
-            _task_to_out(item, decisions[resource])
-            for item, resource in zip(items, resources, strict=True)
-        ],
+        "items": output_items,
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -618,7 +635,11 @@ async def create_scheduled_run(
             "authorization_projection_not_visible"
         )
     return {
-        "task": _task_to_out(task, decision),
+        "task": await _task_to_out(
+            task,
+            decision,
+            ResourceProvenanceBuilder(session),
+        ),
         "schedule": schedule_to_out(schedule),
     }
 
@@ -644,7 +665,11 @@ async def get_scheduled_run(
     if task is None or schedule is None:
         raise HTTPException(status_code=404, detail=f"scheduled run {task_id} not found")
     return {
-        "task": _task_to_out(task, authorized.decision),
+        "task": await _task_to_out(
+            task,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
         "schedule": schedule_to_out(schedule),
     }
 
@@ -720,7 +745,11 @@ async def update_scheduled_run(
     updated_task = await repo.get(task_id)
     assert updated_task is not None
     return {
-        "task": _task_to_out(updated_task, authorized.decision),
+        "task": await _task_to_out(
+            updated_task,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
         "schedule": schedule_to_out(schedule),
     }
 
@@ -1134,6 +1163,7 @@ async def list_task_access(
     request: Request,
     continuation_token: str = "",
     ctx: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> DirectBindingListOut:
     _require_sharing_enabled()
@@ -1158,7 +1188,10 @@ async def list_task_access(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DirectBindingListOut(
-        items=[_binding_out(item) for item in page.bindings],
+        items=[
+            await direct_binding_out(session, item)
+            for item in page.bindings
+        ],
         continuation_token=page.continuation_token,
     )
 
@@ -1182,7 +1215,17 @@ async def _change_task_access(
         action=Action.MANAGE_ACCESS,
         consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
     )
-    binding = _binding_from_body(body, ctx=ctx, task_id=task_id)
+    binding = (
+        binding_from_share_resolution(
+            body.resolution_token,
+            relation=body.relation,
+            actor_user_id=ctx.user_id,
+            session_id=ctx.session_id,
+            resource=_task_resource(ctx, task_id),
+        )
+        if desired_present and isinstance(body, DirectBindingGrantIn)
+        else _binding_from_body(body, ctx=ctx, task_id=task_id)
+    )
     try:
         result = await (
             service.grant(
@@ -1223,7 +1266,7 @@ async def _change_task_access(
 )
 async def grant_task_access(
     task_id: uuid.UUID,
-    body: DirectBindingIn,
+    body: DirectBindingGrantIn,
     request: Request,
     idempotency_key: str = Header(
         min_length=1,
@@ -1299,7 +1342,11 @@ async def get_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"task {task_id} not found",
         )
-    return _task_to_out(t, authorized.decision)
+    return await _task_to_out(
+        t,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.post("/{task_id}/cancel")
@@ -1562,7 +1609,10 @@ async def list_task_events(
     after_seq: int | None = Query(default=None, ge=0),
     before_seq: int | None = Query(default=None, ge=1),
     event_type: list[str] = Query(default=[]),
-    limit: int = Query(default=500, ge=1, le=1000),
+    limit: int = Query(default=50, ge=1, le=200),
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+    order: Annotated[Literal["asc", "desc"], Query()] = "desc",
     ctx: AuthContext = Depends(current_user),
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
@@ -1580,22 +1630,37 @@ async def list_task_events(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"task {task_id} not found",
         )
-    descending = before_seq is not None and after_seq is None
-    events = await TasksRepo(session).events_for_task(
+    if any(value is not None and value.utcoffset() is None for value in (from_, to)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="from and to must include a timezone offset",
+        )
+    if from_ is not None and to is not None and from_ > to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="from must be before or equal to to",
+        )
+    repo = TasksRepo(session)
+    descending = order == "desc"
+    events = await repo.events_for_task(
         task_id=task_id,
         after_seq=after_seq,
         before_seq=before_seq,
         event_type=event_type or None,
-        limit=limit,
+        from_=from_,
+        to=to,
+        limit=limit + 1,
         descending=descending,
     )
-    if descending:
-        events = list(reversed(events))
+    page = events[:limit]
     return {
-        "items": [_event_to_out(ev) for ev in events],
+        "items": [_event_to_out(ev) for ev in page],
         "limit": limit,
         "after_seq": after_seq,
         "before_seq": before_seq,
+        "order": order,
+        "next_cursor": page[-1].id if len(events) > limit and page else None,
+        "latest_seq": await repo.latest_event_seq(task_id),
     }
 
 

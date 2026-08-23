@@ -9,10 +9,7 @@ from vibecanvas_api.services.agent_runtime import checkpoint_store
 from vibecanvas_api.services.agent_runtime.checkpoint_store import (
     LangChainCheckpointStore,
 )
-from vibecanvas_api.services.sandbox.gvisor import (
-    RootlessGvisorProvider,
-    _prepare_rootful_codex_auth_bind,
-)
+from vibecanvas_api.services.sandbox.gvisor import RootlessGvisorProvider
 
 
 def test_runtime_database_url_is_a_host_only_override(monkeypatch):
@@ -105,60 +102,6 @@ def test_agent_runtime_bundle_has_no_database_or_kms_credentials(
         assert not any(item.startswith("KMS_") for item in environment)
     finally:
         provider.stop_run(handle, kill=True)
-
-
-def test_agent_runtime_bundle_accepts_existing_writable_file_bind(tmp_path):
-    """Account Codex mounts one auth file beneath the writable runtime volume."""
-    auth_file = tmp_path / "account" / "auth.json"
-    auth_file.parent.mkdir(parents=True)
-    auth_file.write_text('{"auth_mode":"chatgpt"}', encoding="utf-8")
-    auth_file.chmod(0o600)
-    provider = RootlessGvisorProvider("/bin/true")
-
-    handle = provider.launch_agent_runtime_bus(
-        run_id="account-turn",
-        bus_socket=str(tmp_path / "bus.sock"),
-        tenant="tenant",
-        extra_rw_binds=[
-            ("/runtime", str(tmp_path / "runtime")),
-            ("/runtime/.codex/auth.json", str(auth_file)),
-        ],
-    )
-    try:
-        oci = json.loads(
-            Path(handle.bundle_dir, "config.json").read_text(encoding="utf-8")
-        )
-        auth_mount = next(
-            mount
-            for mount in oci["mounts"]
-            if mount["destination"] == "/runtime/.codex/auth.json"
-        )
-        assert auth_mount["source"] == str(auth_file)
-        assert "rw" in auth_mount["options"]
-    finally:
-        provider.stop_run(handle, kill=True)
-
-
-def test_rootful_codex_auth_bind_grants_only_root_group_access(
-    monkeypatch, tmp_path
-):
-    auth_file = tmp_path / "auth.json"
-    auth_file.write_text('{"auth_mode":"chatgpt"}', encoding="utf-8")
-    auth_file.chmod(0o600)
-    calls: list[tuple[str, int, int]] = []
-
-    monkeypatch.setattr(
-        "vibecanvas_api.services.sandbox.gvisor.os.fchown",
-        lambda _descriptor, owner, group: calls.append(("chown", owner, group)),
-    )
-    monkeypatch.setattr(
-        "vibecanvas_api.services.sandbox.gvisor.os.fchmod",
-        lambda _descriptor, mode: calls.append(("chmod", mode, 0)),
-    )
-
-    _prepare_rootful_codex_auth_bind(str(auth_file))
-
-    assert calls == [("chown", -1, 0), ("chmod", 0o660, 0)]
 
 
 @pytest.mark.parametrize(

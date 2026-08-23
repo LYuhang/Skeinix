@@ -53,6 +53,12 @@ export const fixtureWorkflow = (
     effective_role: 'manager',
     source: 'computed',
   },
+  provenance: {
+    ownership_scope: 'personal',
+    origin_type: 'created',
+    owner: { type: 'user', display_name: 'Test user' },
+    created_by: { type: 'user', display_name: 'Test user' },
+  },
   ...overrides,
 });
 
@@ -75,7 +81,6 @@ export const handlers = [
       models: [],
       default_model_id: null,
       error_code: null,
-      chat_configuration_locked: false,
       bound_agent_settings: null,
     }),
   ),

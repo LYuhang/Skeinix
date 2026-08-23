@@ -32,7 +32,11 @@ from vibecanvas_api.services.file_format import (
     ("/data/pic.png", "image/png"),
     ("/data/pic.jpeg", "image/jpeg"),
     ("/data/clip.mp3", "audio/mpeg"),
+    ("/data/clip.mp4", "video/mp4"),
     ("/data/doc.pdf", "application/pdf"),
+    ("/data/deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+    ("/data/workbook.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ("/data/diagram.drawio", "application/vnd.jgraph.mxfile"),
 ])
 def test_content_type_extension_map(path, expected):
     assert content_type_for(path) == expected
@@ -54,9 +58,9 @@ def test_extension_map_beats_mimetypes_for_custom_subtypes():
 
 def test_mimetypes_fallback_for_unlisted_extension():
     """An extension we don't curate but mimetypes knows → mimetypes' value."""
-    expected = mimetypes.guess_type("x.xml")[0]
-    assert expected is not None                      # mimetypes knows .xml; we don't curate it
-    assert content_type_for("x.xml") == expected
+    expected = mimetypes.guess_type("x.rtf")[0]
+    assert expected is not None
+    assert content_type_for("x.rtf") == expected
 
 
 # --- content_type_for: (3) NUL-sniff / default fallback --------------------

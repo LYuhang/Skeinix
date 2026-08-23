@@ -10,7 +10,6 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    Header,
     HTTPException,
     Query,
     Request,
@@ -25,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vibecanvas_api.auth.deps import (
     AuthContext,
     current_user,
-    require_recent_step_up,
     tenant_db,
 )
 from vibecanvas_api.authorization.dependencies import (
@@ -34,7 +32,6 @@ from vibecanvas_api.authorization.dependencies import (
     mutation_coordinator_for_request,
     principal_for_auth,
 )
-from vibecanvas_api.authorization.mutations import AuthzMutationError
 from vibecanvas_api.authorization.openfga_client import OpenFgaUnavailableError
 from vibecanvas_api.authorization.projection import (
     apply_committed_structural_mutations,
@@ -42,7 +39,6 @@ from vibecanvas_api.authorization.projection import (
     resource_root_edges,
 )
 from vibecanvas_api.authorization.service import (
-    AuthorizationDeniedError,
     AuthzService,
     batch_resource_decisions,
 )
@@ -51,18 +47,11 @@ from vibecanvas_api.authorization.types import (
     AuthorizedResource,
     ConsistencyPreference,
     Decision,
-    RelationshipBinding,
-    RelationshipSubject,
-    RelationshipSubjectType,
     ResourceRef,
     ResourceType,
 )
-from vibecanvas_api.config import config
 from vibecanvas_api.security.upload_scanner import require_clean_upload
 from vibecanvas_api.schemas.access import (
-    DirectBindingIn,
-    DirectBindingListOut,
-    DirectBindingOut,
     access_from_decision,
 )
 from vibecanvas_api.schemas.skills import (
@@ -82,6 +71,9 @@ from vibecanvas_api.services.skill_catalog import (
     search_skill_catalog,
 )
 from vibecanvas_api.services.skill_loader import parse_skill_md
+from vibecanvas_api.services.resource_provenance import (
+    ResourceProvenanceBuilder,
+)
 from vibecanvas_api.services.skill_bundle import (
     unpack_skill_zip, validate_skill_files,
 )
@@ -96,7 +88,11 @@ def _iso(value) -> str | None:
     return value.isoformat() if value is not None and hasattr(value, "isoformat") else None
 
 
-def _row_to_out(row: dict, decision: Decision) -> SkillOut:
+async def _row_to_out(
+    row: dict,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> SkillOut:
     return SkillOut(
         id=str(row["skill_id"]),
         name=row["name"],
@@ -111,6 +107,13 @@ def _row_to_out(row: dict, decision: Decision) -> SkillOut:
         created_at=_iso(row.get("created_at")),
         updated_at=_iso(row.get("updated_at")),
         access=access_from_decision(decision),
+        provenance=await provenance.build(
+            creator_user_id=row.get("user_id"),
+            origin_type=(
+                "created" if row.get("source") == "custom"
+                else "catalog_install"
+            ),
+        ),
     )
 
 
@@ -164,6 +167,7 @@ def _draft_out(
     skill_md: str,
     files: list[tuple[str, str | None, bytes]],
     decision: Decision,
+    provenance,
 ) -> SkillDraftOut:
     body = parse_skill_md(skill_md)[1]
     return SkillDraftOut(
@@ -176,6 +180,7 @@ def _draft_out(
         has_changes=row is not None,
         updated_at=_iso(row.get("updated_at")) if row else None,
         access=access_from_decision(decision),
+        provenance=provenance,
     )
 
 
@@ -184,6 +189,11 @@ def _catalog_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, (ValueError, UnicodeError)):
         return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc) or "The Skill catalog did not respond in time",
+        )
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=f"Skill catalog request failed: {exc}",
@@ -338,37 +348,6 @@ async def _finish_skill_creation(
     return decision
 
 
-def _binding_out(binding: RelationshipBinding) -> DirectBindingOut:
-    return DirectBindingOut(
-        relation=binding.relation,
-        subject_type=binding.subject.type.value,
-        subject_id=binding.subject.id,
-        subject_relation=binding.subject.relation,
-    )
-
-
-def _binding_from_body(
-    body: DirectBindingIn,
-    *,
-    ctx: AuthContext,
-    skill_id: uuid.UUID,
-) -> RelationshipBinding:
-    return RelationshipBinding(
-        subject=RelationshipSubject(
-            type=RelationshipSubjectType(body.subject_type),
-            id=body.subject_id,
-            relation=body.subject_relation,
-        ),
-        relation=body.relation,
-        resource=_skill_resource(ctx, skill_id),
-    )
-
-
-def _require_sharing_enabled() -> None:
-    if not config.resource_sharing_enabled:
-        raise HTTPException(status_code=404, detail="resource_not_found")
-
-
 @router.get("")
 async def list_skills(
     request: Request,
@@ -395,9 +374,10 @@ async def list_skills(
         resources=resources,
         context=context,
     )
+    provenance = ResourceProvenanceBuilder(session)
     return {
         "items": [
-            _row_to_out(row, decisions[resource])
+            await _row_to_out(row, decisions[resource], provenance)
             for row, resource in zip(rows, resources, strict=True)
         ]
     }
@@ -412,7 +392,7 @@ async def catalog(
 ):
     try:
         return await search_skill_catalog(source=source, search=search, limit=limit)
-    except (httpx.HTTPError, ValueError, UnicodeError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError, UnicodeError) as exc:
         raise _catalog_error(exc) from exc
 
 
@@ -424,7 +404,7 @@ async def resolve_catalog_skill(
 ):
     try:
         return await resolve_skill_catalog_item(source=source, source_id=source_id)
-    except (httpx.HTTPError, LookupError, ValueError, UnicodeError) as exc:
+    except (TimeoutError, httpx.HTTPError, LookupError, ValueError, UnicodeError) as exc:
         raise _catalog_error(exc) from exc
 
 
@@ -439,7 +419,7 @@ async def get_catalog_skill_file(
         data, content_type = await read_skill_catalog_file(
             source=source, source_id=source_id, path=path
         )
-    except (httpx.HTTPError, LookupError, ValueError, UnicodeError) as exc:
+    except (TimeoutError, httpx.HTTPError, LookupError, ValueError, UnicodeError) as exc:
         raise _catalog_error(exc) from exc
     return Response(content=data, media_type=content_type)
 
@@ -502,7 +482,11 @@ async def install_catalog_skill(
         service=service,
         skill_id=skill_id,
     )
-    return _row_to_out(row, decision)
+    return await _row_to_out(
+        row,
+        decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 async def _read_custom_bundle(
@@ -556,7 +540,11 @@ async def create_custom_skill(
         service=service,
         skill_id=skill_id,
     )
-    return _row_to_out(row, decision)
+    return await _row_to_out(
+        row,
+        decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.get("/{skill_id}/draft", response_model=SkillDraftOut)
@@ -599,6 +587,10 @@ async def get_custom_skill_draft(
         skill_md=skill_md,
         files=files,
         decision=authorized.decision,
+        provenance=await ResourceProvenanceBuilder(session).build(
+            creator_user_id=current.get("user_id"),
+            origin_type="created",
+        ),
     )
 
 
@@ -654,6 +646,10 @@ async def save_custom_skill_draft(
         skill_md=body.skill_md,
         files=files,
         decision=authorized.decision,
+        provenance=await ResourceProvenanceBuilder(session).build(
+            creator_user_id=current.get("user_id"),
+            origin_type="created",
+        ),
     )
 
 
@@ -721,7 +717,11 @@ async def publish_custom_skill_version(
         ) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="custom skill not found")
-    return _row_to_out(row, authorized.decision)
+    return await _row_to_out(
+        row,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.get("/{skill_id}/versions", response_model=list[SkillRevisionOut])
@@ -741,9 +741,17 @@ async def list_skill_versions(
         action=Action.VIEW,
     )
     repo = SkillsRepo(session)
-    if await repo.get(sid) is None:
+    current = await repo.get(sid)
+    if current is None:
         raise HTTPException(status_code=404, detail="skill not found")
     rows = await repo.list_revisions(sid)
+    provenance = await ResourceProvenanceBuilder(session).build(
+        creator_user_id=current.get("user_id"),
+        origin_type=(
+            "created" if current.get("source") == "custom"
+            else "catalog_install"
+        ),
+    )
     return [
         SkillRevisionOut(
             revision_id=str(row["revision_id"]),
@@ -754,6 +762,7 @@ async def list_skill_versions(
             size_bytes=int(row.get("size_bytes") or 0),
             created_at=_iso(row.get("created_at")),
             access=access_from_decision(authorized.decision),
+            provenance=provenance,
         )
         for row in rows
     ]
@@ -782,8 +791,9 @@ async def get_skill_version(
     )
     repo = SkillsRepo(session)
     row = await repo.get_revision(sid, rid)
+    current = await repo.get(sid)
     files = await repo.read_revision_files(sid, rid)
-    if row is None or files is None:
+    if row is None or files is None or current is None:
         raise HTTPException(status_code=404, detail="skill version not found")
     raw = next((data for path, _ct, data in files if path == "SKILL.md"), None)
     if raw is None:
@@ -807,6 +817,13 @@ async def get_skill_version(
         skill_md=skill_md,
         body=body,
         access=access_from_decision(authorized.decision),
+        provenance=await ResourceProvenanceBuilder(session).build(
+            creator_user_id=current.get("user_id"),
+            origin_type=(
+                "created" if current.get("source") == "custom"
+                else "catalog_install"
+            ),
+        ),
     )
 
 
@@ -873,7 +890,11 @@ async def get_skill(
     raw = await repo.read_bundle_file(sid, "SKILL.md")
     skill_md = raw.decode("utf-8") if raw is not None else ""
     body = parse_skill_md(skill_md)[1] if skill_md else ""
-    base = _row_to_out(row, authorized.decision)
+    base = await _row_to_out(
+        row,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
     files = _bundle_paths(row)
     draft = await repo.get_draft(sid)
     return SkillDetailOut(
@@ -968,159 +989,6 @@ async def delete_skill(
     await session.commit()
     await apply_committed_structural_mutations(coordinator, mutation_ids)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/{skill_id}/access",
-    response_model=DirectBindingListOut,
-)
-async def list_skill_access(
-    skill_id: str,
-    request: Request,
-    continuation_token: str = "",
-    ctx: AuthContext = Depends(current_user),
-    service: AuthzService = Depends(get_authz_service),
-) -> DirectBindingListOut:
-    _require_sharing_enabled()
-    sid = _parse_uuid(skill_id)
-    authorized = await _authorize_skill(
-        request=request,
-        ctx=ctx,
-        service=service,
-        skill_id=sid,
-        action=Action.MANAGE_ACCESS,
-    )
-    try:
-        page = await service.list_bindings(
-            principal_for_auth(ctx),
-            authorized.resource,
-            context_for_auth(
-                ctx,
-                request,
-                consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-            ),
-            continuation_token=continuation_token,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return DirectBindingListOut(
-        items=[_binding_out(item) for item in page.bindings],
-        continuation_token=page.continuation_token,
-    )
-
-
-async def _change_skill_access(
-    *,
-    desired_present: bool,
-    skill_id: uuid.UUID,
-    body: DirectBindingIn,
-    idempotency_key: str,
-    request: Request,
-    ctx: AuthContext,
-    service: AuthzService,
-) -> DirectBindingOut:
-    _require_sharing_enabled()
-    await _authorize_skill(
-        request=request,
-        ctx=ctx,
-        service=service,
-        skill_id=skill_id,
-        action=Action.MANAGE_ACCESS,
-        consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-    )
-    binding = _binding_from_body(
-        body,
-        ctx=ctx,
-        skill_id=skill_id,
-    )
-    try:
-        result = await (
-            service.grant(
-                principal_for_auth(ctx),
-                binding,
-                context_for_auth(
-                    ctx,
-                    request,
-                    consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-                ),
-                idempotency_key=idempotency_key,
-            )
-            if desired_present
-            else service.revoke(
-                principal_for_auth(ctx),
-                binding,
-                context_for_auth(
-                    ctx,
-                    request,
-                    consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-                ),
-                idempotency_key=idempotency_key,
-            )
-        )
-    except AuthorizationDeniedError as exc:
-        raise HTTPException(404, "resource_not_found") from exc
-    except AuthzMutationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _binding_out(result)
-
-
-@router.post(
-    "/{skill_id}/access",
-    response_model=DirectBindingOut,
-    status_code=status.HTTP_201_CREATED,
-)
-async def grant_skill_access(
-    skill_id: str,
-    body: DirectBindingIn,
-    request: Request,
-    idempotency_key: str = Header(
-        min_length=1,
-        max_length=200,
-        alias="Idempotency-Key",
-    ),
-    ctx: AuthContext = Depends(current_user),
-    _step_up: AuthContext = Depends(require_recent_step_up),
-    service: AuthzService = Depends(get_authz_service),
-) -> DirectBindingOut:
-    return await _change_skill_access(
-        desired_present=True,
-        skill_id=_parse_uuid(skill_id),
-        body=body,
-        idempotency_key=idempotency_key,
-        request=request,
-        ctx=ctx,
-        service=service,
-    )
-
-
-@router.delete(
-    "/{skill_id}/access",
-    response_model=DirectBindingOut,
-)
-async def revoke_skill_access(
-    skill_id: str,
-    body: DirectBindingIn,
-    request: Request,
-    idempotency_key: str = Header(
-        min_length=1,
-        max_length=200,
-        alias="Idempotency-Key",
-    ),
-    ctx: AuthContext = Depends(current_user),
-    _step_up: AuthContext = Depends(require_recent_step_up),
-    service: AuthzService = Depends(get_authz_service),
-) -> DirectBindingOut:
-    return await _change_skill_access(
-        desired_present=False,
-        skill_id=_parse_uuid(skill_id),
-        body=body,
-        idempotency_key=idempotency_key,
-        request=request,
-        ctx=ctx,
-        service=service,
-    )
 
 
 def _parse_uuid(skill_id: str) -> uuid.UUID:

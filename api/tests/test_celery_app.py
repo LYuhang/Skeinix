@@ -25,11 +25,9 @@ def test_celery_app_registers_expected_tasks():
     """The set of user-defined tasks must match the runtime manifest.
 
     The Celery application includes batch execution, the beat reconciler, and
-    ``deployment_invoke`` — the single task all three
-    deployment trigger types (api / webhook / cron) funnel through.
-    ``deployments.cron_dispatcher`` is the
-    beat-scheduled sweep that discovers due cron deployments and
-    enqueues ``deployment_invoke`` for each.
+    ``deployment_invoke`` — the single task API and webhook Deployment
+    requests funnel through. Recurring execution is registered separately as
+    scheduled Task work.
     ``deployments.flush_invoke_counters`` runs every 60 seconds
     beat — rolls Redis counters into ``deployments.invoke_count``) and
     while ``deployments.concurrency_reconciler`` runs daily to reconcile
@@ -47,7 +45,6 @@ def test_celery_app_registers_expected_tasks():
         "batch_exec",
         "deployment_invoke",
         "deployments.concurrency_reconciler",
-        "deployments.cron_dispatcher",
         "deployments.flush_invoke_counters",
         "phase6.reconciler.resubmit_stuck_queued",
         "kb.index_file",

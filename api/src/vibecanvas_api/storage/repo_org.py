@@ -25,6 +25,23 @@ class OrganizationRepo:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def _current_tenant_id(self) -> uuid.UUID | None:
+        """Read the server-bound organization scope for explicit predicates.
+
+        Organization membership is global to a user, so relying on an implicit
+        RLS predicate alone makes cardinality and owner-invariant checks fragile.
+        Keep the tenant condition visible in every identity-sensitive query.
+        """
+        value = (
+            await self.session.execute(
+                text(
+                    "SELECT NULLIF("
+                    "current_setting('app.tenant_id', true), '')::uuid"
+                )
+            )
+        ).scalar_one()
+        return uuid.UUID(str(value)) if value else None
+
     async def get_current(self) -> Organization | None:
         organization_id = (
             await self.session.execute(
@@ -73,21 +90,31 @@ class OrganizationRepo:
         return result
 
     async def get_member(self, user_id: uuid.UUID) -> OrgMembership | None:
+        tenant_id = await self._current_tenant_id()
+        if tenant_id is None:
+            return None
         return (
             await self.session.execute(
                 select(OrgMembership).where(
                     OrgMembership.user_id == user_id,
+                    OrgMembership.tenant_id == tenant_id,
                     OrgMembership.status != "revoked",
                 )
             )
         ).scalar_one_or_none()
 
     async def get_member_projection(self, user_id: uuid.UUID) -> dict | None:
+        tenant_id = await self._current_tenant_id()
+        if tenant_id is None:
+            return None
         row = (
             await self.session.execute(
                 select(OrgMembership, User)
                 .join(User, User.user_id == OrgMembership.user_id)
-                .where(OrgMembership.user_id == user_id)
+                .where(
+                    OrgMembership.user_id == user_id,
+                    OrgMembership.tenant_id == tenant_id,
+                )
             )
         ).one_or_none()
         if row is None:
@@ -168,6 +195,7 @@ class OrganizationRepo:
                         select(func.count())
                         .select_from(OrgMembership)
                         .where(
+                            OrgMembership.tenant_id == membership.tenant_id,
                             OrgMembership.org_role == "owner",
                             OrgMembership.status == "active",
                         )

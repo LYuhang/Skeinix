@@ -97,7 +97,6 @@ def _audit_catalog() -> list[dict]:
         ],
         "runtime_operations": [
             "agent_run",
-            "agent_plan",
             "hitl_request",
             "interactive_artifact",
             "background_task",

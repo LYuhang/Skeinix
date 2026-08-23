@@ -26,7 +26,10 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <div className={cn('flex flex-wrap items-start justify-between gap-4', className)}>
+    <div
+      className={cn('flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between', className)}
+      data-page-region="identity"
+    >
       <div className="min-w-0 flex-1">
         {eyebrow ? (
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-content-tertiary">
@@ -50,7 +53,14 @@ export function PageHeader({
           </div>
         ) : null}
       </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        <div
+          className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end"
+          data-page-region="primary-actions"
+        >
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }

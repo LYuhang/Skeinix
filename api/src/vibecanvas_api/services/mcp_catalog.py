@@ -24,6 +24,8 @@ _OFFICIAL_URL = "https://registry.modelcontextprotocol.io/v0.1/servers"
 _SMITHERY_URL = "https://api.smithery.ai/servers"
 _CACHE_TTL_S = 300.0
 _CATALOG_USER_AGENT = "Skeinix/1.0 MCP catalog client"
+_CATALOG_REQUEST_TIMEOUT_S = 18.0
+_REMOTE_AUTH_DISCOVERY_TIMEOUT_S = 3.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class _CacheEntry:
 
 
 _cache: dict[tuple[str, str, int], _CacheEntry] = {}
+_detail_cache: dict[tuple[str, str], _CacheEntry] = {}
 _cache_lock = asyncio.Lock()
 
 
@@ -262,30 +265,25 @@ def normalize_smithery_detail(detail: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _fetch_json(url: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    timeout = httpx.Timeout(30.0, connect=8.0)
-    last_error: Exception | None = None
-    for attempt in range(2):
-        try:
-            response = await request_pinned_public_url(
-                "GET",
-                url,
-                label="MCP catalog URL",
-                timeout=timeout,
-                headers={"User-Agent": _CATALOG_USER_AGENT},
-                params=params,
-                allow_redirects=True,
-                trusted_proxy_cidrs=_trusted_proxy_cidrs(),
-            )
-            response.raise_for_status()
-            payload = response.json()
-            break
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            last_error = exc
-            if attempt == 0:
-                await asyncio.sleep(0.25)
-    else:
-        assert last_error is not None
-        raise last_error
+    # Catalog browsing is an interactive request. A hidden 30 s retry made the
+    # detail page look permanently stuck whenever an upstream registry or VPN
+    # route was unhealthy. Keep one bounded attempt and let the UI expose a
+    # retry action; successful responses are cached below.
+    timeout = httpx.Timeout(_CATALOG_REQUEST_TIMEOUT_S, connect=10.0)
+    async with asyncio.timeout(_CATALOG_REQUEST_TIMEOUT_S + 0.5):
+        response = await request_pinned_public_url(
+            "GET",
+            url,
+            label="MCP catalog URL",
+            timeout=timeout,
+            headers={"User-Agent": _CATALOG_USER_AGENT},
+            params=params,
+            allow_redirects=True,
+            trusted_proxy_cidrs=_trusted_proxy_cidrs(),
+            proxy=config.control_plane_http_proxy or None,
+        )
+    response.raise_for_status()
+    payload = response.json()
     if not isinstance(payload, dict):
         raise TypeError("MCP catalog returned a non-object response")
     return payload
@@ -304,19 +302,21 @@ async def _discover_remote_auth(item: dict[str, Any]) -> dict[str, Any]:
 
     timeout = httpx.Timeout(8.0, connect=5.0)
     try:
-        response = await request_pinned_public_url(
-            "GET",
-            endpoint,
-            label="remote MCP endpoint",
-            timeout=timeout,
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "User-Agent": _CATALOG_USER_AGENT,
-            },
-            allow_redirects=True,
-            trusted_proxy_cidrs=_trusted_proxy_cidrs(),
-        )
-    except (httpx.HTTPError, PublicUrlError):
+        async with asyncio.timeout(_REMOTE_AUTH_DISCOVERY_TIMEOUT_S):
+            response = await request_pinned_public_url(
+                "GET",
+                endpoint,
+                label="remote MCP endpoint",
+                timeout=timeout,
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "User-Agent": _CATALOG_USER_AGENT,
+                },
+                allow_redirects=True,
+                trusted_proxy_cidrs=_trusted_proxy_cidrs(),
+                proxy=config.control_plane_http_proxy or None,
+            )
+    except (TimeoutError, httpx.HTTPError, PublicUrlError):
         return item
 
     challenge = response.headers.get("www-authenticate", "")
@@ -384,15 +384,24 @@ async def resolve_catalog_item(*, source: CatalogSource, source_id: str) -> dict
     clean_id = source_id.strip()[:300]
     if not clean_id:
         raise ValueError("source_id is required")
+    cache_key = (source, clean_id)
+    now = time.monotonic()
+    cached = _detail_cache.get(cache_key)
+    if cached and cached.expires_at > now:
+        return cached.payload
     if source == "smithery":
         detail = await _fetch_json(f"{_SMITHERY_URL}/{quote(clean_id, safe='/@')}")
-        return await _discover_remote_auth(normalize_smithery_detail(detail))
+        item = await _discover_remote_auth(normalize_smithery_detail(detail))
+    else:
+        encoded_id = quote(clean_id, safe="")
+        detail = await _fetch_json(
+            f"{_OFFICIAL_URL}/{encoded_id}/versions/latest",
+        )
+        item = normalize_official_entry(detail)
+        if item.get("source_id") != clean_id:
+            raise LookupError("MCP server was not found in the official registry")
+        item = await _discover_remote_auth(item)
 
-    encoded_id = quote(clean_id, safe="")
-    detail = await _fetch_json(
-        f"{_OFFICIAL_URL}/{encoded_id}/versions/latest",
-    )
-    item = normalize_official_entry(detail)
-    if item.get("source_id") != clean_id:
-        raise LookupError("MCP server was not found in the official registry")
-    return await _discover_remote_auth(item)
+    async with _cache_lock:
+        _detail_cache[cache_key] = _CacheEntry(now + _CACHE_TTL_S, item)
+    return item

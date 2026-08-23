@@ -10,13 +10,13 @@ def test_runtime_neutral_invocation_classifies_platform_mcp_and_normalizes_json(
     started, clock = start_tool_invocation(
         invocation_id="call-1",
         runtime_type="langchain",
-        name="search_knowledge",
+        name="knowledge_search",
         arguments='{"query":"release notes","authorization":"Bearer private"}',
         mcp_catalog=[{
             "name": "knowledge",
             "source": "platform",
             "server_id": "platform-knowledge",
-            "tools": [{"name": "search_knowledge"}],
+            "tools": [{"name": "knowledge_search"}],
         }],
     )
 
@@ -26,8 +26,8 @@ def test_runtime_neutral_invocation_classifies_platform_mcp_and_normalizes_json(
         "serverId": "platform-knowledge",
         "serverName": "knowledge",
         "serverLabel": "knowledge",
-        "toolName": "search_knowledge",
-        "qualifiedName": "search_knowledge",
+        "toolName": "knowledge_search",
+        "qualifiedName": "knowledge_search",
     }
     assert started["capability"] == "knowledge"
     assert started["input"] == {
@@ -40,7 +40,7 @@ def test_runtime_neutral_invocation_classifies_platform_mcp_and_normalizes_json(
         started_monotonic=clock,
         invocation_id="call-1",
         runtime_type="langchain",
-        name="search_knowledge",
+        name="knowledge_search",
         status="done",
         content="found 2 records",
         artifact={"meta": {"content_type": "application/json"}, "items": [1, 2]},

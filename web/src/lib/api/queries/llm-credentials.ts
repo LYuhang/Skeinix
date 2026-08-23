@@ -16,10 +16,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  completeOpenRouterConnection,
   createLlmCredential,
   deleteLlmCredential,
   getLlmCredential,
   listLlmCredentials,
+  disconnectOpenRouter,
+  getOpenRouterConnection,
+  refreshOpenRouterModels,
+  startOpenRouterConnection,
   updateLlmCredential,
 } from '@/lib/api/llm-credentials';
 import type {
@@ -29,6 +34,9 @@ import type {
 
 const LIST_KEY = ['llm-credentials', 'list'] as const;
 const itemKey = (id: string) => ['llm-credentials', 'item', id] as const;
+export const openRouterConnectionKey = [
+  'llm-credentials', 'openrouter', 'connection',
+] as const;
 
 /** Tenant-scoped credential list (PUBLIC projection — no secrets). */
 export const useLlmCredentials = (opts?: { enabled?: boolean }) =>
@@ -74,6 +82,48 @@ export const useDeleteLlmCredential = () => {
     mutationFn: (id: string) => deleteLlmCredential(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: LIST_KEY });
+    },
+  });
+};
+
+export const useOpenRouterConnection = () => useQuery({
+  queryKey: openRouterConnectionKey,
+  queryFn: getOpenRouterConnection,
+});
+
+export const useStartOpenRouterConnection = () => useMutation({
+  mutationFn: startOpenRouterConnection,
+});
+
+export const useCompleteOpenRouterConnection = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, state }: { code: string; state: string }) =>
+      completeOpenRouterConnection(code, state),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: openRouterConnectionKey });
+      await qc.invalidateQueries({ queryKey: LIST_KEY });
+    },
+  });
+};
+
+export const useRefreshOpenRouterModels = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: refreshOpenRouterModels,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: openRouterConnectionKey });
+    },
+  });
+};
+
+export const useDisconnectOpenRouter = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: disconnectOpenRouter,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: openRouterConnectionKey });
+      await qc.invalidateQueries({ queryKey: LIST_KEY });
     },
   });
 };

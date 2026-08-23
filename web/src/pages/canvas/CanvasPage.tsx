@@ -329,7 +329,11 @@ export function CanvasPage() {
   // strictly to its subtree and the inspector would crash.
   return (
     <ReactFlowProvider>
-      <div className="flex h-full w-full flex-col">
+      <div
+        className="flex h-full w-full flex-col"
+        data-page-archetype="editor-workspace"
+        data-edit-state={effectiveReadOnly ? 'view' : dirty ? 'dirty' : 'saved'}
+      >
         <WorkflowWorkbenchHeader workflowId={wfId!} readOnlyName={isPinned} />
         {isPinned && vKey && <VersionBanner wfId={wfId!} vKey={vKey} />}
         <CanvasToolbar wfId={wfId!} readOnly={effectiveReadOnly}

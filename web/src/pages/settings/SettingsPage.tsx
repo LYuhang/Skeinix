@@ -10,7 +10,7 @@
  * Active tab is reflected in the URL as `?tab=<id>` for deep-linking.
  */
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useSearchParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -62,10 +62,12 @@ import {
   runtimeCapabilitiesPrefix,
 } from '@/lib/api/queries/agent-runtime';
 import { OrganizationSettingsPanel } from '@/pages/settings/OrganizationSettingsPanel';
-import { MfaSecurityCard } from '@/pages/settings/MfaSecurityCard';
+import { PasskeySecuritySection } from '@/pages/settings/PasskeySecuritySection';
 import { CodexAccountUsagePanel } from '@/pages/settings/CodexAccountUsagePanel';
 import { ExtensionSettingsPanel } from '@/pages/settings/ExtensionSettingsPanel';
+import { CredentialsSettingsPanel } from '@/pages/credentials/CredentialsPage';
 import { ActionableError } from '@/components/presentation/ActionableError';
+import { SectionBlock } from '@/components/layout/section-block';
 import { organizationsQueryKey } from '@/lib/api/organization-query-keys';
 import { listOrganizations } from '@/lib/api/organizations';
 import { getApiBase } from '@/lib/base-path';
@@ -126,7 +128,7 @@ function TimezoneCard() {
   };
 
   return (
-    <section className="border-b border-edge-subtle py-5">
+    <section className="px-4 py-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-sm font-medium">
@@ -225,18 +227,12 @@ function AgentRuntimePanel() {
 
   return (
     <>
-      <section className="border-b border-edge-subtle py-5">
+      <SectionBlock
+        title={t('settings_runtime_default', 'Default Agent runtime')}
+        description={t('settings_runtime_desc', 'Used when a new chat starts. Existing chats keep the runtime they were created with.')}
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 max-w-[65ch]">
-            <h3 className="text-sm font-medium">
-              {t('settings_runtime_default', 'Default Agent runtime')}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t(
-                'settings_runtime_desc',
-                'Used when a new chat starts. Existing chats keep the runtime they were created with.',
-              )}
-            </p>
             {error ? (
               <ActionableError
                 className="mt-3"
@@ -282,7 +278,7 @@ function AgentRuntimePanel() {
             ) : null}
           </div>
         </div>
-      </section>
+      </SectionBlock>
       {settings
       && settings.default_runtime_type === 'codex'
       && available.has('codex') ? (
@@ -380,7 +376,7 @@ function CodexConnectionsPanel({
           {t('settings_codex_connection', 'Codex account')}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {t('settings_codex_connection_desc', 'Connect the OpenAI account used by Codex. API keys are managed separately, and models are selected when you start a chat.')}
+          {t('settings_codex_connection_desc', 'Connect the OpenAI account used by Codex. Provider API keys are available in the API keys section of Settings, and models are selected when you start a chat.')}
         </p>
       </div>
 
@@ -633,6 +629,7 @@ function DeleteAccountCard() {
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { openrouterState } = useParams<{ openrouterState?: string }>();
   const active = (i18n.resolvedLanguage ?? i18n.language) as Locale;
   const activeOrganizationId = useAuthStore((state) => state.user?.tenant_id ?? '');
   const organizations = useQuery({
@@ -649,10 +646,12 @@ export function SettingsPage() {
     ? t('settings_tab_my_organization', 'My organization')
     : t('settings_tab_organization', 'Organization');
 
-  const requestedTab = searchParams.get('tab') ?? DEFAULT_TAB;
+  const requestedTab = openrouterState
+    ? 'api-keys'
+    : searchParams.get('tab') ?? DEFAULT_TAB;
   const visibleTabs = showOrganization
-    ? ['preferences', 'runtime', 'extensions', 'organization', 'account']
-    : ['preferences', 'runtime', 'extensions', 'account'];
+    ? ['preferences', 'runtime', 'api-keys', 'extensions', 'organization', 'account']
+    : ['preferences', 'runtime', 'api-keys', 'extensions', 'account'];
   const currentTab = visibleTabs.includes(requestedTab)
     ? requestedTab
     : DEFAULT_TAB;
@@ -664,7 +663,7 @@ export function SettingsPage() {
   return (
     <div className="page-shell">
       <div className="page-content w-full max-w-5xl gap-6">
-        <header className="border-b border-edge-subtle pb-5">
+        <header className="hidden border-b border-edge-subtle pb-5 md:block">
           <h1 className="text-title">
             {t('settings_title', 'Settings')}
           </h1>
@@ -684,6 +683,7 @@ export function SettingsPage() {
             <SelectContent>
               <SelectItem value="preferences">{t('settings_tab_preferences', 'Preferences')}</SelectItem>
               <SelectItem value="runtime">{t('settings_tab_runtime', 'Agent runtime')}</SelectItem>
+              <SelectItem value="api-keys">{t('settings_tab_api_keys', 'API keys')}</SelectItem>
               <SelectItem value="extensions">{t('settings_tab_extensions', 'Extensions')}</SelectItem>
               {showOrganization ? <SelectItem value="organization">{organizationLabel}</SelectItem> : null}
               <SelectItem value="account">{t('settings_tab_account', 'Account')}</SelectItem>
@@ -723,6 +723,13 @@ export function SettingsPage() {
               data-testid="settings-tab-runtime"
             >
               {t('settings_tab_runtime', 'Agent runtime')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="api-keys"
+              className="w-full justify-start"
+              data-testid="settings-tab-api-keys"
+            >
+              {t('settings_tab_api_keys', 'API keys')}
             </TabsTrigger>
             <TabsTrigger
               value="extensions"
@@ -768,8 +775,13 @@ export function SettingsPage() {
                   </p>
                 </header>
 
+                <SectionBlock
+                  title={t('settings_interface', 'Interface')}
+                  description={t('settings_interface_desc', 'Choose how Skeinix looks and formats information for you.')}
+                  contentClassName="divide-y divide-edge-subtle p-0"
+                >
                 {/* Language */}
-                <section className="border-b border-edge-subtle py-5">
+                <section className="px-4 py-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium">
@@ -800,7 +812,7 @@ export function SettingsPage() {
                 </section>
 
                 {/* Theme */}
-                <section className="border-b border-edge-subtle py-5">
+                <section className="px-4 py-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium">
@@ -821,6 +833,7 @@ export function SettingsPage() {
 
                 {/* Timezone */}
                 <TimezoneCard />
+                </SectionBlock>
               </TabsContent>
 
               <TabsContent
@@ -839,6 +852,13 @@ export function SettingsPage() {
                   </p>
                 </header>
                 <AgentRuntimePanel />
+              </TabsContent>
+
+              <TabsContent
+                value="api-keys"
+                className="mt-0 flex w-full min-w-0 max-w-3xl flex-col gap-6"
+              >
+                <CredentialsSettingsPanel />
               </TabsContent>
 
               <TabsContent
@@ -887,11 +907,11 @@ export function SettingsPage() {
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     {t(
                       'account_subtitle',
-                      'Manage irreversible account actions.',
+                      'Manage passkeys and the account lifecycle.',
                     )}
                   </p>
                 </header>
-                <MfaSecurityCard />
+                <PasskeySecuritySection />
                 <DeleteAccountCard />
               </TabsContent>
           </div>

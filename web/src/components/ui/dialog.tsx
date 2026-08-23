@@ -31,12 +31,13 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 interface DialogContentProps
   extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
   closeLabel?: string
+  closeDisabled?: boolean
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, closeLabel, ...props }, ref) => {
+>(({ className, children, closeLabel, closeDisabled = false, ...props }, ref) => {
   const { t } = useTranslation()
   return (
     <DialogPortal>
@@ -50,7 +51,10 @@ const DialogContent = React.forwardRef<
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-feedback hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none">
+        <DialogPrimitive.Close
+          disabled={closeDisabled}
+          className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-feedback hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40"
+        >
           <X className="h-4 w-4" />
           <span className="sr-only">{closeLabel ?? t('close')}</span>
         </DialogPrimitive.Close>

@@ -94,6 +94,13 @@ async def _seed_tenant_user(pg_engine):
             {"u": user_id, "t": tenant_id,
              "e": f"t5-{uuid.uuid4().hex[:6]}@example.com"},
         )
+        await c.execute(
+            text(
+                "INSERT INTO organizations(tenant_id, kind, slug, name, created_by) "
+                "VALUES (:t, 'personal', :slug, 'Audit account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"audit-{tenant_id.hex}"},
+        )
     return tenant_id, user_id
 
 

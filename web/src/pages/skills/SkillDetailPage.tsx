@@ -1,8 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import { BookOpenText, ExternalLink, GitCommitHorizontal, Loader2, Pencil, Save, Share2, ShieldCheck, Trash2 } from 'lucide-react';
+import { BookOpenText, ExternalLink, GitCommitHorizontal, Loader2, Pencil, Save, ShieldCheck, Trash2 } from 'lucide-react';
 
 import { Markdown } from '@/components/agent-sidebar/Markdown';
 import { Button } from '@/components/ui/button';
@@ -17,8 +17,11 @@ import { SkillFileBrowser } from '@/pages/skills/SkillFileBrowser';
 import { StatusBadge } from '@/components/ui/status';
 import { useFormatDateTime } from '@/lib/timezone';
 import { EntityDetailShell } from '@/components/layout/entity-detail-shell';
-import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
+import { DetailSummary } from '@/components/layout/detail-summary';
+import { SectionBlock } from '@/components/layout/section-block';
 import { ActionableError } from '@/components/presentation/ActionableError';
+import { useDirtyNavigationGuard } from '@/lib/navigation/use-dirty-navigation-guard';
 
 export function SkillDetailPage() {
   const { t } = useTranslation();
@@ -37,13 +40,13 @@ export function SkillDetailPage() {
   const saveDraftMutation = useSaveSkillDraft();
   const publishMutation = usePublishSkillVersion();
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [draftDirty, setDraftDirty] = useState(false);
   const [versionDialog, setVersionDialog] = useState(false);
   const [nextVersion, setNextVersion] = useState('');
   const [hydratedDraftIdentity, setHydratedDraftIdentity] = useState('');
+  const editBlocker = useDirtyNavigationGuard(editing && draftDirty);
   const loadFile = useCallback(
     (path: string) => selectedRevisionId
       ? getSkillVersionFile(id as string, selectedRevisionId, path)
@@ -57,12 +60,15 @@ export function SkillDetailPage() {
     setParams(next, { replace: true });
   }, [params, setParams]);
   const draftIdentity = `${draftQuery.data?.base_revision_hash ?? ''}:${draftQuery.data?.draft_hash ?? ''}`;
-  if (draftQuery.data && hydratedDraftIdentity !== draftIdentity) {
-    setHydratedDraftIdentity(draftIdentity);
-    setDraftText(draftQuery.data.skill_md);
-    setDraftDirty(false);
-    if (params.get('edit') === '1') setEditing(true);
-  }
+  useEffect(() => {
+    if (!draftQuery.data || hydratedDraftIdentity === draftIdentity) return;
+    queueMicrotask(() => {
+      setHydratedDraftIdentity(draftIdentity);
+      setDraftText(draftQuery.data?.skill_md ?? '');
+      setDraftDirty(false);
+      if (params.get('edit') === '1') setEditing(true);
+    });
+  }, [draftIdentity, draftQuery.data, hydratedDraftIdentity, params]);
 
   if (query.isLoading) return <div className="page-shell page-shell-contained"><div className="page-content max-w-6xl"><div className="empty-state">{t('skills.loading', 'Loading…')}</div></div></div>;
   if (query.isError || !query.data) return <div className="page-shell page-shell-contained"><div className="page-content max-w-6xl"><ActionableError title={t('skills.not_found', 'This Skill No Longer Exists.')} description={t('skills.load_error_hint', 'Return to the skill list or try loading this skill again.')} actionLabel={t('retry', 'Retry')} onAction={() => void query.refetch()} technicalDetails={query.error instanceof Error ? query.error.message : undefined} technicalDetailsLabel={t('common.technicalDetails', 'Technical details')} /></div></div>;
@@ -90,14 +96,16 @@ export function SkillDetailPage() {
     setEditing(true);
     setParams(next, { replace: true });
   };
-  const saveDraft = async () => {
-    if (!id) return;
+  const saveDraft = async (): Promise<boolean> => {
+    if (!id) return false;
     try {
       await saveDraftMutation.mutateAsync({ id, skillMd: draftText });
       setDraftDirty(false);
       toast.success(t('skills.custom.draft_saved', 'Draft saved'));
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      return false;
     }
   };
   const openVersionDialog = () => {
@@ -164,7 +172,7 @@ export function SkillDetailPage() {
           {skill.has_draft ? <StatusBadge status="warning">{t('skills.custom.unpublished', 'Unpublished changes')}</StatusBadge> : null}
           {viewingHistory ? <StatusBadge status="neutral">{t('skills.custom.historical', 'Historical version')}</StatusBadge> : null}
         </div>}
-        metadata={<><span>{sourceName}</span><span>v{viewed.version}</span><span>{t('skills.files_count', { count: viewed.files.length, defaultValue: '{{count}} Files' })}</span></>}
+        metadata={<><span>{sourceName}</span><span>v{viewed.version}</span><span>{t('skills.files_count', { count: viewed.files.length, defaultValue: '{{count}} Files' })}</span><ResourceProvenanceLine provenance={viewed.provenance} /></>}
         actions={<>
             <Select value={selectedRevisionId ?? 'latest'} onValueChange={selectVersion}>
               <SelectTrigger className="h-9 w-44" aria-label={t('skills.custom.select_version', 'Select version')}>
@@ -206,9 +214,6 @@ export function SkillDetailPage() {
                 </Button>
               </>
             ) : null}
-            {capabilities.has('manage_access') ? (
-              <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}><Share2 />{t('skills.share', 'Share Skill')}</Button>
-            ) : null}
             {capabilities.has('delete') ? (
               <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}><Trash2 />{t('skills.delete', 'Uninstall')}</Button>
             ) : null}
@@ -223,8 +228,16 @@ export function SkillDetailPage() {
             <TabsTrigger value="requirements">{t('skills.detail.tab.requirements', 'Requirements')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-3xl pr-2">
-            <h2 className="text-sm font-semibold">{t('skills.detail.description', 'Description')}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{viewed.description}</p>
-            <dl className="mt-6 grid grid-cols-1 gap-x-8 gap-y-4 border-t pt-5 sm:grid-cols-2"><Info label={t('skills.detail.source', 'Source')} value={sourceName} /><Info label={t('skills.detail.version', 'Version')} value={`v${viewed.version}`} /><Info label={t('skills.detail.created', 'Installed')} value={formatTime(viewingHistory ? selectedVersion?.created_at ?? null : skill.created_at)} /><Info label={t('skills.detail.updated', 'Updated')} value={formatTime(skill.updated_at)} /></dl>
+            <SectionBlock title={t('skills.detail.packageDetails', 'Package details')}>
+              <DetailSummary items={[
+                { label: t('skills.detail.source', 'Source'), value: sourceName },
+                { label: t('skills.detail.version', 'Version'), value: `v${viewed.version}` },
+                { label: t('skills.detail.created', 'Installed'), value: formatTime(viewingHistory ? selectedVersion?.created_at ?? null : skill.created_at) },
+                { label: t('skills.detail.updated', 'Updated'), value: formatTime(skill.updated_at) },
+                { label: t('skills.detail.file_count', 'Files'), value: viewed.files.length },
+                { label: t('skills.tools_title', 'Allowed tools'), value: viewed.allowed_tools.length || t('skills.no_tools_short', 'None declared') },
+              ]} />
+            </SectionBlock>
           </TabsContent>
           <TabsContent value="instructions" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-4xl p-1">
             {isCustom && capabilities.has('update') && editing && !viewingHistory ? (
@@ -249,22 +262,64 @@ export function SkillDetailPage() {
           </TabsContent>
           <TabsContent value="files" className="mt-0 min-h-0 flex-1 overflow-hidden"><SkillFileBrowser persistKey={`${skill.id}:${selectedRevisionId ?? 'latest'}`} files={viewed.files} skillMd={viewed.skill_md} loadFile={loadFile} selectedPath={selectedFile} onSelectedPathChange={selectFileInUrl} labels={{ files: t('skills.detail.files.bundle', 'Package Files'), loading: t('skills.detail.files.loading', 'Loading File…'), failed: t('skills.detail.files.failed', 'Could Not Load File'), binary: t('skills.detail.files.binary', 'Binary File Preview Is Not Available.') }} /></TabsContent>
           <TabsContent value="requirements" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-3xl space-y-5 pr-2">
-            <section><h2 className="text-sm font-semibold">{t('skills.tools_title', 'Allowed Tools')}</h2>{viewed.allowed_tools.length ? <div className="mt-3 flex flex-wrap gap-2">{viewed.allowed_tools.map((tool) => <span key={tool} className="rounded bg-secondary px-2 py-1 font-mono text-xs text-secondary-foreground">{tool}</span>)}</div> : <p className="mt-2 text-sm text-muted-foreground">{t('skills.no_tools', 'No Tool Requirements Declared.')}</p>}</section>
-            <div className="flex items-start gap-3 border-t pt-5"><ShieldCheck className="mt-0.5 h-5 w-5 text-state-success" /><div><div className="text-sm font-medium">{t('skills.detail.validation.title', 'SKILL.md Validated')}</div><p className="mt-1 text-sm text-muted-foreground">{t('skills.detail.validation.available', 'This package is available to agents through the installed Skill catalog.')}</p></div></div>
+            <SectionBlock
+              title={t('skills.detail.validation.title', 'SKILL.md validated')}
+              description={t('skills.detail.validation.available', 'This package is available to agents through the installed Skill catalog.')}
+              icon={<ShieldCheck className="size-4 text-state-success" aria-hidden="true" />}
+            >
+              <h3 className="text-xs font-medium uppercase tracking-[0.06em] text-content-tertiary">
+                {t('skills.tools_title', 'Allowed tools')}
+              </h3>
+              {viewed.allowed_tools.length ? <div className="mt-3 flex flex-wrap gap-2">{viewed.allowed_tools.map((tool) => <span key={tool} className="rounded bg-secondary px-2 py-1 font-mono text-xs text-secondary-foreground">{tool}</span>)}</div> : <p className="mt-2 text-sm text-muted-foreground">{t('skills.no_tools', 'No tool requirements declared.')}</p>}
+            </SectionBlock>
           </TabsContent>
         </Tabs>
       </EntityDetailShell>
 
+      <Dialog
+        open={editBlocker.state === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open && editBlocker.state === 'blocked') editBlocker.reset();
+        }}
+      >
+        <DialogContent data-role="unsaved-skill-changes-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('unsaved_title', 'Unsaved changes')}</DialogTitle>
+            <DialogDescription>
+              {t('skills.custom.unsaved_body', 'Save this Skill draft before leaving, or discard your changes.')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => editBlocker.state === 'blocked' && editBlocker.reset()}
+            >
+              {t('unsaved_cancel', 'Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setDraftDirty(false);
+                if (editBlocker.state === 'blocked') editBlocker.proceed();
+              }}
+            >
+              {t('unsaved_discard', 'Discard')}
+            </Button>
+            <Button
+              disabled={saveDraftMutation.isPending}
+              onClick={async () => {
+                if (await saveDraft()) {
+                  if (editBlocker.state === 'blocked') editBlocker.proceed();
+                }
+              }}
+            >
+              {saveDraftMutation.isPending ? t('unsaved_saving', 'Saving…') : t('unsaved_save', 'Save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{t('skills.delete_title', 'Uninstall This Skill?')}</DialogTitle><DialogDescription>{t('skills.delete_confirm', 'The agent will no longer be able to load this Skill. Its installed bundle will be removed.')}</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={deleteMutation.isPending}>{t('skills.cancel', 'Cancel')}</Button><Button variant="destructive" onClick={() => void uninstall()} disabled={deleteMutation.isPending}>{t('skills.delete', 'Uninstall')}</Button></DialogFooter></DialogContent></Dialog>
-      <ResourceShareDialog
-        open={shareOpen}
-        onOpenChange={setShareOpen}
-        resourceKind="skill"
-        resourceId={skill.id}
-        resourceName={skill.name}
-        effectiveRole={skill.access?.effective_role}
-        accessSource={skill.access?.source}
-      />
       <Dialog open={versionDialog} onOpenChange={setVersionDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -299,5 +354,3 @@ export function SkillDetailPage() {
     </>
   );
 }
-
-function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-sm">{value}</dd></div>; }

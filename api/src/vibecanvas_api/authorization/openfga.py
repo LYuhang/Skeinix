@@ -48,7 +48,8 @@ from vibecanvas_api.storage.models_authorization import (
     AuthzEdgeRevision,
     AuthzMutation,
 )
-from vibecanvas_api.storage.models_org import Group, OrgMembership
+from vibecanvas_api.storage.models import User
+from vibecanvas_api.storage.models_org import Group, Organization, OrgMembership
 
 if TYPE_CHECKING:
     from .mutations import AuthzMutationCoordinator
@@ -465,19 +466,34 @@ class OpenFgaAuthzService:
                 subject_id = uuid.UUID(subject.id)
             except ValueError as exc:
                 raise ValueError("share subject does not belong to organization") from exc
-            membership = (
-                await self._session.execute(
-                    select(OrgMembership.membership_id).where(
-                        OrgMembership.tenant_id == organization_id,
-                        OrgMembership.user_id == subject_id,
-                        OrgMembership.status == "active",
+            organization = await self._session.get(
+                Organization,
+                organization_id,
+            )
+            if organization is None:
+                raise ValueError("share organization does not exist")
+            if organization.kind == "personal":
+                if binding.relation == "manager":
+                    raise ValueError(
+                        "personal guest cannot receive manager access"
                     )
-                )
-            ).scalar_one_or_none()
-            if membership is None:
-                raise ValueError(
-                    "share subject does not belong to organization"
-                )
+                user = await self._session.get(User, subject_id)
+                if user is None or user.status != "active":
+                    raise ValueError("share subject is not eligible")
+            else:
+                membership = (
+                    await self._session.execute(
+                        select(OrgMembership.membership_id).where(
+                            OrgMembership.tenant_id == organization_id,
+                            OrgMembership.user_id == subject_id,
+                            OrgMembership.status == "active",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if membership is None:
+                    raise ValueError(
+                        "share subject does not belong to organization"
+                    )
             return
         if subject.type is RelationshipSubjectType.GROUP:
             try:
@@ -538,18 +554,30 @@ class OpenFgaAuthzService:
         resource: ResourceRef,
         context: AuthzRequestContext,
     ) -> tuple[ResourceRef | None, Decision | None]:
-        denial = self._validate_context(principal, resource, context)
+        denial = self._validate_principal_context(principal, context)
         if denial is not None:
             return None, denial
-        root = await self.resolve_parent(resource)
+        scoped_resource = resource
+        if (
+            context.admitted_resource_organization_id
+            and resource.organization_id == context.active_organization_id
+        ):
+            scoped_resource = ResourceRef(
+                resource.type,
+                resource.id,
+                context.admitted_resource_organization_id,
+            )
+        root = await self.resolve_parent(scoped_resource)
         if root is None:
             return None, Decision(False, reason_code="resource_not_found")
+        denial = self._validate_context(principal, root, context)
+        if denial is not None:
+            return None, denial
         return root, None
 
     @staticmethod
-    def _validate_context(
+    def _validate_principal_context(
         principal: PrincipalRef,
-        resource: ResourceRef,
         context: AuthzRequestContext,
     ) -> Decision | None:
         if principal.type is PrincipalType.USER:
@@ -560,6 +588,27 @@ class OpenFgaAuthzService:
                 )
         elif principal.type is not PrincipalType.SERVICE_ACCOUNT:
             return Decision(False, reason_code="unsupported_principal")
+        return None
+
+    @classmethod
+    def _validate_context(
+        cls,
+        principal: PrincipalRef,
+        resource: ResourceRef,
+        context: AuthzRequestContext,
+    ) -> Decision | None:
+        denial = cls._validate_principal_context(principal, context)
+        if denial is not None:
+            return denial
+        if resource.organization_id == context.active_organization_id:
+            return None
+        if (
+            resource.organization_id
+            == context.admitted_resource_organization_id
+            and resource.type.value == context.admitted_resource_type
+            and resource.id == context.admitted_resource_id
+        ):
+            return None
         if resource.organization_id != context.active_organization_id:
             return Decision(False, reason_code="organization_mismatch")
         return None

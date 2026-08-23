@@ -178,6 +178,32 @@ def test_encrypted_runtime_volume_ignores_symlink_without_reading_target(tmp_pat
     store.release_materialized_prefix(volume.storage_prefix or "", volume.path)
 
 
+def test_encrypted_runtime_volume_excludes_staged_codex_account_auth(tmp_path):
+    store = FilesystemObjectStore(
+        root=str(tmp_path / "cipher"),
+        materialized_root=str(tmp_path / "materialized"),
+        master_key=b"A" * 32,
+    )
+    provider = EncryptedObjectStoreChatRuntimeVolumeProvider(store)
+    volume = provider.ensure(
+        tenant_id="tenant",
+        user_id="user",
+        chat_scope_id="chat",
+    )
+    auth = Path(volume.path, ".codex", "auth.json")
+    auth.parent.mkdir(parents=True)
+    auth.write_text('{"tokens":{"access_token":"secret"}}', encoding="utf-8")
+    Path(volume.path, ".codex", "state.jsonl").write_text(
+        "durable thread state",
+        encoding="utf-8",
+    )
+
+    assert provider.sync(volume) == 1
+    keys = store.list_keys(f"{volume.storage_prefix}/")
+    assert keys == [f"{volume.storage_prefix}/.codex/state.jsonl"]
+    store.release_materialized_prefix(volume.storage_prefix or "", volume.path)
+
+
 def test_encrypted_runtime_volume_tolerates_file_removed_after_manifest(
     monkeypatch,
     tmp_path,

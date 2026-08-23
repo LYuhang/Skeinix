@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .access import ResourceAccessOut
+from .access import ResourceAccessOut, ResourceProvenanceOut
 
 
 class WorkflowCreate(BaseModel):
@@ -23,6 +23,7 @@ class WorkflowMetaOut(BaseModel):
     created_at: float
     tags: list[str] = Field(default_factory=list)
     access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
 
 
 class WorkflowSnapshotOut(BaseModel):

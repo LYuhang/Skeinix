@@ -11,8 +11,8 @@ class Ctx:
     def __init__(self):
         self.surface = "chat"
         self.chat_id = "chat_1"
-        self.active_commands = ["build"]
-        self.available_commands = ["build", "browser"]
+        self.active_commands = ["workflow"]
+        self.available_commands = ["workflow", "browser"]
         self.current_workflow_id = "wf_1"
         self.agent_cfg = {
             "model": "openai:gpt-4o",

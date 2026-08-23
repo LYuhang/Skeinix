@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
@@ -11,20 +11,20 @@ import type { KbListItem } from '@/lib/api/kb';
 
 vi.mock('@/lib/api/kb', () => ({
   createKb: vi.fn(),
+  importKb: vi.fn(),
   deleteKb: vi.fn(),
   deleteKbFile: vi.fn(),
-  getKbFileContent: vi.fn(),
+  getKbFileRaw: vi.fn(),
   getKb: vi.fn(),
   listKbFiles: vi.fn(),
   listKbs: vi.fn(),
-  reindexKbFile: vi.fn(),
   uploadKbFile: vi.fn(),
 }));
 
 import {
   deleteKb,
   deleteKbFile,
-  getKbFileContent,
+  getKbFileRaw,
   getKb,
   listKbFiles,
   listKbs,
@@ -72,34 +72,32 @@ const detail = {
   name: 'Product handbook',
   description: 'Policies and release notes',
   retrieval_strategy: 'agentic_lexical',
+  package_version: 3,
   created_at: '2026-08-01T00:00:00Z',
   updated_at: '2026-08-01T00:00:00Z',
   latest_updated_at: '2026-08-01T00:00:00Z',
   file_count: 2,
   chunk_count: 12,
+  stored_count: 0,
   pending_count: 0,
   indexing_count: 0,
   indexed_count: 1,
   failed_count: 1,
   access: managerAccess,
+  provenance: {
+    ownership_scope: 'personal',
+    owner: { type: 'user', display_name: 'Owner' },
+    created_by: { type: 'user', display_name: 'Owner' },
+    origin_type: 'created',
+  },
 } satisfies KbListItem;
 
 describe('Knowledge pages', () => {
   beforeEach(() => {
     vi.mocked(listKbs).mockReset();
     vi.mocked(getKb).mockReset();
-    vi.mocked(getKbFileContent).mockReset();
-    vi.mocked(getKbFileContent).mockResolvedValue({
-      file_id: 'file-1',
-      file_name: 'handbook.pdf',
-      parser_type: 'pdf',
-      status: 'indexed',
-      offset: 0,
-      next_offset: 0,
-      total_chunks: 0,
-      has_more: false,
-      chunks: [],
-    });
+    vi.mocked(getKbFileRaw).mockReset();
+    vi.mocked(getKbFileRaw).mockResolvedValue(new Blob(['# Handbook\n\nRelease trains run every Tuesday.'], { type: 'text/markdown' }));
     vi.mocked(listKbFiles).mockReset();
     vi.mocked(deleteKb).mockReset();
     vi.mocked(deleteKbFile).mockReset();
@@ -111,72 +109,74 @@ describe('Knowledge pages', () => {
     renderPage(<KnowledgeListPage />);
 
     expect(await screen.findByText('Product handbook')).toBeInTheDocument();
-    expect(screen.getByText('Needs attention')).toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: 'Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'Ready' }));
-    expect(screen.getByText('No matching knowledge bases')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('combobox', { name: 'Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'All statuses' }));
+    expect(screen.getByText('v3')).toBeInTheDocument();
+    expect(screen.getByText(/2 files/)).toBeInTheDocument();
+    expect(screen.queryByText('Needs attention')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Filter by status' })).not.toBeInTheDocument();
     await user.type(screen.getByPlaceholderText('Search knowledge bases'), 'missing');
     expect(screen.getByText('No matching knowledge bases')).toBeInTheDocument();
   });
 
-  it('shows index health, partial failure, and Agent-readable file content', async () => {
+  it('opens the package tree by default and previews the authoritative README', async () => {
     vi.mocked(getKb).mockResolvedValue(detail);
     vi.mocked(listKbFiles).mockResolvedValue([
       {
         id: 'file-1',
-        name: 'handbook.pdf',
-        parser_type: 'pdf',
+        name: 'README.md',
+        parser_type: 'markdown',
+        mime_type: 'text/markdown',
         file_size: 1024,
         status: 'indexed',
         error_message: null,
         chunk_count: 12,
         created_at: '2026-08-01T00:00:00Z',
         access: detail.access,
+        provenance: detail.provenance,
       },
       {
         id: 'file-2',
         name: 'broken.txt',
         parser_type: 'text',
+        mime_type: 'text/plain',
         file_size: 20,
         status: 'failed',
         error_message: 'Unsupported encoding',
         chunk_count: 0,
         created_at: '2026-08-01T00:00:00Z',
         access: detail.access,
+        provenance: detail.provenance,
       },
     ]);
-    vi.mocked(getKbFileContent).mockResolvedValue({
-      file_id: 'file-1',
-      file_name: 'handbook.pdf',
-      parser_type: 'pdf',
-      status: 'indexed',
-      offset: 0,
-      next_offset: 1,
-      total_chunks: 1,
-      has_more: false,
-      chunks: [{ index: 0, text: 'Release trains run every Tuesday.' }],
-    });
     const user = userEvent.setup();
     renderPage(<KnowledgeDetailPage />, '/knowledge/kb-1');
 
     expect(await screen.findByText('Product handbook')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('data-state', 'active');
     expect(screen.queryByText('How this knowledge base is used')).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: /Sources/ }));
-    expect(screen.getByRole('tree', { name: 'Source files' })).toBeInTheDocument();
-    expect(screen.getByText('1 source files need attention')).toBeInTheDocument();
-    expect(screen.getByText('Unsupported encoding', { exact: false })).toBeInTheDocument();
-    await user.click(screen.getByRole('treeitem', { name: /handbook.pdf/ }));
+    expect(screen.getByRole('tree', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.queryByText('Index status')).not.toBeInTheDocument();
+    expect(screen.queryByText('Chunks')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reindex' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'File actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Upload files' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Upload folder' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
     expect(await screen.findByText('Release trains run every Tuesday.')).toBeInTheDocument();
-    expect(getKbFileContent).toHaveBeenCalledWith('kb-1', 'file-1', 0, 50);
-    await user.type(screen.getByPlaceholderText('Search source files'), 'broken');
-    expect(screen.queryByText('handbook.pdf')).not.toBeInTheDocument();
+    expect(getKbFileRaw).toHaveBeenCalledWith('kb-1', 'file-1');
+    await user.click(screen.getByRole('treeitem', { name: /broken.txt/ }));
     expect(screen.getAllByText('broken.txt').length).toBeGreaterThan(0);
     expect(screen.queryByRole('tab', { name: 'Retrieval' })).not.toBeInTheDocument();
+  });
+
+  it('offers complete folder and ZIP imports from the knowledge list', async () => {
+    vi.mocked(listKbs).mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderPage(<KnowledgeListPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Upload folder' }));
+    expect(screen.getByRole('dialog', { name: 'Upload a knowledge folder' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Choose folder/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Choose ZIP/ })).toBeInTheDocument();
+    expect(screen.getByText(/root README.md describes the package/)).toBeInTheDocument();
   });
 
   it('requires confirmation before deleting an indexed source', async () => {
@@ -185,22 +185,24 @@ describe('Knowledge pages', () => {
       id: 'file-1',
       name: 'handbook.pdf',
       parser_type: 'pdf',
+      mime_type: 'application/pdf',
       file_size: 1024,
       status: 'indexed',
       error_message: null,
       chunk_count: 12,
       created_at: '2026-08-01T00:00:00Z',
       access: detail.access,
+      provenance: detail.provenance,
     }]);
     vi.mocked(deleteKbFile).mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderPage(<KnowledgeDetailPage />, '/knowledge/kb-1?tab=sources');
 
     expect((await screen.findAllByText('handbook.pdf')).length).toBeGreaterThan(0);
-    expect(screen.getByRole('tab', { name: /Sources/ })).toHaveAttribute('data-state', 'active');
-    await user.click(screen.getByRole('button', { name: 'Delete handbook.pdf' }));
+    fireEvent.contextMenu(screen.getByRole('treeitem', { name: /handbook.pdf/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(screen.getByText('handbook.pdf and its indexed chunks will be removed from retrieval.')).toBeInTheDocument();
+    expect(screen.getByText('handbook.pdf will be permanently deleted from this knowledge folder.')).toBeInTheDocument();
     expect(vi.mocked(deleteKbFile)).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
@@ -216,7 +218,7 @@ describe('Knowledge pages', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Delete' }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(screen.getByText('Product handbook and all of its source files will be removed from active retrieval.')).toBeInTheDocument();
+    expect(screen.getByText('Product handbook and all files in this knowledge folder will be permanently deleted.')).toBeInTheDocument();
     expect(vi.mocked(deleteKb)).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));

@@ -12,8 +12,7 @@ RLS-unscoped on purpose — the api_key_hash / slug uniqueness invariants
 
 Soft-delete is universal across this repo: every SELECT filters
 ``deleted_at IS NULL`` and the public "delete" path is an UPDATE that
-sets ``deleted_at = now()`` plus ``enabled = FALSE`` (so a dispatcher
-scan stops considering the row immediately).
+sets ``deleted_at = now()`` plus ``enabled = FALSE``.
 
 Returns: ``mappings()`` row dicts, NOT ORM ``Deployment`` instances.
 This is deliberate forward-compat — Task 4+ route handlers consume the
@@ -87,7 +86,7 @@ class DeploymentsRepo:
     async def get_by_slug_admin(self, slug: str) -> Optional[dict]:
         """Admin-role slug lookup — no tenant scope filter. ONLY
         callable from ``resolve_deployment_and_bind_tenant`` /
-        ``session_scope_admin``. Used by the webhook + cron flows
+        ``session_scope_admin``. Used by the webhook flow
         where slug is the only identifier the external caller carries.
         Migration 088 makes every active public slug globally unique because
         webhook URLs carry no tenant identifier. Soft-deleted rows do not
@@ -126,7 +125,6 @@ class DeploymentsRepo:
         enabled: Optional[bool] = None,
         wf_id: Optional[str] = None,
         query: Optional[str] = None,
-        serving_only: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
@@ -157,8 +155,6 @@ class DeploymentsRepo:
         if wf_id is not None:
             clauses.append("wf_id = :wf")
             params["wf"] = wf_id
-        if serving_only:
-            clauses.append("d.trigger_type IN ('api', 'webhook')")
         normalized_query = (query or "").strip()
         if normalized_query:
             clauses.append(
@@ -201,7 +197,6 @@ class DeploymentsRepo:
         enabled: Optional[bool] = None,
         wf_id: Optional[str] = None,
         query: Optional[str] = None,
-        serving_only: bool = False,
     ) -> int:
         """Count the same authorized/filterable set used by list_for_tenant."""
         clauses = ["d.deleted_at IS NULL"]
@@ -226,8 +221,6 @@ class DeploymentsRepo:
         if wf_id is not None:
             clauses.append("d.wf_id = :wf")
             params["wf"] = wf_id
-        if serving_only:
-            clauses.append("d.trigger_type IN ('api', 'webhook')")
         normalized_query = (query or "").strip()
         if normalized_query:
             clauses.append(
@@ -289,7 +282,6 @@ class DeploymentsRepo:
                         GROUP BY deployment_id
                     ) inv ON inv.deployment_id = d.id
                     WHERE d.deleted_at IS NULL
-                      AND d.trigger_type IN ('api', 'webhook')
                     """
                     + id_clause
                 ),

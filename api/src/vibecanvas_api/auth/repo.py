@@ -27,6 +27,7 @@ from vibecanvas_api.security.identity_protection import (
     encrypt_provider_uid,
     encrypt_user_profile,
     identity_lookup_digest,
+    profile_email_lookup_digest,
 )
 
 
@@ -68,6 +69,7 @@ class AuthRepo:
             tenant_id=tenant.tenant_id,
             email_sentinel=f"redacted-{user_id}@invalid.local",
             display_name_sentinel="",
+            profile_email_lookup_hash=profile_email_lookup_digest(email),
         )
         self._s.add(user)
         await self._s.flush()

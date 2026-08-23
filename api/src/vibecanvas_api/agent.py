@@ -53,9 +53,6 @@ from vibecanvas_api.agents.middleware.serial_tools import SerialToolExecutionMid
 from vibecanvas_api.agents.middleware.runtime_resilience import (
     RuntimeResilienceMiddleware,
 )
-from vibecanvas_api.agents.middleware.diagram_protocol import (
-    DiagramProtocolMiddleware,
-)
 from vibecanvas_api.agents.middleware.user_approval import (
     UserApprovalMiddleware,
 )
@@ -985,11 +982,6 @@ async def _get_or_create_agent(
                 model_retries=_cfg_get(agent_cfg, "model_retries", 1),
                 read_tool_retries=_cfg_get(agent_cfg, "read_tool_retries", 1),
                 trace_holder=debug_context_holder,
-            ),
-            *(
-                [DiagramProtocolMiddleware(max_forced_continuations=3)]
-                if "diagram" in effective_modes
-                else []
             ),
             # Record meta.tokens at message-creation so it PERSISTS in the
             # checkpointer before ContextEditingMiddleware

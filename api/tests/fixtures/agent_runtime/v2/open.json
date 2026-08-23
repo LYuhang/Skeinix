@@ -1,0 +1,11 @@
+{
+  "protocol_version": 2,
+  "tenant_id": "tenant-conformance",
+  "user_id": "user-conformance",
+  "chat_id": "chat-conformance",
+  "runtime_type": "$runtime_type",
+  "runtime_session_id": "runtime-session-conformance",
+  "runtime_root": "$runtime_root",
+  "state_ref": "state-conformance",
+  "runtime_version": 1
+}

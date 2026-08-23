@@ -1,16 +1,27 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronRight, FolderUp, MoreHorizontal, Trash2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { FileTypeIcon } from '@/components/presentation/FileTypeIcon';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { PaneResizeHandle } from '@/components/ui/pane-resize-handle';
-import { StatusBadge, type SemanticStatus } from '@/components/ui/status';
 import { usePersistedPaneWidth } from '@/components/ui/use-persisted-pane-width';
-import { formatBytes } from '@/lib/format/bytes';
+import { type KbFile } from '@/lib/api/kb';
 import { cn } from '@/lib/utils';
-import { getKbFileContent, type KbFile, type KbFileStatus } from '@/lib/api/kb';
+import { KnowledgeFilePreview } from '@/pages/knowledge/KnowledgeFilePreview';
 
 type TreeNode = {
   name: string;
@@ -21,13 +32,6 @@ type TreeNode = {
 };
 
 type VisibleItem = { node: TreeNode; depth: number; parentPath: string | null };
-
-const fileTone: Record<KbFileStatus, SemanticStatus> = {
-  pending: 'neutral',
-  indexing: 'running',
-  indexed: 'success',
-  failed: 'danger',
-};
 
 function buildTree(files: KbFile[]): TreeNode[] {
   const roots: TreeNode[] = [];
@@ -50,6 +54,8 @@ function buildTree(files: KbFile[]): TreeNode[] {
   const sort = (nodes: TreeNode[]) => {
     nodes.sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1;
+      if (left.path.toLocaleLowerCase() === 'readme.md') return -1;
+      if (right.path.toLocaleLowerCase() === 'readme.md') return 1;
       return left.name.localeCompare(right.name);
     });
     nodes.forEach((node) => sort(node.children));
@@ -62,6 +68,11 @@ function folders(nodes: TreeNode[]): string[] {
   return nodes.flatMap((node) => node.kind === 'folder'
     ? [node.path, ...folders(node.children)]
     : []);
+}
+
+function descendantFiles(node: TreeNode): KbFile[] {
+  if (node.file) return [node.file];
+  return node.children.flatMap(descendantFiles);
 }
 
 function visibleItems(
@@ -82,19 +93,19 @@ export function KnowledgeSourceExplorer({
   kbId,
   files,
   canUpdate,
-  reindexing,
+  uploading,
   deleting,
-  formatTime,
-  onReindex,
+  onUpload,
+  onDeleteFiles,
   onDelete,
 }: {
   kbId: string;
   files: KbFile[];
   canUpdate: boolean;
-  reindexing: boolean;
+  uploading: boolean;
   deleting: boolean;
-  formatTime: (value: string | null | undefined) => string;
-  onReindex: (fileId: string) => void;
+  onUpload: (items: Array<{ file: File; path: string }>) => void;
+  onDeleteFiles: (files: KbFile[], folderPath: string) => void;
   onDelete: (file: KbFile) => void;
 }) {
   const { t } = useTranslation();
@@ -107,22 +118,15 @@ export function KnowledgeSourceExplorer({
   const tree = useMemo(() => buildTree(files), [files]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(folders(tree)));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Surface an actionable indexing failure immediately. Once the user picks a
-  // file, preserve that explicit selection across refetches.
   const selected = files.find((file) => file.id === selectedId)
-    ?? files.find((file) => file.status === 'failed')
+    ?? files.find((file) => file.name.toLocaleLowerCase() === 'readme.md')
     ?? files[0]
     ?? null;
-  const content = useInfiniteQuery({
-    queryKey: ['knowledge-file-content', kbId, selected?.id],
-    queryFn: ({ pageParam }) => getKbFileContent(kbId, selected!.id, pageParam, 50),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_offset : undefined,
-    enabled: Boolean(selected?.id && selected.status === 'indexed'),
-  });
-  const contentChunks = content.data?.pages.flatMap((page) => page.chunks) ?? [];
   const rows = useMemo(() => visibleItems(tree, expanded), [expanded, tree]);
   const refs = useRef(new Map<string, HTMLButtonElement>());
+  const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const [uploadPrefix, setUploadPrefix] = useState('');
 
   const toggle = (path: string) => setExpanded((current) => {
     const next = new Set(current);
@@ -154,9 +158,31 @@ export function KnowledgeSourceExplorer({
       else if (row.node.file) setSelectedId(row.node.file.id);
     }
   };
+  const openFiles = (prefix: string) => {
+    setUploadPrefix(prefix);
+    fileInput.current?.click();
+  };
+  const openFolder = (prefix: string) => {
+    setUploadPrefix(prefix);
+    folderInput.current?.click();
+  };
+  const withPrefix = (path: string) => uploadPrefix ? `${uploadPrefix}/${path}` : path;
+
+  const uploadMenu = (prefix: string, context: 'root' | 'folder') => (
+    <>
+      <ContextMenuItem disabled={uploading} onSelect={() => openFiles(prefix)}>
+        <Upload className="mr-2 size-4" />
+        {context === 'root' ? t('knowledge.uploadFiles', 'Upload files') : t('knowledge.uploadFilesHere', 'Upload files here')}
+      </ContextMenuItem>
+      <ContextMenuItem disabled={uploading} onSelect={() => openFolder(prefix)}>
+        <FolderUp className="mr-2 size-4" />
+        {context === 'root' ? t('knowledge.uploadFolder', 'Upload folder') : t('knowledge.uploadFolderHere', 'Upload folder here')}
+      </ContextMenuItem>
+    </>
+  );
 
   return (
-    <div className="flex min-h-[28rem] overflow-hidden rounded-lg border border-edge-subtle bg-background">
+    <div className="flex h-full min-h-[28rem] overflow-hidden rounded-lg border border-edge-subtle bg-background">
       <aside
         className="relative flex min-h-0 shrink-0 flex-col border-r border-edge-structural bg-surface-nav"
         style={{ width: pane.width }}
@@ -168,177 +194,145 @@ export function KnowledgeSourceExplorer({
           maxWidth={400}
           onWidthChange={pane.setWidth}
           onReset={pane.resetWidth}
-          label={t('knowledge.resizeSources', 'Resize source explorer')}
+          label={t('knowledge.resizeSources', 'Resize file tree')}
         />
         <div className="flex h-10 shrink-0 items-center justify-between border-b px-3">
           <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
             <FileTypeIcon directory className="size-5 rounded-none bg-transparent" />
-            <span className="truncate">{t('knowledge.sourceFiles', 'Source files')}</span>
+            <span className="truncate">{t('knowledge.sourceFiles', 'Files')}</span>
           </div>
-          <span className="text-xs tabular-nums text-muted-foreground">{files.length}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-xs tabular-nums text-muted-foreground">{files.length}</span>
+            {canUpdate ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="size-7" aria-label={t('knowledge.fileActions', 'File actions')}>
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem disabled={uploading} onSelect={() => openFiles('')}><Upload />{t('knowledge.uploadFiles', 'Upload files')}</DropdownMenuItem>
+                  <DropdownMenuItem disabled={uploading} onSelect={() => openFolder('')}><FolderUp />{t('knowledge.uploadFolder', 'Upload folder')}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label={t('knowledge.sourceFiles', 'Source files')}>
-          {rows.map((row) => {
-            const { node } = row;
-            const isSelected = node.file?.id === selected?.id;
-            return (
-              <button
-                key={`${node.kind}:${node.path}`}
-                ref={(element) => {
-                  if (element) refs.current.set(node.path, element);
-                  else refs.current.delete(node.path);
-                }}
-                type="button"
-                role="treeitem"
-                aria-expanded={node.kind === 'folder' ? expanded.has(node.path) : undefined}
-                aria-selected={node.kind === 'file' ? isSelected : undefined}
-                onClick={() => node.kind === 'folder'
-                  ? toggle(node.path)
-                  : node.file && setSelectedId(node.file.id)}
-                onKeyDown={(event) => onKeyDown(event, row)}
-                className={cn(
-                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-sm pr-2 text-left text-xs outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring',
-                  isSelected && 'bg-surface-selected text-content-primary',
-                )}
-                style={{ paddingLeft: 8 + row.depth * 16 }}
-                title={node.path}
-              >
-                {node.kind === 'folder' ? (
-                  <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', expanded.has(node.path) && 'rotate-90')} />
-                ) : <span className="w-3.5 shrink-0" />}
-                <FileTypeIcon fileName={node.name} directory={node.kind === 'folder'} className="size-5 shrink-0 rounded-none bg-transparent" />
-                <span className="min-w-0 flex-1 truncate">{node.name}</span>
-                {node.file ? (
-                  <span
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label={t('knowledge.sourceFiles', 'Files')}>
+              {rows.map((row) => {
+                const { node } = row;
+                const isSelected = node.file?.id === selected?.id;
+                const rowButton = (
+                  <button
+                    ref={(element) => {
+                      if (element) refs.current.set(node.path, element);
+                      else refs.current.delete(node.path);
+                    }}
+                    type="button"
+                    role="treeitem"
+                    aria-expanded={node.kind === 'folder' ? expanded.has(node.path) : undefined}
+                    aria-selected={node.kind === 'file' ? isSelected : undefined}
+                    onClick={() => node.kind === 'folder' ? toggle(node.path) : node.file && setSelectedId(node.file.id)}
+                    onKeyDown={(event) => onKeyDown(event, row)}
                     className={cn(
-                      'size-1.5 shrink-0 rounded-full',
-                      node.file.status === 'indexed' && 'bg-state-success',
-                      (node.file.status === 'pending' || node.file.status === 'indexing') && 'bg-state-running',
-                      node.file.status === 'failed' && 'bg-state-danger',
+                      'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-sm pr-2 text-left text-xs outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring',
+                      isSelected && 'bg-surface-selected text-content-primary',
                     )}
-                    aria-label={t(`knowledge.fileStatus.${node.file.status}`, node.file.status)}
-                  />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+                    style={{ paddingLeft: 8 + row.depth * 16 }}
+                    title={node.path}
+                  >
+                    {node.kind === 'folder' ? (
+                      <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', expanded.has(node.path) && 'rotate-90')} />
+                    ) : <span className="w-3.5 shrink-0" />}
+                    <FileTypeIcon fileName={node.name} directory={node.kind === 'folder'} className="size-5 shrink-0 rounded-none bg-transparent" />
+                    <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                  </button>
+                );
+                if (!canUpdate) return <span key={`${node.kind}:${node.path}`} className="contents">{rowButton}</span>;
+                return (
+                  <ContextMenu key={`${node.kind}:${node.path}`}>
+                    <ContextMenuTrigger asChild>{rowButton}</ContextMenuTrigger>
+                    <ContextMenuContent>
+                      {node.kind === 'folder' ? (
+                        <>
+                          {uploadMenu(node.path, 'folder')}
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            className="text-destructive focus:text-destructive"
+                            disabled={deleting}
+                            onSelect={() => onDeleteFiles(descendantFiles(node), node.path)}
+                          >
+                            <Trash2 className="mr-2 size-4" />{t('knowledge.deleteFolder', 'Delete folder')}
+                          </ContextMenuItem>
+                        </>
+                      ) : (
+                        <ContextMenuItem
+                          className="text-destructive focus:text-destructive"
+                          disabled={deleting || node.file?.name.toLocaleLowerCase() === 'readme.md'}
+                          onSelect={() => node.file && onDelete(node.file)}
+                        >
+                          <Trash2 className="mr-2 size-4" />{t('delete', 'Delete')}
+                        </ContextMenuItem>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
+                );
+              })}
+            </div>
+          </ContextMenuTrigger>
+          {canUpdate ? <ContextMenuContent>{uploadMenu('', 'root')}</ContextMenuContent> : null}
+        </ContextMenu>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          className="hidden"
+          data-testid="knowledge-files-input"
+          aria-label={t('knowledge.uploadFiles', 'Upload files')}
+          onChange={(event) => {
+            const picked = Array.from(event.currentTarget.files ?? []).map((file) => ({ file, path: withPrefix(file.name) }));
+            if (picked.length) onUpload(picked);
+            event.currentTarget.value = '';
+          }}
+        />
+        <input
+          ref={(element) => {
+            folderInput.current = element;
+            element?.setAttribute('webkitdirectory', '');
+          }}
+          type="file"
+          multiple
+          className="hidden"
+          data-testid="knowledge-folder-input"
+          aria-label={t('knowledge.uploadFolder', 'Upload folder')}
+          onChange={(event) => {
+            const picked = Array.from(event.currentTarget.files ?? []).map((file) => ({
+              file,
+              path: withPrefix(file.webkitRelativePath || file.name),
+            }));
+            if (picked.length) onUpload(picked);
+            event.currentTarget.value = '';
+          }}
+        />
       </aside>
 
-      <section className="min-w-0 flex-1 overflow-auto p-5" aria-live="polite">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-live="polite">
         {selected ? (
-          <div className="mx-auto max-w-2xl">
-            <div className="flex min-w-0 items-start gap-3">
-              <FileTypeIcon fileName={selected.name} className="mt-0.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-sm font-semibold" title={selected.name}>{selected.name}</h3>
-                <p className="mt-1 text-xs text-content-tertiary">{selected.parser_type.toUpperCase()}</p>
-              </div>
-              <StatusBadge status={fileTone[selected.status]}>
-                {t(`knowledge.fileStatus.${selected.status}`, selected.status)}
-              </StatusBadge>
+          <>
+            <div className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b px-3 font-mono text-xs text-content-tertiary">
+              {selected.name.split('/').map((part, index, parts) => (
+                <span key={`${part}:${index}`} className="flex min-w-0 items-center gap-1">
+                  {index > 0 ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
+                  <span className={cn('truncate', index === parts.length - 1 && 'font-medium text-content-primary')}>{part}</span>
+                </span>
+              ))}
             </div>
-            <dl className="mt-5 grid gap-x-8 gap-y-4 border-t border-edge-subtle pt-5 sm:grid-cols-2">
-              <div><dt className="text-meta">{t('knowledge.fileSize', 'File size')}</dt><dd className="mt-1 text-sm">{formatBytes(selected.file_size)}</dd></div>
-              <div><dt className="text-meta">{t('knowledge.chunks', 'Chunks')}</dt><dd className="mt-1 text-sm tabular-nums">{selected.chunk_count}</dd></div>
-              <div><dt className="text-meta">{t('knowledge.fileStatusLabel', 'Index status')}</dt><dd className="mt-1 text-sm">{t(`knowledge.fileStatus.${selected.status}`, selected.status)}</dd></div>
-              <div><dt className="text-meta">{t('knowledge.addedAt', 'Added')}</dt><dd className="mt-1 text-sm">{formatTime(selected.created_at)}</dd></div>
-            </dl>
-            <div className="mt-5 border-t border-edge-subtle pt-5">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h4 className="text-sm font-medium">{t('knowledge.parsedContent', 'Parsed content')}</h4>
-                {content.data?.pages[0] ? (
-                  <span className="text-xs tabular-nums text-content-tertiary">
-                    {t('knowledge.contentSections', '{{loaded}} of {{total}} sections', {
-                      loaded: contentChunks.length,
-                      total: content.data.pages[0].total_chunks,
-                    })}
-                  </span>
-                ) : null}
-              </div>
-              {selected.status === 'indexed' && content.isPending ? (
-                <div className="flex min-h-40 items-center justify-center gap-2 rounded-md border border-edge-subtle bg-surface-sunken text-sm text-content-secondary">
-                  <RefreshCw className="size-4 animate-spin" />
-                  {t('knowledge.loadingContent', 'Loading file content…')}
-                </div>
-              ) : null}
-              {selected.status === 'indexed' && content.isError ? (
-                <div className="rounded-md border border-state-danger/30 bg-state-danger/5 p-4 text-sm text-state-danger">
-                  <p>{t('knowledge.contentFailed', 'Could not load this file’s content.')}</p>
-                  <Button className="mt-3" variant="outline" size="sm" onClick={() => void content.refetch()}>
-                    <RefreshCw className="size-4" />
-                    {t('retry', 'Retry')}
-                  </Button>
-                </div>
-              ) : null}
-              {selected.status === 'indexed' && content.isSuccess && contentChunks.length ? (
-                <div className="max-h-[34rem] overflow-auto rounded-md border border-edge-subtle bg-surface-sunken p-4">
-                  {contentChunks.map((chunk) => (
-                    <pre
-                      key={chunk.index}
-                      className="mb-4 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-content-primary last:mb-0"
-                    >
-                      {chunk.text}
-                    </pre>
-                  ))}
-                </div>
-              ) : null}
-              {selected.status === 'indexed' && content.isSuccess && !contentChunks.length ? (
-                <div className="rounded-md border border-edge-subtle bg-surface-sunken p-4 text-sm text-content-secondary">
-                  {t('knowledge.noParsedContent', 'No readable text was extracted from this file.')}
-                </div>
-              ) : null}
-              {selected.status !== 'indexed' ? (
-                <div className="rounded-md border border-edge-subtle bg-surface-sunken p-4 text-sm text-content-secondary">
-                  {selected.status === 'failed'
-                    ? t('knowledge.contentUnavailable', 'Parsed content is unavailable because indexing failed.')
-                    : t('knowledge.contentPending', 'Parsed content will appear when indexing finishes.')}
-                </div>
-              ) : null}
-              {content.hasNextPage ? (
-                <Button
-                  className="mt-3"
-                  variant="outline"
-                  size="sm"
-                  disabled={content.isFetchingNextPage}
-                  onClick={() => void content.fetchNextPage()}
-                >
-                  {content.isFetchingNextPage ? <RefreshCw className="size-4 animate-spin" /> : null}
-                  {content.isFetchingNextPage
-                    ? t('knowledge.loadingMoreContent', 'Loading more…')
-                    : t('knowledge.loadMoreContent', 'Load more')}
-                </Button>
-              ) : null}
+            <div className="page-scroll-region min-h-0 flex-1 bg-surface-work">
+              <KnowledgeFilePreview kbId={kbId} file={selected} />
             </div>
-            {selected.error_message ? (
-              <div className="mt-5 rounded-md border border-state-danger/30 bg-state-danger/5 p-3 text-sm text-state-danger">
-                {selected.error_message}
-              </div>
-            ) : null}
-            {canUpdate ? (
-              <div className="mt-5 flex flex-wrap gap-2 border-t border-edge-subtle pt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={reindexing || selected.status === 'pending' || selected.status === 'indexing'}
-                  onClick={() => onReindex(selected.id)}
-                >
-                  <RefreshCw className={cn('h-4 w-4', reindexing && 'animate-spin')} />
-                  {t('knowledge.reindex', 'Reindex')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={deleting || selected.status === 'indexing'}
-                  onClick={() => onDelete(selected)}
-                  aria-label={t('knowledge.deleteFile', 'Delete {{name}}', { name: selected.name })}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {t('delete', 'Delete')}
-                </Button>
-              </div>
-            ) : null}
-          </div>
+          </>
         ) : null}
       </section>
     </div>

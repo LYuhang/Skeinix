@@ -28,7 +28,9 @@ import {
 } from '@/lib/api/mutations/error-message';
 import { useWorkflowEditStore } from '@/stores/workflow-edit';
 import { normalizeForSend } from '@/lib/workflow/normalize';
+import { workflowVersionsQueryKey } from '@/lib/api/queries/workflow';
 import type { components } from '@/lib/api/schema';
+import i18n from '@/lib/i18n';
 
 type WorkflowDraft = components['schemas']['CommitRequest']['workflow'];
 type CheckResponse = components['schemas']['CheckResponse'];
@@ -71,6 +73,7 @@ export const useCommitWorkflow = (wfId: string, targetMajor?: number | null) => 
       // server bytes) reconciles as clean, not as an agent conflict.
       useWorkflowEditStore.getState().markSaved();
       qc.invalidateQueries({ queryKey: ['workflow', wfId] });
+      qc.invalidateQueries({ queryKey: workflowVersionsQueryKey(wfId) });
       toast.success('Saved');
     },
     onError: (e) => {
@@ -79,7 +82,7 @@ export const useCommitWorkflow = (wfId: string, targetMajor?: number | null) => 
         // unsaved input while the backend remains the authority that rejects
         // writes after a live access revocation.
         toast.error(
-          'Your access changed. This draft is still available locally, but it cannot be saved.',
+          i18n.t('workflow.save.accessChanged', 'Your access changed. This draft is still available locally, but it cannot be saved.'),
           { duration: 8_000 },
         );
         return;
@@ -131,7 +134,8 @@ export const useNewMajorVersion = (wfId: string) => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflow', wfId] });
-      toast.success('New major version created');
+      qc.invalidateQueries({ queryKey: workflowVersionsQueryKey(wfId) });
+      toast.success(i18n.t('workflow.version.majorCreated', 'New major version created'));
     },
     onError: (e) => {
       toast.error(`New major version failed: ${errorMessage(e)}`);

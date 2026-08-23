@@ -20,14 +20,17 @@
  * middleware (Bearer header + 401 → reopen login) for free.
  */
 
-import type { ResourceAccess } from '@/lib/api/organizations';
+import type {
+  ResourceAccess,
+  ResourceProvenance,
+} from '@/lib/api/organizations';
 
 // ---------------------------------------------------------------------------
 // Contract — kept in sync with `routes/deployments.py` + the `deployments`
 // table CHECK constraints in migration 005.
 // ---------------------------------------------------------------------------
 
-export type TriggerType = 'api' | 'webhook' | 'cron';
+export type TriggerType = 'api' | 'webhook';
 export type VersionPin = 'head' | 'specific';
 
 /** Shape returned by `GET /deployments` (list items) and `GET /{id}`.
@@ -53,13 +56,11 @@ export interface Deployment {
   rate_limit_qps: number;
   invoke_count: number;
   last_invoked_at: string | null;
-  last_fire_at: string | null;
-  cron_expr: string | null;
-  cron_tz: string | null;
   created_at: string;
   updated_at: string | null;
   deleted_at: string | null;
   access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export interface DeploymentListResponse {
@@ -80,7 +81,6 @@ export interface ListDeploymentsParams {
   enabled?: boolean;
   workflow_id?: string;
   q?: string;
-  serving_only?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -93,8 +93,6 @@ export interface CreateDeploymentBody {
   version_pin: VersionPin;
   pinned_major?: number;
   pinned_sub?: number;
-  cron_expr?: string;
-  cron_tz?: string;
   rate_limit_qps?: number;
 }
 
@@ -104,6 +102,7 @@ export interface CreateDeploymentBody {
  */
 export interface CreateDeploymentResponse {
   id: string;
+  provenance: ResourceProvenance;
   api_key?: string;
   hmac_secret?: string;
   endpoint_url?: string;
@@ -114,8 +113,6 @@ export interface PatchDeploymentBody {
   name?: string;
   enabled?: boolean;
   rate_limit_qps?: number;
-  cron_expr?: string;
-  cron_tz?: string;
   version_pin?: VersionPin;
   pinned_major?: number;
   pinned_sub?: number;
@@ -201,7 +198,6 @@ function buildListQuery(p: ListDeploymentsParams): string {
   if (p.enabled !== undefined) params.set('enabled', String(p.enabled));
   if (p.workflow_id) params.set('workflow_id', p.workflow_id);
   if (p.q) params.set('q', p.q);
-  if (p.serving_only !== undefined) params.set('serving_only', String(p.serving_only));
   if (p.limit !== undefined) params.set('limit', String(p.limit));
   if (p.offset !== undefined) params.set('offset', String(p.offset));
   const qs = params.toString();
@@ -322,6 +318,9 @@ export interface HistoryParams {
   limit?: number;
   cursor?: string;
   status?: string[];
+  from?: string;
+  to?: string;
+  order?: 'asc' | 'desc';
 }
 
 export async function getHistory(
@@ -332,6 +331,9 @@ export async function getHistory(
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
   if (params.cursor) qs.set('cursor', params.cursor);
   for (const s of params.status ?? []) qs.append('status', s);
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  if (params.order) qs.set('order', params.order);
   const tail = qs.toString();
   const resp = await authedFetch(
     `/api/v1/deployments/${id}/history${tail ? `?${tail}` : ''}`,

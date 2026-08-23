@@ -40,14 +40,25 @@ async def record_audit(session, *, action, actor_user_id, actor_email,
     )
 
 
-async def record_auth_audit(*, action, actor_user_id, actor_email, tenant_id,
-                            outcome, audit_ctx=None, meta=None) -> None:
-    """Auth-path audit: standalone admin-engine transaction, RAW text() INSERT
-    listing tenant_id explicitly so an explicit NULL sticks (the ORM would omit
-    the column → server-default fires → no NULL / 22P02). meta is json.dumps'd
-    (asyncpg text-protocol won't auto-encode a dict). No CAST needed — direct
-    column insert infers types. Fail-soft: never block the auth response, but
-    log on failure so the gap is visible."""
+async def record_detached_audit(
+    *,
+    action,
+    actor_user_id,
+    actor_email,
+    tenant_id,
+    outcome,
+    target_type=None,
+    target_id=None,
+    target_name=None,
+    audit_ctx=None,
+    meta=None,
+) -> None:
+    """Write an audit event independently from the caller transaction.
+
+    Denied and rate-limited requests intentionally raise after the event. A
+    normal ``record_audit`` call would be rolled back with such a request, so
+    those paths use this detached, fail-soft writer instead.
+    """
     try:
         # Known-tenant auth events do not need an RLS-bypassing connection.
         # Binding the ordinary app session is both least-privilege and keeps
@@ -60,9 +71,9 @@ async def record_auth_audit(*, action, actor_user_id, actor_email, tenant_id,
                     action=action,
                     actor_user_id=actor_user_id,
                     actor_email=actor_email,
-                    target_type=None,
-                    target_id=None,
-                    target_name=None,
+                    target_type=target_type,
+                    target_id=target_id,
+                    target_name=target_name,
                     outcome=outcome,
                     ip_address=getattr(audit_ctx, "ip_address", None),
                     user_agent=getattr(audit_ctx, "user_agent", None),
@@ -77,9 +88,11 @@ async def record_auth_audit(*, action, actor_user_id, actor_email, tenant_id,
                     "INSERT INTO audit_log "
                     "(tenant_id, actor_user_id, actor_email, "
                     "actor_lookup_hash, action, outcome, ip_address, "
-                    "ip_lookup_hash, user_agent, request_id, meta) "
+                    "ip_lookup_hash, user_agent, request_id, target_type, "
+                    "target_id, meta) "
                     "VALUES (NULL, :uid, NULL, :email_hash, :action, :outcome, "
-                    "NULL, :ip_hash, NULL, :rid, '{}'::jsonb)"
+                    "NULL, :ip_hash, NULL, :rid, :target_type, :target_id, "
+                    "'{}'::jsonb)"
                 ), {
                     "uid": actor_user_id,
                     "email_hash": audit_lookup_digest(
@@ -91,8 +104,24 @@ async def record_auth_audit(*, action, actor_user_id, actor_email, tenant_id,
                         "ip_address", getattr(audit_ctx, "ip_address", None)
                     ),
                     "rid": getattr(audit_ctx, "request_id", None),
+                    "target_type": target_type,
+                    "target_id": target_id,
                 })
     except Exception:
         _log.error("auth audit write failed (event still occurred): action=%s "
                    "outcome=%s", redact_text(str(action)),
                    redact_text(str(outcome)), exc_info=True)
+
+
+async def record_auth_audit(*, action, actor_user_id, actor_email, tenant_id,
+                            outcome, audit_ctx=None, meta=None) -> None:
+    """Write an authentication event outside the request transaction."""
+    await record_detached_audit(
+        action=action,
+        actor_user_id=actor_user_id,
+        actor_email=actor_email,
+        tenant_id=tenant_id,
+        outcome=outcome,
+        audit_ctx=audit_ctx,
+        meta=meta,
+    )

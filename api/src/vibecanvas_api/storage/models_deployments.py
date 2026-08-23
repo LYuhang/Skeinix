@@ -1,7 +1,7 @@
-"""Deployments — workflow-as-service (API / Webhook / Cron).
+"""Deployments — workflow-as-service (API / Webhook).
 
 Spec §4.1. FORCE RLS + tenant policy + soft delete + per-deployment
-QPS limits. Three trigger types funnel through a single table.
+QPS limits. Both external trigger types funnel through a single table.
 
 This table registers on the shared ``Base.metadata`` declared in
 ``storage/models.py``; migration 001's ``Base.metadata.create_all(bind)``
@@ -67,10 +67,6 @@ class Deployment(Base):
     hmac_secret_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default=text("1")
     )
-    cron_expr: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    cron_tz: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="UTC",
-    )
     rate_limit_qps: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("10"),
     )
@@ -82,9 +78,6 @@ class Deployment(Base):
     )
     invoke_count: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("0"),
-    )
-    last_fire_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True,
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True,
@@ -98,7 +91,7 @@ class Deployment(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "trigger_type IN ('api', 'webhook', 'cron')",
+            "trigger_type IN ('api', 'webhook')",
             name="ck_deployments_trigger_type",
         ),
         CheckConstraint(
@@ -118,10 +111,6 @@ class Deployment(Base):
             "(trigger_type != 'webhook') OR "
             "(hmac_secret_ref IS NOT NULL)",
             name="ck_deployments_hmac_required",
-        ),
-        CheckConstraint(
-            "(trigger_type != 'cron') OR (cron_expr IS NOT NULL)",
-            name="ck_deployments_cron_required",
         ),
         CheckConstraint(
             "rate_limit_qps >= 0",

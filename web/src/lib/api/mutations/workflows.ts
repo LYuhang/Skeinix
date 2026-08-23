@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { apiClient } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/mutations/error-message';
 import type { components } from '@/lib/api/schema';
+import i18n from '@/lib/i18n';
 
 type WorkflowCreate = components['schemas']['WorkflowCreate'];
 type WorkflowMetaPatch = components['schemas']['WorkflowMetaPatch'];
@@ -36,7 +37,7 @@ export const useCreateWorkflow = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspace'] });
-      toast.success('Workflow created');
+      toast.success(i18n.t('workflow.toast.created', 'Workflow created'));
     },
     onError: (e) => {
       toast.error(`Create failed: ${errorMessage(e)}`);
@@ -56,7 +57,7 @@ export const useDeleteWorkflow = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspace'] });
-      toast.success('Workflow deleted');
+      toast.success(i18n.t('workflow.toast.deleted', 'Workflow deleted'));
     },
     onError: (e) => {
       toast.error(`Delete failed: ${errorMessage(e)}`);
@@ -122,7 +123,7 @@ export const useDuplicateWorkflow = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspace'] });
-      toast.success('Workflow duplicated');
+      toast.success(i18n.t('workflow.toast.duplicated', 'Workflow duplicated'));
     },
     onError: (e) => {
       toast.error(`Duplicate failed: ${errorMessage(e)}`);
@@ -151,7 +152,7 @@ export const useUpdateWorkflowMeta = () => {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['workflow', vars.wfId] });
       qc.invalidateQueries({ queryKey: ['workspace'] });
-      toast.success('Workflow updated');
+      toast.success(i18n.t('workflow.toast.updated', 'Workflow updated'));
     },
     onError: (e) => {
       toast.error(`Update failed: ${errorMessage(e)}`);

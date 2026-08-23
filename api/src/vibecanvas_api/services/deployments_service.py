@@ -7,7 +7,7 @@ route handlers import one module:
 
 1. ``resolve_deployment_and_bind_tenant`` — admin-role lookup that binds
    ``tenant_id_var`` from the deployment row. EVERY external endpoint
-   (``api/<slug>/invoke``, ``webhook/<slug>``, cron dispatcher) MUST call
+   (``api/<slug>/invoke`` and ``webhook/<slug>``) MUST call
    this BEFORE any tenant-bound DB op. The bound tenant is then read by
    the route handler and forwarded explicitly to
    ``session_scope(tenant_id=...)`` for the rest of the request.
@@ -55,9 +55,7 @@ async def resolve_deployment_and_bind_tenant(
     expected to translate that into:
 
     * 404 for an ``api_key`` miss (the api flow MUST authenticate);
-    * 404 for a slug miss (webhook / public invoke);
-    * (cron flow does not call this — the dispatcher iterates rows
-      directly under admin scope).
+    * 404 for a slug miss (webhook / public invoke).
 
     If both ``slug`` and ``api_key`` are ``None``, returns ``None``
     without a DB roundtrip — defends against an upstream parse bug.

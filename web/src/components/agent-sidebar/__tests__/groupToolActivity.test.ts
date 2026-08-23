@@ -156,37 +156,6 @@ describe('groupToolActivity', () => {
     }]);
   });
 
-  it('renders a trusted presented diagram as a standalone preview card', () => {
-    const presented = {
-      ...tool('diagram', 'present_diagram'),
-      result: JSON.stringify([{
-        type: 'text',
-        text: JSON.stringify({
-          status: 'presented',
-          preview_ref: {
-            fileRef: { path: '/data/diagrams/system.vdiagram.json' },
-          },
-        }),
-      }]),
-      invocation: {
-        origin: { kind: 'platform_mcp' },
-        capability: 'diagram.present',
-        name: 'present_diagram',
-      },
-    };
-    const messages: MergedMessage[] = [{
-      role: 'assistant',
-      content: '',
-      tool_calls: [tool('a', 'read_file'), presented, tool('c', 'write_file')],
-    }];
-
-    expect(groupToolActivity(messages).map((item) => item.kind)).toEqual([
-      'tool_group',
-      'diagram_presentation',
-      'tool_group',
-    ]);
-  });
-
   it('renders a running pre-tool approval as a standalone interactive card', () => {
     const approval = {
       id: 'approval-1',

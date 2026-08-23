@@ -97,6 +97,6 @@ failed/stale action instead of guessing selectors or coordinates.
   user must decide; do not silently finish or publish.
 
 Capturing a reusable workflow is separate from browser operation. Do it only when
-the user asks and `/build` is active; browser snapshot refs and Playwright tab
+the user asks and `/workflow` is active; browser snapshot refs and Playwright tab
 indices are session-local and must never be persisted as workflow selectors.
 """

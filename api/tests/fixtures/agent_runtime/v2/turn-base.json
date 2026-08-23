@@ -1,0 +1,18 @@
+{
+  "protocol_version": 2,
+  "tenant_id": "tenant-conformance",
+  "user_id": "user-conformance",
+  "chat_id": "chat-conformance",
+  "turn_id": "turn-conformance",
+  "runtime_type": "$runtime_type",
+  "runtime_session_id": "runtime-session-conformance",
+  "runtime_root": "$runtime_root",
+  "runtime_state_ref": "state-conformance",
+  "message": {
+    "role": "user",
+    "content": "Exercise the portable Runtime contract."
+  },
+  "model": "$model",
+  "approval_mode": "agent",
+  "surface": "main"
+}

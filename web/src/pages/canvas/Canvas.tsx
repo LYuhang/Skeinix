@@ -520,7 +520,7 @@ export function Canvas({ readOnly = false }: CanvasProps = {}) {
           position="bottom-right"
           pannable
           zoomable
-          className="!rounded-md !border !border-edge-structural !bg-surface-sunken !shadow-none"
+          className="!hidden !rounded-md !border !border-edge-structural !bg-surface-sunken !shadow-none lg:!block"
         />
       </ReactFlow>
 

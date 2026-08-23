@@ -94,7 +94,6 @@ test('all production page families and durable error states pass axe', async ({ 
     `/deployments/${MISSING_UUID}`,
     '/credentials',
     '/mcp-servers',
-    '/mcp-servers/platform/browser',
     '/mcp-servers/discover/e2e-missing-source',
     '/skills',
     '/skills/discover/e2e-missing-source',

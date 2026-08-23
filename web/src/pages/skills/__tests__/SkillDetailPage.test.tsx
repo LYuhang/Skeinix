@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
 import i18n from 'i18next';
 
@@ -41,7 +41,7 @@ vi.mock('@/lib/api/queries/skills', () => ({
       has_draft: true,
       draft_updated_at: '2026-06-03T00:00:00Z',
       access: {
-        capabilities: ['view', 'use', 'update', 'delete', 'manage_access', 'publish'],
+        capabilities: ['view', 'use', 'update', 'delete', 'publish'],
         effective_role: 'manager',
         source: 'computed',
       },
@@ -123,14 +123,17 @@ function renderAt(id: string, suffix = '') {
       mutations: { retry: false },
     },
   });
+  const router = createMemoryRouter(
+    [
+      { path: '/skills/:id', element: <SkillDetailPage /> },
+      { path: '/skills', element: <div>Skill list</div> },
+    ],
+    { initialEntries: [`/skills/${id}${suffix}`] },
+  );
   return render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={testI18n}>
-        <MemoryRouter initialEntries={[`/skills/${id}${suffix}`]}>
-          <Routes>
-            <Route path="/skills/:id" element={<SkillDetailPage />} />
-          </Routes>
-        </MemoryRouter>
+        <RouterProvider router={router} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -165,7 +168,7 @@ describe('<SkillDetailPage>', () => {
     // A Back link pointing at the list route.
     const back = screen.getByRole('link', { name: /back/i });
     expect(back).toHaveAttribute('href', '/skills');
-    expect(screen.getByRole('button', { name: 'Share Skill' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share Skill' })).not.toBeInTheDocument();
   });
 
   it('keeps Custom Skills read-only until Edit, then saves a draft before publishing', async () => {
@@ -192,6 +195,23 @@ describe('<SkillDetailPage>', () => {
       id: SKILL_ID,
       version: 3,
     }));
+  });
+
+  it('protects unsaved Custom Skill edits when leaving the page', async () => {
+    const user = userEvent.setup();
+    renderAt(SKILL_ID);
+
+    await user.click(screen.getByRole('button', { name: /^edit$/i }));
+    await user.type(screen.getByRole('textbox', { name: 'SKILL.md' }), '\nUnsaved rule.');
+    await user.click(screen.getByRole('link', { name: /back/i }));
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('Unsaved changes');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Invoice Parser' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: /back/i }));
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByText('Skill list')).toBeInTheDocument();
   });
 
   it('renders a selected historical version as a read-only snapshot', async () => {

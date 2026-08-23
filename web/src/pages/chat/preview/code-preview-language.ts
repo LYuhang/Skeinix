@@ -1,17 +1,42 @@
 import type { PreviewDescriptorV1 } from '@/lib/preview/protocol';
+import { LanguageDescription } from '@codemirror/language';
+import { languages } from '@codemirror/language-data';
 
-export type CodePreviewLanguage = 'python' | 'plain';
+export interface CodePreviewLanguage {
+  id: string;
+  description: LanguageDescription | null;
+}
 
 const CODE_EXTENSIONS = new Set([
   'css',
+  'c',
+  'cc',
+  'cpp',
+  'cs',
+  'go',
+  'graphql',
+  'h',
+  'hpp',
   'ini',
+  'java',
   'js',
   'jsx',
   'json',
+  'kt',
+  'kts',
+  'lua',
+  'php',
+  'rb',
+  'rs',
+  'scala',
   'sh',
+  'sql',
+  'swift',
+  'svelte',
   'toml',
   'ts',
   'tsx',
+  'vue',
   'xml',
   'yaml',
   'yml',
@@ -20,6 +45,7 @@ const CODE_EXTENSIONS = new Set([
 const CODE_FILENAMES = new Set([
   'dockerfile',
   'makefile',
+  'jenkinsfile',
 ]);
 
 function fileExtension(name: string): string {
@@ -38,19 +64,26 @@ function fileExtension(name: string): string {
 export function resolveCodePreviewLanguage(
   descriptor: Pick<PreviewDescriptorV1, 'contentType' | 'name'>,
 ): CodePreviewLanguage | null {
-  const basename = descriptor.name.split('/').at(-1)?.toLocaleLowerCase() ?? '';
-  const extension = fileExtension(basename);
+  const sourceBasename = descriptor.name.split('/').at(-1) ?? '';
+  const basename = sourceBasename.toLocaleLowerCase();
+  const extension = fileExtension(sourceBasename);
   const contentType = descriptor.contentType.split(';', 1)[0]?.trim().toLocaleLowerCase() ?? '';
 
-  if (extension === 'py' || extension === 'pyw' || contentType.includes('python')) {
-    return 'python';
-  }
-  if (
-    CODE_EXTENSIONS.has(extension)
+  const isCode = extension === 'py'
+    || extension === 'pyw'
+    || CODE_EXTENSIONS.has(extension)
     || CODE_FILENAMES.has(basename)
-    || /javascript|typescript|json|xml|yaml|toml|shellscript/.test(contentType)
-  ) {
-    return 'plain';
-  }
-  return null;
+    || /python|javascript|typescript|json|xml|yaml|toml|shellscript/.test(contentType);
+  if (!isCode) return null;
+  const byFilename = LanguageDescription.matchFilename(languages, sourceBasename);
+  const mimeName = [
+    'python', 'javascript', 'typescript', 'json', 'xml', 'yaml', 'toml', 'shell',
+  ].find((name) => contentType.includes(name));
+  const byMime = mimeName
+    ? LanguageDescription.matchLanguageName(languages, mimeName, true)
+    : null;
+  return {
+    id: byFilename?.name ?? byMime?.name ?? (extension || basename),
+    description: byFilename ?? byMime,
+  };
 }

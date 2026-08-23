@@ -52,13 +52,13 @@ import {
   UniversalToolResult,
 } from '@/components/agent-sidebar/tool-render/UniversalToolResult';
 import {
-  diagramDraftPreviewFromStandardResult,
   parseStandardToolResult,
 } from '@/components/agent-sidebar/tool-render/parseStandardToolResult';
 import {
   InteractiveArtifactBlock,
   InteractiveArtifactPreview,
 } from '@/components/agent-sidebar/tool-render/InteractiveArtifactBlock';
+import { ChatRenderProvider } from '@/components/agent-sidebar/chat-render-context';
 import { CHAT_RECONCILED_EVENT } from '@/lib/api/sse/chat-reconcile';
 import { useChatStreamStore } from '@/stores/chat-stream';
 
@@ -76,7 +76,13 @@ function makeClient(): QueryClient {
 }
 
 function QueryWrapper({ children }: { children: ReactNode }) {
-  return <QueryClientProvider client={makeClient()}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={makeClient()}>
+      <ChatRenderProvider value={{ chatId: 'chat-test', surface: 'chat' }}>
+        {children}
+      </ChatRenderProvider>
+    </QueryClientProvider>
+  );
 }
 
 function loadInteractiveSandboxDocument(frame: HTMLIFrameElement): string {
@@ -211,54 +217,14 @@ describe('universal MCP result fallback', () => {
       text: JSON.stringify({
         status: 'presented',
         preview_ref: {
-          fileRef: { path: '/data/diagrams/system.vdiagram.json' },
+          fileRef: { path: '/data/diagrams/system.drawio' },
         },
       }),
     }]));
 
     render(<UniversalToolResult value={value!} onOpenFile={onOpenFile} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open diagram' }));
-    expect(onOpenFile).toHaveBeenCalledWith('/data/diagrams/system.vdiagram.json');
-  });
-
-  it('extracts a bounded live Diagram draft reference from structured or text output', () => {
-    const ref = {
-      kind: 'diagram_draft',
-      draftId: 'draft-1',
-      chatId: 'chat-1',
-      targetPath: '/data/diagrams/system.vdiagram.json',
-      title: 'System architecture',
-    };
-    const structured = parseStandardToolResult(JSON.stringify({
-      structuredContent: { draft_preview_ref: ref },
-      content: [],
-    }));
-    const serialized = parseStandardToolResult(JSON.stringify([{
-      type: 'text',
-      text: JSON.stringify({ draft_preview_ref: ref }),
-    }]));
-
-    expect(diagramDraftPreviewFromStandardResult(structured)).toEqual({
-      draftId: 'draft-1',
-      chatId: 'chat-1',
-      targetPath: '/data/diagrams/system.vdiagram.json',
-      title: 'System architecture',
-    });
-    expect(diagramDraftPreviewFromStandardResult(serialized)).toEqual(
-      diagramDraftPreviewFromStandardResult(structured),
-    );
-  });
-
-  it('rejects malformed or non-data draft preview references', () => {
-    const value = parseStandardToolResult(JSON.stringify({
-      draft_preview_ref: {
-        kind: 'diagram_draft',
-        draftId: 'draft-1',
-        chatId: 'chat-1',
-        targetPath: '/etc/passwd',
-      },
-    }));
-    expect(diagramDraftPreviewFromStandardResult(value)).toBeNull();
+    expect(onOpenFile).toHaveBeenCalledWith('/data/diagrams/system.drawio');
   });
 
   it('returns null for plain strings so the legacy bounded-text fallback remains available', () => {
@@ -1443,7 +1409,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
                 title: 'Screenshot',
                 component_type: 'file_preview',
                 completion_mode: 'render_only',
-                props: { path: '/data/browser-media/screenshot.png', mime: 'image/png' },
+                props: { path: '/data/browser-media/screenshot.png', file_type: 'image' },
               },
             },
           },
@@ -1452,11 +1418,231 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       { wrapper: QueryWrapper },
     );
 
-    const image = await screen.findByRole('img', { name: 'Screenshot' });
-    expect(image).toHaveAttribute(
-      'src',
-      expect.stringContaining('/api/v1/vfs/resources/image-token/data/browser-media/screenshot.png'),
+    expect(await screen.findByText('screenshot.png')).toBeInTheDocument();
+    expect(screen.getByText(/^image$/i)).toBeInTheDocument();
+    expect(document.querySelector('[data-preview-render-state="summary"]')).toBeInTheDocument();
+  });
+
+  it('keeps a large office artifact lightweight until the full Preview is opened', () => {
+    const onOpenFilePreview = vi.fn();
+    render(
+      <InteractiveArtifactBlock
+        call={{
+          id: 'tc_lightweight_file',
+          name: 'render_interactive',
+          arguments: '{}',
+          result: '',
+          status: 'done',
+          artifact: {
+            status: 'success',
+            payload: {
+              artifact: {
+                kind: 'interactive_artifact',
+                artifact_id: 'ia_lightweight_file',
+                title: 'Large workbook',
+                component_type: 'file_preview',
+                completion_mode: 'render_only',
+                props: { path: '/data/large-workbook.xlsx', file_type: 'xlsx' },
+              },
+            },
+          },
+        }}
+        onOpenFilePreview={onOpenFilePreview}
+      />,
+      { wrapper: QueryWrapper },
     );
+
+    expect(screen.getByText('large-workbook.xlsx')).toBeInTheDocument();
+    expect(screen.getByText(/^xlsx$/i)).toBeInTheDocument();
+    const summary = document.querySelector('[data-preview-render-state="summary"]');
+    expect(summary).toBeInTheDocument();
+    expect(
+      summary?.querySelector('[data-message-content-rail="assistant"]'),
+    ).toHaveClass('max-w-[30rem]');
+    expect(document.querySelector('[data-role="interactive-artifact-body"]')).not.toBeInTheDocument();
+    expect(onOpenFilePreview).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file maximize action available in a compact sidebar', async () => {
+    const user = userEvent.setup();
+    const onOpenFilePreview = vi.fn();
+    render(
+      <InteractiveArtifactBlock
+        compact
+        call={{
+          id: 'tc_sidebar_file',
+          name: 'render_interactive',
+          arguments: '{}',
+          result: '',
+          status: 'done',
+          artifact: {
+            status: 'success',
+            payload: {
+              artifact: {
+                kind: 'interactive_artifact',
+                artifact_id: 'ia_sidebar_file',
+                title: 'Quarterly brief',
+                component_type: 'file_preview',
+                completion_mode: 'render_only',
+                props: { path: '/data/quarterly-brief.docx', file_type: 'docx' },
+              },
+            },
+          },
+        }}
+        onOpenFilePreview={onOpenFilePreview}
+      />,
+      { wrapper: QueryWrapper },
+    );
+
+    await user.click(screen.getByRole('button', {
+      name: 'Open in a new Preview tab',
+    }));
+    expect(onOpenFilePreview).toHaveBeenCalledWith('/data/quarterly-brief.docx');
+  });
+
+  it('routes an inline diagram through Preview and opens the full Preview on request', async () => {
+    const user = userEvent.setup();
+    const onOpenFilePreview = vi.fn();
+    server.use(
+      http.post('*/api/v1/previews/resolve', () => HttpResponse.json({
+        schemaVersion: 1,
+        fileRef: {
+          schemaVersion: 1,
+          scope: 'chat',
+          chatId: 'chat-diagram',
+          path: '/data/diagrams/system.drawio',
+        },
+        name: 'system.drawio',
+        sizeBytes: 1024,
+        contentType: 'application/vnd.jgraph.mxfile',
+        detectedType: 'drawio',
+        revision: 'sha256:inline-fit',
+        renderer: 'drawio',
+        loadPolicy: 'range',
+        capabilities: { preview: true, edit: false, download: true },
+        diagram: { status: 'valid', scene: null, issues: [] },
+      })),
+    );
+    render(
+      <ChatRenderProvider value={{ chatId: 'chat-diagram', surface: 'chat' }}>
+        <InteractiveArtifactBlock
+          call={{
+            id: 'tc_diagram',
+            name: 'render_interactive',
+            arguments: '{}',
+            result: '',
+            status: 'done',
+            artifact: {
+              status: 'success',
+              payload: {
+                artifact: {
+                  kind: 'interactive_artifact',
+                  artifact_id: 'ia_diagram',
+                  title: 'System overview',
+                  component_type: 'file_preview',
+                  completion_mode: 'render_only',
+                  props: {
+                    path: '/data/diagrams/system.drawio',
+                    file_type: 'drawio',
+                  },
+                },
+              },
+            },
+          }}
+          onOpenFilePreview={onOpenFilePreview}
+        />
+      </ChatRenderProvider>,
+      { wrapper: QueryWrapper },
+    );
+
+    expect(await screen.findByText('system.drawio')).toBeInTheDocument();
+    expect(screen.getByText(/^drawio$/i)).toBeInTheDocument();
+    expect(onOpenFilePreview).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Open in preview' }));
+    expect(onOpenFilePreview).toHaveBeenCalledWith('/data/diagrams/system.drawio');
+  });
+
+  it('keeps a draw.io artifact lightweight when persisted metadata contains an older MIME hint', async () => {
+    const user = userEvent.setup();
+    const onOpenFilePreview = vi.fn();
+    render(
+      <InteractiveArtifactBlock
+        call={{
+          id: 'tc_diagram_with_mime',
+          name: 'render_interactive',
+          arguments: '{}',
+          result: '',
+          status: 'done',
+          artifact: {
+            status: 'success',
+            payload: {
+              artifact: {
+                kind: 'interactive_artifact',
+                artifact_id: 'ia_diagram_with_mime',
+                title: 'Product launch readiness',
+                component_type: 'file_preview',
+                completion_mode: 'render_only',
+                props: {
+                  path: '/data/diagrams/product-launch-readiness.drawio',
+                  mime: 'application/vnd.jgraph.mxfile',
+                  description: 'Editable native draw.io file',
+                },
+              },
+            },
+          },
+        }}
+        onOpenFilePreview={onOpenFilePreview}
+      />,
+      { wrapper: QueryWrapper },
+    );
+
+    expect(screen.getByText('product-launch-readiness.drawio')).toBeInTheDocument();
+    expect(screen.getByText(/^drawio$/i)).toBeInTheDocument();
+    expect(screen.queryByText('Interactive preview failed')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-preview-render-state="summary"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-role="interactive-artifact-body"]')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Open in preview' }));
+    expect(onOpenFilePreview).toHaveBeenCalledWith(
+      '/data/diagrams/product-launch-readiness.drawio',
+    );
+  });
+
+  it('renders a URL artifact as an isolated interactive WebView', async () => {
+    render(
+      <InteractiveArtifactBlock
+        call={{
+          id: 'tc_url',
+          name: 'render_url_preview',
+          arguments: '{}',
+          result: '',
+          status: 'done',
+          artifact: {
+            status: 'success',
+            payload: {
+              artifact: {
+                kind: 'interactive_artifact',
+                artifact_id: 'ia_url',
+                title: 'Reference page',
+                component_type: 'url_preview',
+                completion_mode: 'render_only',
+                props: {
+                  url: 'https://example.com/docs',
+                  description: 'External documentation',
+                },
+              },
+            },
+          },
+        }}
+      />,
+      { wrapper: QueryWrapper },
+    );
+
+    const frame = await screen.findByTitle('Reference page');
+    expect(frame).toHaveAttribute('src', 'https://example.com/docs');
+    expect(frame).toHaveAttribute('sandbox', expect.stringContaining('allow-scripts'));
+    expect(screen.getByText('External documentation')).toBeInTheDocument();
   });
 
   it('loads an HTML file path and renders it through the isolated HTML runtime', async () => {
@@ -1499,7 +1685,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
                 title: 'Dataset HTML',
                 component_type: 'file_preview',
                 completion_mode: 'render_only',
-                props: { path: '/mount/data/view.html', mime: 'text/html' },
+                props: { path: '/mount/data/view.html' },
               },
             },
           },
@@ -1508,26 +1694,9 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       { wrapper: QueryWrapper },
     );
 
-    const frame = await screen.findByTitle('Dataset HTML');
-    expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-forms');
-    expect(frame).toHaveAttribute('src', '/interactive-sandbox.html');
-    const sandboxDocument = loadInteractiveSandboxDocument(frame as HTMLIFrameElement);
-    expect(sandboxDocument).toContain('Dataset preview');
-    // The source HTML is preserved, but its remote image is intentionally not
-    // permitted by CSP: interactive assets must first materialize remote
-    // resources into VFS and reference one of the exact resource-session URLs.
-    expect(sandboxDocument).toContain('https://media.example.test/frame.png');
-    expect(sandboxDocument).toContain(
-      'img-src data: blob: http://localhost/api/v1/vfs/resources/html-mount-token/mount/ http://localhost/api/v1/vfs/resources/html-token/',
-    );
-    // Exact resource-session URLs may themselves be HTTP in jsdom. What must
-    // never return is a bare HTTP(S) scheme-source that permits every host.
-    expect(sandboxDocument).not.toMatch(/img-src[^;]*\shttps?:\s/);
-    expect(sessionReads).toBe(2);
-    window.dispatchEvent(new CustomEvent(CHAT_RECONCILED_EVENT));
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-    expect(sessionReads).toBe(2);
-    expect(screen.getByTitle('Dataset HTML')).toBe(frame);
+    expect(await screen.findByText('view.html')).toBeInTheDocument();
+    expect(screen.getByText(/^html$/i)).toBeInTheDocument();
+    expect(sessionReads).toBe(0);
   });
 
   it('uses a stable summary instead of framing a PDF blocked by application headers', async () => {
@@ -1562,7 +1731,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
                 title: 'Release report',
                 component_type: 'file_preview',
                 completion_mode: 'render_only',
-                props: { path: '/data/report.pdf', mime: 'application/pdf' },
+                props: { path: '/data/report.pdf' },
               },
             },
           },
@@ -1571,9 +1740,8 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       { wrapper: QueryWrapper },
     );
 
-    expect(await screen.findByText('Open in Preview to view pages and zoom.')).toBeInTheDocument();
-    expect(document.querySelector('[data-role="interactive-pdf-summary"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-role="interactive-pdf-summary"] iframe')).toBeNull();
+    expect(await screen.findByText('report.pdf')).toBeInTheDocument();
+    expect(screen.getByText(/^pdf$/i)).toBeInTheDocument();
   });
 
   it('retries an HTML file that reaches VFS after the artifact card', async () => {
@@ -1615,7 +1783,7 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
                 title: 'Late HTML',
                 component_type: 'file_preview',
                 completion_mode: 'render_only',
-                props: { path: '/data/late.html', mime: 'text/html' },
+                props: { path: '/data/late.html' },
               },
             },
           },
@@ -1624,10 +1792,9 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
       { wrapper: QueryWrapper },
     );
 
-    const frame = await screen.findByTitle('Late HTML', {}, { timeout: 2_000 });
-    expect(loadInteractiveSandboxDocument(frame as HTMLIFrameElement)).toContain('Available after writeback');
-    expect(reads).toBe(2);
-    expect(screen.queryByText('The file preview resource could not be loaded.')).toBeNull();
+    expect(await screen.findByText('late.html')).toBeInTheDocument();
+    expect(screen.getByText(/^html$/i)).toBeInTheDocument();
+    expect(reads).toBe(0);
   });
 
   it('fails closed when a waiting card has no durable HITL request id', async () => {

@@ -284,6 +284,9 @@ async def test_task_direct_roles_capabilities_and_revoke(
         task_id = task["id"]
         assert task["access"]["effective_role"] == "manager"
         assert "manage_access" in task["access"]["capabilities"]
+        assert task["provenance"]["ownership_scope"] == "personal"
+        assert task["provenance"]["origin_type"] == "created"
+        assert task["provenance"]["owner"]["display_name"] == "task_owner"
         assert OpenFgaTuple(
             f"organization:{owner['tenant_id']}",
             "organization",
@@ -338,28 +341,50 @@ async def test_task_direct_roles_capabilities_and_revoke(
         assert hidden_summary.status_code == 200
         assert hidden_summary.json()["enabled"] == 0
 
-        async def grant(relation: str, subject_id: str) -> None:
+        async def grant(relation: str, subject: dict) -> None:
+            resolved = await client.post(
+                f"/api/v1/resource-access/task/{task_id}/resolve-target",
+                json={
+                    "target_type": "user",
+                    "identifier": subject["email"],
+                },
+                headers=_headers(owner_token),
+            )
+            assert resolved.status_code == 200, resolved.text
+            target = resolved.json()["target"]
+            assert target is not None
             response = await client.post(
                 f"/api/v1/tasks/{task_id}/access",
                 json={
                     "relation": relation,
-                    "subject_type": "user",
-                    "subject_id": subject_id,
-                    "subject_relation": None,
+                    "resolution_token": target["resolution_token"],
                 },
                 headers=_headers(
                     owner_token,
                     **{
                         "Idempotency-Key": (
-                            f"grant-task-{relation}-{subject_id}"
+                            f"grant-task-{relation}-{subject['user_id']}"
                         )
                     },
                 ),
             )
             assert response.status_code == 201, response.text
 
-        await grant("viewer", viewer["user_id"])
-        await grant("operator", operator["user_id"])
+        await grant("viewer", viewer)
+        await grant("operator", operator)
+
+        shared = await client.get(
+            "/api/v1/resource-access/shared?resource_type=task",
+            headers=_headers(viewer_token),
+        )
+        assert shared.status_code == 200, shared.text
+        assert [item["resource_id"] for item in shared.json()["items"]] == [
+            task_id
+        ]
+        assert shared.json()["items"][0]["name"] == "Shared schedule"
+        assert shared.json()["items"][0]["access"]["effective_role"] == (
+            "viewer"
+        )
 
         visible = await client.get(
             "/api/v1/tasks",

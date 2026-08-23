@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from vibecanvas_api.config import AgentConfig, AppConfig
 from vibecanvas_api.services.llm_credentials_inject import merge_agent_settings_override
 
@@ -131,6 +133,24 @@ def test_sandbox_egress_allowlist_requires_hosts(monkeypatch):
         assert "SANDBOX_EGRESS_ALLOW_HOSTS" in str(exc)
     else:  # pragma: no cover - explicit startup contract
         raise AssertionError("an empty Runtime egress allowlist must fail startup")
+
+
+def test_control_plane_proxy_is_explicit_and_validated(monkeypatch):
+    monkeypatch.delenv("SKEINIX_CONTROL_PLANE_HTTP_PROXY", raising=False)
+    assert AppConfig({}).control_plane_http_proxy == ""
+
+    monkeypatch.setenv(
+        "SKEINIX_CONTROL_PLANE_HTTP_PROXY",
+        "http://host.docker.internal:7897",
+    )
+    assert (
+        AppConfig({}).control_plane_http_proxy
+        == "http://host.docker.internal:7897"
+    )
+
+    monkeypatch.setenv("SKEINIX_CONTROL_PLANE_HTTP_PROXY", "socks5://proxy:1080")
+    with pytest.raises(ValueError, match="SKEINIX_CONTROL_PLANE_HTTP_PROXY"):
+        AppConfig({})
 
 
 def test_platform_default_api_can_be_hard_disabled_without_falling_back(

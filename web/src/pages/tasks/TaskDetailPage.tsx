@@ -26,15 +26,24 @@
  * Download UX:
  *   * Result-bearing rows expose CSV, JSONL, and on-demand Excel downloads.
  */
-import { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, Link, useSearchParams } from "react-router";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { ChevronDown, Download, FolderOpen, ListChecks, Share2 } from "lucide-react";
 
 import { EntityDetailShell } from "@/components/layout/entity-detail-shell";
+import {
+  IncrementalLogLoader,
+  LogHistoryControls,
+} from "@/components/logs/log-history-controls";
+import { resolveLogRange, type LogRangeValue, type LogSortOrder } from "@/lib/log-history";
+import { SectionBlock } from "@/components/layout/section-block";
+import { OperationalSummary } from "@/components/layout/operational-summary";
+import { DetailSummary } from "@/components/layout/detail-summary";
 import { ResourceShareDialog } from "@/components/modals/ResourceShareDialog";
+import { ResourceProvenanceLine } from "@/components/resources/ResourceProvenanceLine";
 import { ActionableError } from "@/components/presentation/ActionableError";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,9 +58,18 @@ import {
   type SemanticStatus,
 } from "@/components/ui/status";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
   cancelTask,
   cancelScheduledExecution,
   getTask,
+  getTaskEvents,
   getScheduledRun,
   listScheduledRunExecutions,
   pauseScheduledRun,
@@ -66,6 +84,7 @@ import {
 } from "@/lib/api/tasks";
 import { useTaskStream, type TaskEventFrame } from "@/lib/api/sse/run-task-stream";
 import { useFormatDateTime } from "@/lib/timezone";
+import { describeCronExpression, scheduleLocale } from "@/lib/cron-description";
 
 const POLL_INTERVAL_MS = 5_000;
 const ACTIVE_STATUSES: TaskStatus[] = ["queued", "running", "resuming", "cancelling"];
@@ -145,6 +164,13 @@ interface BatchSummary {
   rows_failed?: number;
 }
 
+interface BatchSetup {
+  rows: number;
+  mappedFields: number;
+  concurrency: number;
+  outputPath: string | null;
+}
+
 function asBatchSummary(r: unknown): BatchSummary | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
@@ -153,6 +179,27 @@ function asBatchSummary(r: unknown): BatchSummary | null {
   if (typeof o.rows_ok === "number") out.rows_ok = o.rows_ok;
   if (typeof o.rows_failed === "number") out.rows_failed = o.rows_failed;
   return Object.keys(out).length > 0 ? out : null;
+}
+
+function asBatchSetup(payload: Task["payload"]): BatchSetup | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const source = record.data_source && typeof record.data_source === "object"
+    ? record.data_source as Record<string, unknown>
+    : null;
+  const mapping = record.column_mapping && typeof record.column_mapping === "object"
+    ? record.column_mapping as Record<string, unknown>
+    : null;
+  if (!source && !mapping) return null;
+  const output = record.output && typeof record.output === "object"
+    ? record.output as Record<string, unknown>
+    : null;
+  return {
+    rows: Array.isArray(source?.rows) ? source.rows.length : 0,
+    mappedFields: mapping ? Object.keys(mapping).length : 0,
+    concurrency: typeof record.concurrency === "number" ? record.concurrency : 1,
+    outputPath: typeof output?.path === "string" ? output.path : null,
+  };
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
@@ -231,6 +278,24 @@ function latestRowCounts(
   return null;
 }
 
+function humanTaskError(raw: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return raw.trim() || fallback;
+    const record = parsed as Record<string, unknown>;
+    const candidate = record.message ?? record.error ?? record.detail ?? record.reason;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (candidate && typeof candidate === 'object') {
+      const nested = candidate as Record<string, unknown>;
+      const nestedMessage = nested.message ?? nested.detail ?? nested.reason;
+      if (typeof nestedMessage === 'string' && nestedMessage.trim()) return nestedMessage.trim();
+    }
+    return fallback;
+  } catch {
+    return raw.trim() || fallback;
+  }
+}
+
 /** Render one event frame as a compact log row. */
 function EventRow({
   frame,
@@ -241,10 +306,12 @@ function EventRow({
   formatTime: (value?: string | null) => string;
   nowLabel: string;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const payload = frame.payload;
   const level = payload.level ?? "info";
-  const message = payload.message || payload.error?.message || payload.action || frame.event_type;
+  const message = payload.message || payload.error?.message || payload.action ||
+    t(`taskDetail.eventType.${frame.event_type}`, frame.event_type);
   const scope = payload.scope
     ? [payload.scope.type, payload.scope.id].filter(Boolean).join(":")
     : "";
@@ -265,33 +332,24 @@ function EventRow({
   }, [payload]);
 
   return (
-    <li className="border-b py-2 last:border-b-0">
+    <li className="border-b border-edge-subtle py-2.5 last:border-b-0">
       <button
         type="button"
-        className="grid w-full grid-cols-[56px_128px_88px_128px_1fr] items-start gap-3 text-left"
+        className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-md px-1 py-1 text-left hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         onClick={() => setExpanded((v) => !v)}
       >
-        <span className="font-mono text-xs tabular-nums text-muted-foreground">
-        {frame.id}
-      </span>
-        <span className="text-xs text-muted-foreground">
-          {(payload as TaskEventPayload & { _event_ts?: string })._event_ts
-            ? formatTime((payload as TaskEventPayload & { _event_ts?: string })._event_ts)
-            : nowLabel}
-        </span>
         <StatusBadge className="w-fit" status={eventLevelTone(level)}>
-          {level}
+          {t(`taskDetail.level.${level}`, level)}
         </StatusBadge>
-        <span className="font-mono text-xs text-muted-foreground">
-          {payload.action ?? frame.event_type}
-        </span>
         <span className="min-w-0">
-          <span className="block truncate text-xs font-medium">{message}</span>
-          {scope && (
-            <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
-              {scope}
-            </span>
-          )}
+          <span className="block text-xs font-medium leading-5">{message}</span>
+          <span className="mt-0.5 block truncate text-xs text-content-tertiary">
+            {(payload as TaskEventPayload & { _event_ts?: string })._event_ts
+              ? formatTime((payload as TaskEventPayload & { _event_ts?: string })._event_ts)
+              : nowLabel}
+            {` · ${t(`taskDetail.eventType.${frame.event_type}`, frame.event_type)}`}
+            {scope ? ` · ${scope}` : ""}
+          </span>
         </span>
       </button>
       {expanded && payloadStr !== "{}" && (
@@ -304,15 +362,24 @@ function EventRow({
 }
 
 export function TaskDetailPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // Render UTC timestamps in the user's chosen timezone (reactive).
   const formatTime = useFormatDateTime();
   const { taskId } = useParams<{ taskId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const [shareOpen, setShareOpen] = useState(false);
   const [eventTypeFilter, setEventTypeFilter] = useState<TaskEventType | "all">("all");
   const [levelFilter, setLevelFilter] = useState<(typeof LEVEL_OPTIONS)[number]>("all");
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [logRange, setLogRange] = useState<LogRangeValue>({ range: "all", from: "", to: "" });
+  const [logOrder, setLogOrder] = useState<LogSortOrder>("desc");
+  const eventLogRegionRef = useRef<HTMLDivElement>(null);
+  const activeTab = searchParams.get("tab") === "logs" ? "logs" : "overview";
+  const logBounds = useMemo(
+    () => resolveLogRange(logRange),
+    [logRange],
+  );
 
   const taskQuery = useQuery({
     queryKey: ["task", taskId],
@@ -330,9 +397,30 @@ export function TaskDetailPage() {
     refetchOnWindowFocus: false,
   });
 
+  const eventsQuery = useInfiniteQuery({
+    queryKey: ["task", taskId, "events", eventTypeFilter, logRange, logOrder],
+    queryFn: ({ pageParam }) => getTaskEvents(taskId!, {
+      limit: 50,
+      order: logOrder,
+      event_type: eventTypeFilter === "all" ? undefined : [eventTypeFilter],
+      ...logBounds,
+      ...(pageParam == null
+        ? {}
+        : logOrder === "desc"
+          ? { before_seq: pageParam }
+          : { after_seq: pageParam }),
+    }),
+    initialPageParam: null as number | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    placeholderData: (previousData) => previousData,
+    enabled: !!taskId && (taskQuery.data?.access?.capabilities.includes("inspect_runs") ?? false),
+    refetchOnWindowFocus: false,
+  });
+  const latestEventSeq = eventsQuery.data?.pages[0]?.latest_seq ?? 0;
   const stream = useTaskStream(
     taskId,
-    taskQuery.data?.access?.capabilities.includes("inspect_runs") ?? false,
+    (taskQuery.data?.access?.capabilities.includes("inspect_runs") ?? false) && eventsQuery.isSuccess,
+    latestEventSeq,
   );
   const scheduledQuery = useQuery({
     queryKey: ["task", taskId, "scheduled-run"],
@@ -380,10 +468,29 @@ export function TaskDetailPage() {
     }
   }, [qc, stream.events, taskId, taskQuery.data?.task_type]);
 
+  const allEvents = useMemo(() => {
+    const byId = new Map<number, TaskEventFrame>();
+    for (const event of eventsQuery.data?.pages.flatMap((page) => page.items) ?? []) {
+      if (byId.has(event.id)) continue;
+      byId.set(event.id, {
+        id: event.id,
+        event_type: event.event_type,
+        payload: event.ts && !event.payload._event_ts
+          ? { ...event.payload, _event_ts: event.ts }
+          : event.payload,
+      });
+    }
+    for (const event of stream.events) byId.set(event.id, event);
+    return [...byId.values()].sort((a, b) => logOrder === "desc" ? b.id - a.id : a.id - b.id);
+  }, [eventsQuery.data?.pages, logOrder, stream.events]);
+
   const visibleEvents = useMemo(
     () =>
-      stream.events.filter((event) => {
+      allEvents.filter((event) => {
         if (eventTypeFilter !== "all" && event.event_type !== eventTypeFilter) return false;
+        const eventTimestamp = event.payload._event_ts ? Date.parse(event.payload._event_ts) : Number.NaN;
+        if (logBounds.from && Number.isFinite(eventTimestamp) && eventTimestamp < Date.parse(logBounds.from)) return false;
+        if (logBounds.to && Number.isFinite(eventTimestamp) && eventTimestamp > Date.parse(logBounds.to)) return false;
         const level = event.payload.level ?? "info";
         if (levelFilter !== "all" && level !== levelFilter) return false;
         if (taskQuery.data?.task_type === "scheduled_run" && selectedExecution) {
@@ -399,8 +506,15 @@ export function TaskDetailPage() {
         }
         return true;
       }),
-    [eventTypeFilter, levelFilter, selectedExecution, stream.events, taskQuery.data?.task_type],
+    [allEvents, eventTypeFilter, levelFilter, logBounds.from, logBounds.to, selectedExecution, taskQuery.data?.task_type],
   );
+
+  const { fetchNextPage: fetchNextEventPage, hasNextPage: hasNextEventPage, isFetchingNextPage: isFetchingNextEventPage } = eventsQuery;
+  const loadMoreEvents = useCallback(() => {
+    if (hasNextEventPage && !isFetchingNextEventPage) {
+      void fetchNextEventPage();
+    }
+  }, [fetchNextEventPage, hasNextEventPage, isFetchingNextEventPage]);
 
   const cancelMutation = useMutation({
     mutationFn: () => cancelTask(taskId!, "soft"),
@@ -527,9 +641,10 @@ export function TaskDetailPage() {
   const summary = ["finished", "finished_with_errors", "interrupted"].includes(task.status)
     ? asBatchSummary(task.result)
     : null;
+  const batchSetup = isScheduledRun ? null : asBatchSetup(task.payload);
   // "X of Y rows done" — prefer the live SSE progress frame; once finished,
   // the summary card carries the authoritative totals so we pin done==total.
-  const liveCounts = latestRowCounts(stream.events);
+  const liveCounts = latestRowCounts(allEvents);
   const rowCounts = summary && task.status !== "interrupted"
     ? typeof summary.rows_total === "number"
       ? { done: summary.rows_total, total: summary.rows_total }
@@ -538,6 +653,12 @@ export function TaskDetailPage() {
   const canDownload = !isScheduledRun && capabilities.has("export") && !!task.results_uri;
   const downloadHref = `/api/v1/tasks/${taskId}/download`;
   const storageHref = `/storage?path=${encodeURIComponent(`/task/${task.id}`)}`;
+  const selectTab = (tab: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === "logs") next.set("tab", "logs");
+    else next.delete("tab");
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <EntityDetailShell
@@ -550,19 +671,25 @@ export function TaskDetailPage() {
           ? t("tasks.type.scheduled_run", "Scheduled run")
           : t("tasks.type.batch_exec", "Batch execution"),
       )}
-      description={t(`tasks.type.${task.task_type}`, task.task_type)}
+      description={t(
+        `tasks.type.${task.task_type}.description`,
+        task.task_type === "scheduled_run"
+          ? "Run a workflow automatically on a recurring schedule."
+          : "Run one workflow across a table of records and collect row-level results.",
+      )}
       icon={ListChecks}
       status={
         <StatusBadge status={taskStatusTone(displayStatus)}>
           {t(`tasks.status.${displayStatus}`, displayStatus)}
         </StatusBadge>
       }
-      metadata={(
+      metadata={(<>
         <span className="font-mono">
           {t("taskDetail.taskId", "Task ID")}: {task.id.slice(0, 8)}…
           {task.workflow_id ? ` · ${t("tasks.col.workflow", "Workflow")}: ${task.workflow_id}` : ""}
         </span>
-      )}
+        <ResourceProvenanceLine provenance={task.provenance} />
+      </>)}
       actions={
         <>
               {canDownload && (
@@ -570,9 +697,9 @@ export function TaskDetailPage() {
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm">
-                        <Download />
+                        <Download aria-hidden="true" />
                         {t("taskDetail.download", "Download")}
-                        <ChevronDown />
+                        <ChevronDown aria-hidden="true" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -589,7 +716,7 @@ export function TaskDetailPage() {
                   </DropdownMenu>
                   <Button variant="outline" size="sm" asChild>
                     <Link to={storageHref}>
-                      <FolderOpen />
+                      <FolderOpen aria-hidden="true" />
                       {t("taskDetail.viewInStorage", "View in Storage")}
                     </Link>
                   </Button>
@@ -662,42 +789,50 @@ export function TaskDetailPage() {
               )}
               {capabilities.has("manage_access") ? (
                 <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-                  <Share2 />
+                  <Share2 aria-hidden="true" />
                   {t("tasks.action.share", "Share task")}
                 </Button>
               ) : null}
         </>
       }
-      className="max-w-4xl gap-6"
+      className={`max-w-5xl gap-0 ${activeTab === "logs" ? "!overflow-hidden" : ""}`}
     >
+      <Tabs
+        value={activeTab}
+        onValueChange={selectTab}
+        className={activeTab === "logs" ? "flex min-h-0 flex-1 flex-col" : "shrink-0"}
+      >
+        <TabsList
+          variant="underline"
+          className="chat-scrollbar flex h-auto w-full justify-start overflow-x-auto border-b border-edge-subtle"
+          aria-label={t("taskDetail.tabsLabel", "Task detail sections")}
+        >
+          <TabsTrigger value="overview" className="shrink-0">
+            {t("taskDetail.tab.overview", "Execution overview")}
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="shrink-0">
+            {t("taskDetail.tab.logs", "Execution logs")}
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Progress + timestamps */}
-        <div className="rounded-md border p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm font-medium">
-                {t("tasks.col.progress", "Progress")}
-              </span>
-              {rowCounts && (
-                <span
-                  className="text-xs text-muted-foreground"
-                  data-testid="row-progress"
-                >
-                  {t(
-                    "taskDetail.rowsProgress",
-                    "{{done}} of {{total}} rows done",
-                    { done: rowCounts.done, total: rowCounts.total },
-                  )}
-                </span>
-              )}
-            </div>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {pct}%
-            </span>
-          </div>
+        <TabsContent value="overview" className="mt-0">
+
+        {/* An idle schedule has no meaningful completion percentage. */}
+        {(!isScheduledRun || task.status === "running") && <SectionBlock
+          variant="plain"
+          title={t("tasks.col.progress", "Progress")}
+          description={rowCounts
+            ? t("taskDetail.rowsProgress", "{{done}} of {{total}} rows done", { done: rowCounts.done, total: rowCounts.total })
+            : t("taskDetail.progressDescription", "Live completion and execution timing for this task.")}
+          actions={<span className="text-sm font-semibold tabular-nums text-content-secondary">{pct}%</span>}
+        >
+          {rowCounts ? <span className="sr-only" data-testid="row-progress">
+            {t("taskDetail.rowsProgress", "{{done}} of {{total}} rows done", { done: rowCounts.done, total: rowCounts.total })}
+          </span> : null}
           <ProgressState
             status={taskStatusTone(task.status)}
             label={<span className="sr-only">{t("tasks.col.progress", "Progress")}</span>}
+            progressLabel={t("tasks.col.progress", "Progress")}
             value={pct}
           />
           <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
@@ -720,88 +855,156 @@ export function TaskDetailPage() {
               <dd>{formatTime(task.finished_at)}</dd>
             </div>
           </dl>
-        </div>
+        </SectionBlock>}
+
+        {batchSetup && (
+          <SectionBlock
+            variant="plain"
+            title={t("taskDetail.setup", "Task setup")}
+            description={t(
+              "taskDetail.setupDescription",
+              "Input and processing settings captured when this batch was submitted.",
+            )}
+          >
+            <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+              <div>
+                <dt className="text-xs text-content-tertiary">{t("taskDetail.inputRows", "Input rows")}</dt>
+                <dd className="mt-1 font-medium tabular-nums">{batchSetup.rows}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-content-tertiary">{t("taskDetail.mappedFields", "Mapped fields")}</dt>
+                <dd className="mt-1 font-medium tabular-nums">{batchSetup.mappedFields}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-content-tertiary">{t("taskDetail.parallelRows", "Parallel rows")}</dt>
+                <dd className="mt-1 font-medium tabular-nums">{batchSetup.concurrency}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs text-content-tertiary">{t("taskDetail.output", "Output")}</dt>
+                <dd className="mt-1 truncate font-medium" title={batchSetup.outputPath ?? undefined}>
+                  {batchSetup.outputPath ?? t("taskDetail.outputManaged", "Managed by Skeinix")}
+                </dd>
+              </div>
+            </dl>
+          </SectionBlock>
+        )}
 
         {isScheduledRun && (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-            <section className="rounded-md border p-4">
-              <h2 className="text-sm font-medium">
-                {t("tasks.scheduled.configuration", "Schedule configuration")}
-              </h2>
+          <div className="contents">
+            {scheduledQuery.data ? (
+              <OperationalSummary
+                label={t("tasks.scheduled.operationalSummary", "Schedule summary")}
+                className="mt-5"
+                items={[
+                  {
+                    label: t("tasks.scheduled.nextRun", "Next run"),
+                    value: formatTime(scheduledQuery.data.schedule.next_run_at),
+                    tone: task.status === "paused" ? "neutral" : "info",
+                  },
+                  {
+                    label: t("tasks.scheduled.lastStatus", "Last status"),
+                    value: scheduledQuery.data.schedule.last_status
+                      ? t(`tasks.executionStatus.${scheduledQuery.data.schedule.last_status}`, scheduledQuery.data.schedule.last_status)
+                      : "—",
+                    tone: scheduledQuery.data.schedule.last_status === "succeeded" ? "success" : "neutral",
+                  },
+                  {
+                    label: t("tasks.scheduled.runHistory", "Run history"),
+                    value: executions.length,
+                    hint: t("tasks.scheduled.executionsRecorded", "Recorded executions"),
+                    tone: "info",
+                  },
+                ]}
+              />
+            ) : null}
+            <SectionBlock
+              variant="plain"
+              title={t("tasks.scheduled.configuration", "Schedule configuration")}
+              description={t("tasks.scheduled.configurationDescription", "Timing and workflow settings used for each scheduled execution.")}
+            >
               {scheduledQuery.isLoading ? (
                 <div className="mt-3 text-sm text-muted-foreground">
                   {t("tasks.loading", "Loading…")}
                 </div>
               ) : scheduledQuery.data ? (
-                <dl className="mt-3 grid gap-2 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.scheduled.name", "Name")}</dt>
-                    <dd className="text-right font-medium">{scheduledQuery.data.schedule.name}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.col.workflow", "Workflow")}</dt>
-                    <dd className="font-mono text-xs">{scheduledQuery.data.schedule.workflow_id}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.scheduled.timing", "Timing")}</dt>
-                    <dd className="text-right">
-                      {scheduledQuery.data.schedule.schedule_type === "interval"
-                        ? `${scheduledQuery.data.schedule.interval_seconds}s`
-                        : scheduledQuery.data.schedule.cron_expr}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.scheduled.timezone", "Timezone")}</dt>
-                    <dd>{scheduledQuery.data.schedule.timezone}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.scheduled.nextRun", "Next run")}</dt>
-                    <dd>{formatTime(scheduledQuery.data.schedule.next_run_at)}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("tasks.scheduled.lastStatus", "Last status")}</dt>
-                    <dd>{scheduledQuery.data.schedule.last_status ?? "—"}</dd>
-                  </div>
-                </dl>
+                <div data-testid="schedule-configuration-details">
+                  <DetailSummary
+                    className="mt-1 max-w-3xl gap-x-10 gap-y-6"
+                    items={[
+                    {
+                      label: t("tasks.scheduled.name", "Name"),
+                      value: scheduledQuery.data.schedule.name,
+                      wide: true,
+                    },
+                    {
+                      label: t("tasks.col.workflow", "Workflow"),
+                      value: <span className="font-mono text-xs" translate="no">{scheduledQuery.data.schedule.workflow_id}</span>,
+                    },
+                    {
+                      label: t("tasks.scheduled.timing", "Timing"),
+                      value: scheduledQuery.data.schedule.schedule_type === "interval"
+                        ? t("tasks.scheduled.everySeconds", "Every {{count}} seconds", {
+                            count: scheduledQuery.data.schedule.interval_seconds ?? 0,
+                          })
+                        : (
+                          <span>
+                            <span className="block">
+                              {describeCronExpression(
+                                scheduledQuery.data.schedule.cron_expr,
+                                scheduleLocale(i18n.resolvedLanguage),
+                              ).text}
+                            </span>
+                            <code className="mt-1 block font-mono text-xs text-muted-foreground" translate="no">
+                              {scheduledQuery.data.schedule.cron_expr}
+                            </code>
+                          </span>
+                        ),
+                    },
+                    {
+                      label: t("tasks.scheduled.timezone", "Timezone"),
+                      value: <span translate="no">{scheduledQuery.data.schedule.timezone}</span>,
+                    },
+                    {
+                      label: t("tasks.scheduled.fixedInputs", "Fixed inputs"),
+                      value: <span className="tabular-nums">{Object.keys(scheduledQuery.data.schedule.input_preset ?? {}).length}</span>,
+                    },
+                    ]}
+                  />
+                </div>
               ) : (
                 <div className="mt-3 text-sm text-muted-foreground">
                   {t("taskDetail.loadError", "Failed to load this task. It may have been deleted or you may not have access.")}
                 </div>
               )}
-            </section>
+            </SectionBlock>
 
-            <section className="rounded-md border p-4">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-medium">
-                  {t("tasks.scheduled.runHistory", "Run history")}
-                </h2>
-                {executionsQuery.isFetching && (
-                  <span className="text-xs text-muted-foreground">
-                    {t("tasks.loading", "Loading…")}
-                  </span>
-                )}
-              </div>
+            <SectionBlock
+              variant="plain"
+              title={t("tasks.scheduled.runHistory", "Run history")}
+              description={t("tasks.scheduled.runHistoryDescription", "Select an execution to focus its timing, result, and event context.")}
+              actions={executionsQuery.isFetching ? <span className="text-xs text-muted-foreground">{t("tasks.loading", "Loading…")}</span> : null}
+            >
               {executions.length === 0 ? (
-                <div className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                <div className="rounded-md border border-dashed border-edge-subtle p-5 text-sm text-content-tertiary">
                   {t("tasks.scheduled.noRuns", "No executions yet.")}
                 </div>
               ) : (
-                <div className="mt-3 max-h-80 overflow-auto rounded-md border">
+                <div className="max-h-80 overflow-auto rounded-lg border border-edge-subtle">
                   {executions.map((execution) => (
                     <button
                       key={execution.id}
                       type="button"
                       onClick={() => setSelectedExecutionId(execution.id)}
                       className={`grid w-full grid-cols-[96px_1fr_auto] items-center gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-surface-hover ${
-                        selectedExecution?.id === execution.id ? "bg-surface-hover font-medium" : ""
+                        selectedExecution?.id === execution.id ? "bg-focus/[0.06] font-medium ring-1 ring-inset ring-focus/20" : ""
                       }`}
                     >
                       <StatusBadge status={executionStatusTone(execution.status)}>
-                        {execution.status}
+                        {t(`tasks.executionStatus.${execution.status}`, execution.status)}
                       </StatusBadge>
                       <span className="min-w-0">
                         <span className="block truncate text-xs text-muted-foreground">
-                          {execution.trigger_type} · {formatTime(execution.triggered_at)}
+                          {t(`tasks.trigger.${execution.trigger_type}`, execution.trigger_type)} · {formatTime(execution.triggered_at)}
                         </span>
                         {execution.error && (
                           <span className="mt-0.5 block truncate text-xs text-destructive">
@@ -817,7 +1020,7 @@ export function TaskDetailPage() {
                 </div>
               )}
               {selectedExecution && (
-                <div className="mt-3 rounded-md bg-surface-sunken p-3 text-xs">
+                <div className="mt-4 border-t border-edge-subtle pt-4 text-xs">
                   <div className="font-medium text-foreground">
                     {t("tasks.scheduled.selectedRun", "Selected run")}{" "}
                     <span className="font-mono text-muted-foreground">
@@ -827,20 +1030,23 @@ export function TaskDetailPage() {
                   <div className="mt-2 grid gap-1 text-muted-foreground">
                     <div>{t("taskDetail.startedAt", "Started")}: {formatTime(selectedExecution.started_at)}</div>
                     <div>{t("taskDetail.finishedAt", "Finished")}: {formatTime(selectedExecution.finished_at)}</div>
-                    <div>{t("tasks.scheduled.notification", "Notification")}: {String(selectedExecution.notification_state?.status ?? "—")}</div>
+                    <div>{t("tasks.scheduled.notification", "Notification")}: {selectedExecution.notification_state?.status
+                      ? t(`tasks.notificationStatus.${String(selectedExecution.notification_state.status)}`, String(selectedExecution.notification_state.status))
+                      : "—"}</div>
                   </div>
                 </div>
               )}
-            </section>
+            </SectionBlock>
           </div>
         )}
 
         {/* Summary card (finished only) */}
         {summary && (
-          <div className="rounded-md border p-4">
-            <h2 className="mb-3 text-sm font-medium">
-              {t("taskDetail.summary", "Summary")}
-            </h2>
+          <SectionBlock
+            variant="plain"
+            title={t("taskDetail.summary", "Summary")}
+            description={t("taskDetail.summaryDescription", "Outcome of the completed batch and access to its result files.")}
+          >
             <dl className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
               <div className="flex flex-col">
                 <dt className="text-xs text-muted-foreground">
@@ -865,81 +1071,144 @@ export function TaskDetailPage() {
                 </dd>
               </div>
             </dl>
-          </div>
+            {canDownload ? (
+              <p className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground">
+                {t(
+                  "taskDetail.storageHint",
+                  "Result files are stored under this task in Storage. Open Storage to preview individual artifacts or download them here.",
+                )}
+              </p>
+            ) : null}
+          </SectionBlock>
         )}
 
         {/* Error block (failed only) */}
         {task.status === "failed" && task.error && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4">
-            <h2 className="mb-2 text-sm font-medium text-destructive">
-              {t("taskDetail.error", "Error")}
-            </h2>
-            <pre className="whitespace-pre-wrap break-all font-mono text-xs text-destructive">
-              {task.error}
-            </pre>
-          </div>
+          <ActionableError
+            title={t("taskDetail.error", "Task execution failed")}
+            description={humanTaskError(
+              task.error,
+              t(
+                "taskDetail.errorHint",
+                "The task could not finish. Review the input and workflow configuration, then run it again.",
+              ),
+            )}
+            technicalDetails={task.error}
+            technicalDetailsLabel={t("technicalDetails", "Technical details")}
+          />
         )}
 
+        </TabsContent>
+
         {/* Live event log */}
-        <div className="rounded-md border p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-medium">
-              {t("taskDetail.events", "Events")}
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              {stream.done
-                ? t("taskDetail.streamClosed", "Stream closed")
-                : t("taskDetail.streamLive", "Live")}
-            </span>
-          </div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {LEVEL_OPTIONS.map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => setLevelFilter(level)}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
-                  levelFilter === level
-                    ? "border-focus bg-focus text-white"
-                    : "border-edge-structural bg-surface-raised text-muted-foreground hover:bg-surface-hover"
-                }`}
-              >
-                {level}
-              </button>
-            ))}
-            <span className="mx-1 h-4 w-px bg-border" />
-            {(["all", ...EVENT_TYPE_OPTIONS] as const).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setEventTypeFilter(type)}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
-                  eventTypeFilter === type
-                    ? "border-focus bg-focus text-white"
-                    : "border-edge-structural bg-surface-raised text-muted-foreground hover:bg-surface-hover"
-                }`}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-          {stream.events.length === 0 ? (
-            <div className="rounded border border-dashed p-6 text-center text-xs text-muted-foreground">
-              {t("taskDetail.noEvents", "No events yet.")}
+        <TabsContent value="logs" className="mt-0 min-h-0 flex-1 overflow-hidden">
+          <SectionBlock
+            variant="plain"
+            title={t("taskDetail.events", "Events")}
+            description={t("taskDetail.eventsDescription", "Live execution updates. Expand an event only when technical details are needed.")}
+            className="flex h-full min-h-0 flex-col"
+            contentClassName="flex min-h-0 flex-1 flex-col"
+            actions={<span className="text-xs text-muted-foreground">
+                {stream.done
+                  ? t("taskDetail.streamClosed", "Stream closed")
+                  : t("taskDetail.streamLive", "Live")}
+              </span>}
+          >
+          <div className="mb-4" data-testid="task-event-filters">
+          <LogHistoryControls
+            value={logRange}
+            order={logOrder}
+            onValueChange={setLogRange}
+            onOrderChange={setLogOrder}
+          >
+            <div className="min-w-40 flex-1 space-y-1.5 sm:max-w-56">
+              <label className="text-xs font-medium text-content-secondary">
+                {t("taskDetail.severity", "Severity")}
+              </label>
+              <Select value={levelFilter} onValueChange={(value) => setLevelFilter(value as (typeof LEVEL_OPTIONS)[number])}>
+                <SelectTrigger aria-label={t("taskDetail.severity", "Severity")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LEVEL_OPTIONS.map((level) => (
+                    <SelectItem key={level} value={level}>
+                      {t(`taskDetail.level.${level}`, level)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          ) : (
-            <ol className="max-h-96 overflow-auto">
-              {visibleEvents.map((frame) => (
-                <EventRow
-                  key={frame.id}
-                  frame={frame}
-                  formatTime={formatTime}
-                  nowLabel={t("taskDetail.justNow", "Just now")}
-                />
-              ))}
-            </ol>
-          )}
-        </div>
+            <div className="min-w-40 flex-1 space-y-1.5 sm:max-w-56">
+              <label className="text-xs font-medium text-content-secondary">
+                {t("taskDetail.eventType", "Event type")}
+              </label>
+              <Select value={eventTypeFilter} onValueChange={(value) => setEventTypeFilter(value as TaskEventType | "all")}>
+                <SelectTrigger aria-label={t("taskDetail.eventType", "Event type")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                {(["all", ...EVENT_TYPE_OPTIONS] as const).map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {t(`taskDetail.eventType.${type}`, type)}
+                  </SelectItem>
+                ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <span className="pb-2 text-xs text-content-tertiary">
+              {t("logs.loadedVisible", "{{visible}} visible · {{loaded}} loaded", {
+                visible: visibleEvents.length,
+                loaded: allEvents.length,
+              })}
+            </span>
+          </LogHistoryControls>
+          </div>
+          <div
+            ref={eventLogRegionRef}
+            className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2"
+            data-role="task-event-log-scroll-region"
+          >
+            {eventsQuery.isLoading ? (
+              <div className="empty-state">{t("tasks.loading", "Loading…")}</div>
+            ) : eventsQuery.isError ? (
+              <ActionableError
+                title={t("logs.loadError", "Failed to load logs.")}
+                description={t("logs.loadErrorHint", "Check the connection and try again.")}
+                actionLabel={t("retry", "Retry")}
+                onAction={() => void eventsQuery.refetch()}
+                technicalDetails={eventsQuery.error instanceof Error ? eventsQuery.error.message : undefined}
+              />
+            ) : allEvents.length === 0 ? (
+              <div className="rounded border border-dashed p-6 text-center text-xs text-muted-foreground">
+                {t("taskDetail.noEvents", "No events yet.")}
+              </div>
+            ) : visibleEvents.length === 0 ? (
+              <div className="rounded border border-dashed border-edge-subtle p-6 text-center text-xs text-content-tertiary">
+                {t("taskDetail.noMatchingEvents", "No events match these filters.")}
+              </div>
+            ) : (
+              <ol>
+                {visibleEvents.map((frame) => (
+                  <EventRow
+                    key={frame.id}
+                    frame={frame}
+                    formatTime={formatTime}
+                    nowLabel={t("taskDetail.justNow", "Just now")}
+                  />
+                ))}
+              </ol>
+            )}
+            <IncrementalLogLoader
+              hasMore={Boolean(eventsQuery.hasNextPage)}
+              loading={eventsQuery.isFetchingNextPage}
+              onLoadMore={loadMoreEvents}
+              order={logOrder}
+              rootRef={eventLogRegionRef}
+            />
+          </div>
+          </SectionBlock>
+        </TabsContent>
+      </Tabs>
       <ResourceShareDialog
         open={shareOpen}
         onOpenChange={setShareOpen}

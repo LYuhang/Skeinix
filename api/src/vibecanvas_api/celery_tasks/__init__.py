@@ -10,7 +10,6 @@ also achieves registration as a side effect.
 from vibecanvas_api.celery_tasks import batch_exec  # noqa: F401
 from vibecanvas_api.celery_tasks import authorization_reconciler  # noqa: F401
 from vibecanvas_api.celery_tasks import concurrency_reconciler  # noqa: F401
-from vibecanvas_api.celery_tasks import cron_dispatcher  # noqa: F401
 from vibecanvas_api.celery_tasks import deployment_invoke  # noqa: F401
 from vibecanvas_api.celery_tasks import data_purge  # noqa: F401
 from vibecanvas_api.celery_tasks import env_build  # noqa: F401

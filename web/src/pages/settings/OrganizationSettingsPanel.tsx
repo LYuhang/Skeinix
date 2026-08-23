@@ -52,6 +52,7 @@ import {
   type OrganizationMember,
   type OrganizationRole,
   type OrganizationStatus,
+  type ServiceAccount,
 } from '@/lib/api/organizations';
 import { useAuthStore } from '@/stores/auth';
 import { cn } from '@/lib/utils';
@@ -135,6 +136,180 @@ function MemberIdentity({ member }: { member: OrganizationMember }) {
   );
 }
 
+function MemberAccessControls({
+  organizationId,
+  member,
+}: {
+  organizationId: string;
+  member: OrganizationMember;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<{
+    role: OrganizationRole;
+    status: OrganizationStatus;
+  } | null>(null);
+  const [saved, setSaved] = useState(false);
+  const role = draft?.role ?? member.role;
+  const status = draft?.status ?? member.status;
+
+  const update = useMutation({
+    mutationFn: ({ nextRole, nextStatus }: {
+      nextRole: OrganizationRole;
+      nextStatus: OrganizationStatus;
+    }) => updateOrganizationMember(organizationId, member.user_id, {
+      role: nextRole,
+      status: nextStatus,
+    }),
+    onMutate: () => setSaved(false),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: organizationMembersKey(organizationId) });
+      setDraft(null);
+      setSaved(true);
+    },
+    onError: (reason) => {
+      setDraft(null);
+      toast.error(errorMessage(reason));
+    },
+  });
+
+  const feedback = update.isPending
+    ? t('organization.saving', 'Saving…')
+    : update.isError
+      ? t('organization.saveFailed', 'Save failed')
+      : saved
+        ? t('organization.saved', 'Saved')
+        : '';
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <Select
+        value={role}
+        disabled={update.isPending}
+        onValueChange={(nextRole) => {
+          const value = nextRole as OrganizationRole;
+          setDraft({ role: value, status });
+          update.mutate({ nextRole: value, nextStatus: status });
+        }}
+      >
+        <SelectTrigger className="w-36" aria-label={t('organization.role', 'Role')}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {ORGANIZATION_ROLES.map((item) => (
+            <SelectItem key={item} value={item}>{t(`organization.roles.${item}`, item)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select
+        value={status}
+        disabled={update.isPending}
+        onValueChange={(nextStatus) => {
+          const value = nextStatus as OrganizationStatus;
+          setDraft({ role, status: value });
+          update.mutate({ nextRole: role, nextStatus: value });
+        }}
+      >
+        <SelectTrigger className="w-36" aria-label={t('organization.status', 'Status')}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {ORGANIZATION_STATUSES.map((item) => (
+            <SelectItem key={item} value={item}>{t(`organization.statuses.${item}`, item)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <span
+        className={cn(
+          'min-w-16 text-right text-xs',
+          update.isError ? 'text-destructive' : 'text-muted-foreground',
+        )}
+        aria-live="polite"
+      >
+        {feedback}
+      </span>
+    </div>
+  );
+}
+
+function ServiceAccountActions({
+  organizationId,
+  account,
+}: {
+  organizationId: string;
+  account: ServiceAccount;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [confirmAction, setConfirmAction] = useState<'rotate' | 'disable' | null>(null);
+
+  const refresh = () => queryClient.invalidateQueries({
+    queryKey: serviceAccountsKey(organizationId),
+  });
+  const updateStatus = useMutation({
+    mutationFn: (status: 'active' | 'disabled') =>
+      updateServiceAccountStatus(organizationId, account.service_account_id, status),
+    onSuccess: refresh,
+    onError: (reason) => toast.error(errorMessage(reason)),
+  });
+  const rotate = useMutation({
+    mutationFn: () => rotateServiceAccountGeneration(organizationId, account.service_account_id),
+    onSuccess: refresh,
+    onError: (reason) => toast.error(errorMessage(reason)),
+  });
+  const pending = updateStatus.isPending || rotate.isPending;
+
+  const confirm = () => {
+    if (confirmAction === 'rotate') rotate.mutate();
+    if (confirmAction === 'disable') updateStatus.mutate('disabled');
+    setConfirmAction(null);
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" disabled={pending} onClick={() => setConfirmAction('rotate')}>
+          <RotateCw className={cn(rotate.isPending && 'animate-spin')} />
+          {rotate.isPending ? t('organization.rotating', 'Rotating…') : t('organization.rotate', 'Rotate')}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pending}
+          onClick={() => {
+            if (account.status === 'active') setConfirmAction('disable');
+            else updateStatus.mutate('active');
+          }}
+        >
+          {updateStatus.isPending
+            ? t('organization.saving', 'Saving…')
+            : account.status === 'active'
+              ? t('organization.disable', 'Disable')
+              : t('organization.enable', 'Enable')}
+        </Button>
+      </div>
+      <Dialog open={confirmAction !== null} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {confirmAction === 'rotate'
+                ? t('organization.rotateServiceAccountTitle', 'Rotate this service account?')
+                : t('organization.disableServiceAccountTitle', 'Disable this service account?')}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction === 'rotate'
+                ? t('organization.rotateServiceAccountDescription', 'Existing credentials for this service account will stop working. Tasks, deployments, or integrations using them must be updated.')
+                : t('organization.disableServiceAccountDescription', 'Tasks, deployments, or integrations using this identity will fail until it is enabled again.')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmAction(null)}>{t('common.cancel', 'Cancel')}</Button>
+            <Button variant="destructive" onClick={confirm}>
+              {confirmAction === 'rotate' ? t('organization.rotate', 'Rotate') : t('organization.disable', 'Disable')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export function OrganizationSettingsPanel() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -189,18 +364,6 @@ export function OrganizationSettingsPanel() {
     queryKey: groupMembersKey(activeOrganizationId, effectiveGroupId),
     queryFn: () => listGroupMembers(activeOrganizationId, effectiveGroupId),
     enabled: Boolean(activeOrganizationId && effectiveGroupId && canViewDirectory),
-  });
-
-  const updateMember = useMutation({
-    mutationFn: ({ member, role, status }: {
-      member: OrganizationMember;
-      role: OrganizationRole;
-      status: OrganizationStatus;
-    }) => updateOrganizationMember(activeOrganizationId, member.user_id, { role, status }),
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: organizationMembersKey(activeOrganizationId),
-    }),
-    onError: (reason) => toast.error(errorMessage(reason)),
   });
 
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
@@ -258,22 +421,6 @@ export function OrganizationSettingsPanel() {
     }),
     onError: (reason) => toast.error(errorMessage(reason)),
   });
-  const updateServiceAccount = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: 'active' | 'disabled' }) =>
-      updateServiceAccountStatus(activeOrganizationId, id, status),
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: serviceAccountsKey(activeOrganizationId),
-    }),
-    onError: (reason) => toast.error(errorMessage(reason)),
-  });
-  const rotateServiceAccount = useMutation({
-    mutationFn: (id: string) => rotateServiceAccountGeneration(activeOrganizationId, id),
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: serviceAccountsKey(activeOrganizationId),
-    }),
-    onError: (reason) => toast.error(errorMessage(reason)),
-  });
-
   if (organizations.isPending) {
     return <EmptyState>{t('common.loading', 'Loading…')}</EmptyState>;
   }
@@ -431,40 +578,7 @@ export function OrganizationSettingsPanel() {
                         <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">SCIM</span>
                       ) : null}
                       {editable ? (
-                        <>
-                          <Select
-                            value={member.role}
-                            disabled={updateMember.isPending}
-                            onValueChange={(nextRole) => updateMember.mutate({
-                              member,
-                              role: nextRole as OrganizationRole,
-                              status: member.status,
-                            })}
-                          >
-                            <SelectTrigger className="w-36" aria-label={t('organization.role', 'Role')}><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {ORGANIZATION_ROLES.map((item) => (
-                                <SelectItem key={item} value={item}>{t(`organization.roles.${item}`, item)}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={member.status}
-                            disabled={updateMember.isPending}
-                            onValueChange={(nextStatus) => updateMember.mutate({
-                              member,
-                              role: member.role,
-                              status: nextStatus as OrganizationStatus,
-                            })}
-                          >
-                            <SelectTrigger className="w-36" aria-label={t('organization.status', 'Status')}><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {ORGANIZATION_STATUSES.map((item) => (
-                                <SelectItem key={item} value={item}>{t(`organization.statuses.${item}`, item)}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </>
+                        <MemberAccessControls organizationId={activeOrganizationId} member={member} />
                       ) : (
                         <div className="flex items-center gap-2">
                           <RoleBadge role={member.role} />
@@ -569,13 +683,10 @@ export function OrganizationSettingsPanel() {
                 {serviceAccounts.data?.map((account) => (
                   <div key={account.service_account_id} className="flex flex-wrap items-center gap-3 border-b border-edge-subtle px-4 py-3 last:border-b-0">
                     <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-surface-sunken text-content-secondary"><LockKeyhole className="size-4" /></span>
-                    <div className="min-w-[220px] flex-1"><p className="truncate text-sm font-medium">{account.name}</p><p className="truncate text-xs text-muted-foreground">{account.kind} · {account.owner_resource_type}:{account.owner_resource_id} · generation {account.generation}</p></div>
+                    <div className="min-w-[220px] flex-1"><p className="truncate text-sm font-medium">{account.name}</p><p className="truncate text-xs text-muted-foreground">{account.kind} · {account.owner_resource_type}:{account.owner_resource_id} · {t('organization.serviceAccounts.generation', 'generation')} {account.generation}</p></div>
                     <StatusBadge status={account.status} />
                     {canManagePolicy ? (
-                      <>
-                        <Button variant="outline" size="sm" disabled={rotateServiceAccount.isPending} onClick={() => rotateServiceAccount.mutate(account.service_account_id)}><RotateCw />{t('organization.rotate', 'Rotate')}</Button>
-                        <Button variant="outline" size="sm" disabled={updateServiceAccount.isPending} onClick={() => updateServiceAccount.mutate({ id: account.service_account_id, status: account.status === 'active' ? 'disabled' : 'active' })}>{account.status === 'active' ? t('organization.disable', 'Disable') : t('organization.enable', 'Enable')}</Button>
-                      </>
+                      <ServiceAccountActions organizationId={activeOrganizationId} account={account} />
                     ) : null}
                   </div>
                 ))}

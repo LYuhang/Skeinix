@@ -27,18 +27,24 @@ _CONTENT_TYPE_BY_EXT: dict[str, str] = {
     # text
     ".txt": "text/plain", ".log": "text/plain",
     ".yaml": "text/plain", ".yml": "text/plain",
-    ".md": "text/markdown",
+    ".md": "text/markdown", ".markdown": "text/markdown",
     ".py": "text/python",
     ".sh": "text/shell",
     ".html": "text/html", ".htm": "text/html",
-    ".json": "application/json",
+    ".json": "application/json", ".xml": "application/xml",
     # tables (line-oriented; compaction + frontend treat these as inline text)
-    ".csv": "table/csv", ".tsv": "table/tsv", ".jsonl": "table/jsonl",
+    ".csv": "table/csv", ".tsv": "table/tsv",
+    ".jsonl": "table/jsonl", ".ndjson": "table/jsonl",
     # images
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".webp": "image/webp", ".gif": "image/gif",
-    # audio / documents
-    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".pdf": "application/pdf",
+    ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
+    # audio / video / documents
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4",
+    ".webm": "video/webm", ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".drawio": "application/vnd.jgraph.mxfile",
 }
 
 _BINARY_SNIFF_BYTES = 8192

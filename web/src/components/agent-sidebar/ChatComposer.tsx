@@ -33,7 +33,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
-import { Blocks, BrainCircuit, Cpu, FileText, Image, Loader2, Paperclip, RotateCcw, Send, SlidersHorizontal, Square, Video, X } from 'lucide-react';
+import { Blocks, BrainCircuit, FileText, Image, Loader2, Paperclip, RotateCcw, Send, SlidersHorizontal, Square, Video, X } from 'lucide-react';
 import { useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -43,9 +43,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -59,7 +57,7 @@ import {
 import { runAgentTurn } from '@/lib/api/sse/run-agent-turn';
 import type { HitlContinueControl } from '@/lib/api/sse/agent-stream';
 import { useAgentRuntimeCapabilities } from '@/lib/api/queries/agent-runtime';
-import type { AgentRuntimeCapabilities, RuntimeModelOption } from '@/lib/api/agent-runtime';
+import type { AgentRuntimeCapabilities } from '@/lib/api/agent-runtime';
 import type { AgentSettings, ApprovalMode, ReasoningEffort } from '@/stores/agent-settings';
 import {
   getChatAgentSettings,
@@ -100,6 +98,7 @@ import {
   slashCommandsFromCatalog,
   type SlashCommand,
 } from './slash-commands';
+import { RuntimeModelPicker } from './RuntimeModelPicker';
 
 /**
  * URL pattern for the pinned-version route (T14). When the current
@@ -117,8 +116,6 @@ const PINNED_VERSION_PATHNAME_RE =
 type Attachment = components['schemas']['Attachment'];
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
-/** Radix Select forbids an empty-string value — use a sentinel for platform default. */
-const NO_MODEL_AVAILABLE = '__no_model_available__';
 const MAX_ATTACHMENTS_PER_TURN = 12;
 
 interface PendingUpload {
@@ -156,6 +153,8 @@ export interface ChatComposerProps {
   chatStateReady?: boolean;
   /** External product gate, e.g. a browser chat leased by another window. */
   disabledReason?: string | null;
+  /** Reports whether text, attachments, or an in-flight upload occupies the draft. */
+  onDraftPresenceChange?: (hasDraft: boolean) => void;
 }
 
 export function ChatComposer({
@@ -170,6 +169,7 @@ export function ChatComposer({
   historyReady = true,
   chatStateReady = true,
   disabledReason = null,
+  onDraftPresenceChange,
 }: ChatComposerProps) {
   const { t } = useTranslation();
   const account = useAuthStore((state) => state.user);
@@ -198,7 +198,7 @@ export function ChatComposer({
     chatId ? state.entries[chatId] : undefined,
   );
   const initializeChatAgentSettings = useChatAgentSettingsStore((state) => state.initializeDraft);
-  const hydrateLockedChatAgentSettings = useChatAgentSettingsStore((state) => state.hydrateLocked);
+  const hydrateBoundChatAgentSettings = useChatAgentSettingsStore((state) => state.hydrateBound);
   const setChatAgentSettings = useChatAgentSettingsStore((state) => state.set);
   const updateChatAgentSettings = useCallback((patch: Partial<AgentSettings>) => {
     if (chatId) setChatAgentSettings(chatId, patch);
@@ -207,8 +207,8 @@ export function ChatComposer({
     if (!chatId || !runtimeCapabilitiesQuery.data) return;
     const capabilities = runtimeCapabilitiesQuery.data;
     const bound = capabilities.bound_agent_settings;
-    if (capabilities.chat_configuration_locked && bound) {
-      hydrateLockedChatAgentSettings(chatId, {
+    if (bound) {
+      hydrateBoundChatAgentSettings(chatId, {
         modelId: bound.model_id,
         temperature: bound.temperature,
         maxTokens: bound.max_tokens,
@@ -220,7 +220,7 @@ export function ChatComposer({
     initializeChatAgentSettings(chatId);
   }, [
     chatId,
-    hydrateLockedChatAgentSettings,
+    hydrateBoundChatAgentSettings,
     initializeChatAgentSettings,
     runtimeCapabilitiesQuery.data,
   ]);
@@ -340,6 +340,11 @@ export function ChatComposer({
     () => uploads.filter((upload) => upload.composerKey === composerStateKey),
     [composerStateKey, uploads],
   );
+  useEffect(() => {
+    onDraftPresenceChange?.(
+      value.trim().length > 0 || pendingAttachments.length > 0 || activeUploads.length > 0,
+    );
+  }, [activeUploads.length, onDraftPresenceChange, pendingAttachments.length, value]);
   const removeAttachmentAt = useChatStreamStore((s) => s.removeAttachmentAt);
   const draft = useChatStreamStore((s) => s.draft);
   const consumeDraft = useChatStreamStore((s) => s.consumeDraft);
@@ -624,7 +629,7 @@ export function ChatComposer({
       content = value.trim();
     } else {
       // MAIN APP: send the raw text so the BACKEND owns command parsing
-      // (`/build` → additive turn; `/browser` → refused with a NOTICE toast).
+      // (`/workflow` → additive turn; `/browser` → refused with a NOTICE toast).
       content = value.trim();
       mode = undefined;
     }
@@ -1132,7 +1137,6 @@ export function ChatComposer({
                 capabilities={runtimeCapabilitiesQuery.data}
                 loading={runtimeCapabilitiesQuery.isLoading}
                 settings={chatAgentSettings?.settings}
-                locked={chatAgentSettings?.locked ?? false}
                 onChange={updateChatAgentSettings}
                 disabled={isStreaming}
               />
@@ -1210,7 +1214,7 @@ export function ChatComposer({
               capabilities={runtimeCapabilitiesQuery.data}
               settings={chatAgentSettings?.settings}
               onChange={updateChatAgentSettings}
-              disabled={isStreaming || (chatAgentSettings?.locked ?? false)}
+              disabled={isStreaming}
             />
             <ComposerMcpPicker
               servers={mcpServersQuery.data ?? []}
@@ -1245,7 +1249,7 @@ export function ChatComposer({
                 capabilities={runtimeCapabilitiesQuery.data}
                 settings={chatAgentSettings?.settings}
                 onChange={updateChatAgentSettings}
-                disabled={isStreaming || (chatAgentSettings?.locked ?? false)}
+                disabled={isStreaming}
               />
               <ComposerMcpPicker
                 servers={mcpServersQuery.data ?? []}
@@ -1428,128 +1432,6 @@ function ComposerAttachmentPicker({
   );
 }
 
-function InlineAgentModelPicker({
-  capabilities,
-  loading,
-  settings,
-  onChange,
-  locked,
-  disabled,
-}: {
-  capabilities?: AgentRuntimeCapabilities;
-  loading: boolean;
-  settings?: AgentSettings;
-  onChange: (patch: Partial<AgentSettings>) => void;
-  locked: boolean;
-  disabled?: boolean;
-}) {
-  const { t } = useTranslation();
-  const modelId = settings?.modelId ?? null;
-  const crossRuntimeSelection = !!capabilities
-    && isModelIdFromDifferentRuntime(modelId, capabilities.runtime_type);
-  const effectiveModelId = crossRuntimeSelection ? null : modelId;
-  const catalogDefaultModelId = capabilities?.models.some(
-    (model) => model.id === capabilities.default_model_id,
-  )
-    ? capabilities.default_model_id
-    : null;
-  const selectedValue = effectiveModelId
-    ?? catalogDefaultModelId
-    ?? NO_MODEL_AVAILABLE;
-  const selectedMissing = !!effectiveModelId && !capabilities?.models.some(
-    (model) => model.id === effectiveModelId,
-  );
-  const selectedModel = capabilities?.models.find(
-    (model) => model.id === selectedValue,
-  );
-  const modelOptions = capabilities?.models ?? [];
-  const codexAccountModels = capabilities?.runtime_type === 'codex'
-    ? modelOptions.filter((model) => model.id.startsWith('codex:account:'))
-    : [];
-  const codexApiModels = capabilities?.runtime_type === 'codex'
-    ? modelOptions.filter((model) => !model.id.startsWith('codex:account:'))
-    : [];
-  const renderModelOption = (model: RuntimeModelOption) => (
-    <SelectItem
-      key={model.id}
-      value={model.id}
-      title={`${model.label}${model.provider ? ` (${model.provider})` : ''}`}
-    >
-      {model.label}{model.provider ? ` (${model.provider})` : ''}
-    </SelectItem>
-  );
-  const selectedModelLabel = selectedMissing
-    ? `${effectiveModelId} (${t('agent_settings.unavailable', 'unavailable')})`
-    : selectedModel
-      ? `${selectedModel.label}${selectedModel.provider ? ` (${selectedModel.provider})` : ''}`
-      : t('agent_settings.no_model', 'No model configured');
-
-  return (
-    <Select
-      value={selectedValue}
-      onValueChange={(next) => {
-        if (next === NO_MODEL_AVAILABLE) return;
-        onChange({
-          modelId: next,
-          // Effort support is model-specific. Reset first and let the user pick
-          // from the newly selected model's advertised ordered catalog.
-          reasoningEffort: null,
-        });
-      }}
-      disabled={disabled || locked || loading || !capabilities?.runtime_available}
-    >
-      <SelectTrigger
-        aria-label={t('agent_settings.inline_model', 'Model')}
-        title={locked
-          ? t('agent_settings.chat_locked', '{{value}} · Fixed for this chat', { value: selectedModelLabel })
-          : selectedModelLabel}
-        className="h-8 w-[132px] min-w-0 gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs shadow-none hover:bg-muted/45 focus:ring-0 disabled:bg-transparent sm:w-[158px] [&>span]:truncate"
-        data-role="chat-model-select"
-      >
-        <Cpu className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <SelectValue placeholder={t('agent_settings.inline_model', 'Model')} />
-      </SelectTrigger>
-      <SelectContent align="start" className="max-w-[300px]">
-        {(capabilities?.models.length ?? 0) === 0 ? (
-          <SelectItem value={NO_MODEL_AVAILABLE} disabled>
-            {t('agent_settings.no_model', 'No model configured')}
-          </SelectItem>
-        ) : null}
-        {selectedMissing ? (
-          <SelectItem value={effectiveModelId} title={selectedModelLabel}>
-            {effectiveModelId} ({t('agent_settings.unavailable', 'unavailable')})
-          </SelectItem>
-        ) : null}
-        {capabilities?.runtime_type === 'codex' ? (
-          <>
-            {codexAccountModels.length > 0 ? (
-              <SelectGroup>
-                <SelectLabel>
-                  {t('agent_settings.codex_account_models', 'OpenAI account')}
-                </SelectLabel>
-                {codexAccountModels.map(renderModelOption)}
-              </SelectGroup>
-            ) : null}
-            {codexApiModels.length > 0 ? (
-              <SelectGroup>
-                <SelectLabel>
-                  {t('agent_settings.codex_api_models', 'OpenAI API')}
-                </SelectLabel>
-                {codexApiModels.map(renderModelOption)}
-              </SelectGroup>
-            ) : null}
-          </>
-        ) : modelOptions.map(renderModelOption)}
-        {loading ? (
-          <SelectItem value="__loading__" disabled>
-            {t('agent_settings.loading_models', 'Loading models…')}
-          </SelectItem>
-        ) : null}
-      </SelectContent>
-    </Select>
-  );
-}
-
 function isModelIdFromDifferentRuntime(
   modelId: string | null,
   runtimeType: AgentRuntimeCapabilities['runtime_type'],
@@ -1564,20 +1446,18 @@ function ComposerRuntimeSelectors({
   loading,
   settings,
   onChange,
-  locked,
   disabled,
 }: {
   capabilities?: AgentRuntimeCapabilities;
   loading: boolean;
   settings?: AgentSettings;
   onChange: (patch: Partial<AgentSettings>) => void;
-  locked: boolean;
   disabled?: boolean;
 }) {
   const modelId = settings?.modelId ?? null;
   const effort = settings?.reasoningEffort ?? null;
   useEffect(() => {
-    if (!capabilities || locked || !settings) return;
+    if (!capabilities || !settings) return;
     if (capabilities.runtime_type === 'codex') {
       if (
         settings.temperature != null ||
@@ -1596,9 +1476,8 @@ function ComposerRuntimeSelectors({
         ? capabilities.default_model_id
         : null;
       // A saved default from another Runtime must never leak into a fresh
-      // draft. Existing chats are protected by `locked` and keep their exact
-      // server-side binding; same-Runtime unavailable credentials remain
-      // visible so the user can repair them explicitly.
+      // draft. Same-Runtime unavailable credentials remain visible so the
+      // user can repair them explicitly.
       onChange({ modelId: catalogDefaultModelId, reasoningEffort: null });
       return;
     }
@@ -1623,14 +1502,13 @@ function ComposerRuntimeSelectors({
     ) {
       onChange({ reasoningEffort: null });
     }
-  }, [capabilities, effort, locked, modelId, onChange, settings]);
+  }, [capabilities, effort, modelId, onChange, settings]);
   return (
-    <InlineAgentModelPicker
+    <RuntimeModelPicker
       capabilities={capabilities}
       loading={loading}
       settings={settings}
       onChange={onChange}
-      locked={locked}
       disabled={disabled}
     />
   );

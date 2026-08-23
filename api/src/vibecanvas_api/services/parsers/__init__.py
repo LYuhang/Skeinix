@@ -34,13 +34,6 @@ PARSER_REGISTRY: dict[str, type[Parser]] = {
     "txt": TxtParser,
 }
 
-SUPPORTED_FILE_EXTENSIONS = (
-    ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".tsv",
-    ".json", ".html", ".htm", ".md", ".markdown", ".txt",
-    ".log", ".rst",
-)
-
-
 def detect_parser_type(filename: str, mime_type: str) -> str | None:
     """Return parser_type or None for unsupported.
 
@@ -84,7 +77,6 @@ def detect_parser_type(filename: str, mime_type: str) -> str | None:
 
 __all__ = [
     "PARSER_REGISTRY",
-    "SUPPORTED_FILE_EXTENSIONS",
     "detect_parser_type",
     "Parser",
     "ParsedSegment",

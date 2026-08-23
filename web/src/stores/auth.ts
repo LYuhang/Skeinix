@@ -31,7 +31,6 @@ import {
   resetOrganizationScopedClientState,
 } from '@/lib/auth/reset-client-state';
 import { sessionFetch } from '@/lib/api/session-fetch';
-import type { AuthenticationResponseJSON, PublicKeyCredentialRequestOptionsJSON } from '@/lib/api/mfa';
 
 const API_BASE = getApiBase();
 
@@ -58,13 +57,6 @@ export interface PrivilegedAccessProjection {
   expiresAt: string;
 }
 
-export interface LoginMfaRequired {
-  loginChallenge: string;
-  methods: Array<'webauthn' | 'totp' | 'recovery'>;
-  webauthnOptions: PublicKeyCredentialRequestOptionsJSON | null;
-  expiresAt: string;
-}
-
 export interface AuthState {
   /** @deprecated Raw browser Sessions are HttpOnly; this is always null. */
   token: string | null;
@@ -76,16 +68,8 @@ export interface AuthState {
   bootstrapped: boolean;
   /** Hide organization-scoped surfaces while the server rotates context. */
   organizationSwitching: boolean;
-  /** POST /auth/login; returns a pre-Session challenge when MFA is enabled. */
-  login: (email: string, password: string) => Promise<LoginMfaRequired | null>;
-  completeLoginMfaCode: (challenge: string, code: string) => Promise<void>;
-  completeLoginMfaWebAuthn: (
-    challenge: string,
-    credential: AuthenticationResponseJSON,
-  ) => Promise<void>;
-  refreshLoginWebAuthnOptions: (
-    challenge: string,
-  ) => Promise<PublicKeyCredentialRequestOptionsJSON>;
+  /** POST /auth/login and hydrate the resulting Session. */
+  login: (email: string, password: string) => Promise<void>;
   /** POST /auth/register. The API auto-logs the new user in. */
   signup: (email: string, password: string, username: string) => Promise<void>;
   /** POST /auth/logout (best-effort), then clear local state. */
@@ -165,14 +149,6 @@ interface LoginResponse {
   user: { user_id: string; email: string; display_name?: string };
 }
 
-interface LoginMfaResponse {
-  mfa_required: true;
-  login_challenge: string;
-  methods: Array<'webauthn' | 'totp' | 'recovery'>;
-  webauthn_options: PublicKeyCredentialRequestOptionsJSON | null;
-  expires_at: string;
-}
-
 interface MeResponse {
   user_id: string;
   tenant_id: string;
@@ -194,14 +170,6 @@ interface MeResponse {
 interface OrganizationSwitchResponse {
   organization_id: string;
   session_generation: number;
-}
-
-function isLoginMfaResponse(value: unknown): value is LoginMfaResponse {
-  return Boolean(
-    value
-      && typeof value === 'object'
-      && (value as { mfa_required?: unknown }).mfa_required === true,
-  );
 }
 
 interface AuthProjection {
@@ -258,42 +226,9 @@ export const useAuthStore = create<AuthState>()(
       });
       set({ token: null, authenticated: false, user: null, sessionAudience: null, privilegedAccess: null, organizationSwitching: false });
       resetAuthScopedClientState();
-      if (isLoginMfaResponse(data)) {
-        return {
-          loginChallenge: data.login_challenge,
-          methods: data.methods,
-          webauthnOptions: data.webauthn_options,
-          expiresAt: data.expires_at,
-        };
-      }
       const projection = await authenticatedProjection(data as LoginResponse);
       set({ token: null, authenticated: true, ...projection, bootstrapped: true, organizationSwitching: false });
-      return null;
     },
-
-    completeLoginMfaCode: async (challenge, code) => {
-      const data = (await authPost('/api/v1/auth/login/mfa/totp', {
-        login_challenge: challenge,
-        code,
-      })) as LoginResponse;
-      const projection = await authenticatedProjection(data);
-      set({ token: null, authenticated: true, ...projection, bootstrapped: true, organizationSwitching: false });
-    },
-
-    completeLoginMfaWebAuthn: async (challenge, credential) => {
-      const data = (await authPost('/api/v1/auth/login/mfa/webauthn/verify', {
-        login_challenge: challenge,
-        credential,
-      })) as LoginResponse;
-      const projection = await authenticatedProjection(data);
-      set({ token: null, authenticated: true, ...projection, bootstrapped: true, organizationSwitching: false });
-    },
-
-    refreshLoginWebAuthnOptions: async (challenge) => (
-      await authPost('/api/v1/auth/login/mfa/webauthn/options', {
-        login_challenge: challenge,
-      })
-    ) as PublicKeyCredentialRequestOptionsJSON,
 
     signup: async (email, password, username) => {
       const data = (await authPost('/api/v1/auth/register', {

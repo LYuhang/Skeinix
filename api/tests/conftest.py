@@ -205,19 +205,26 @@ def _find_test_pg_ctl() -> str:
 # with a mirrored Windows/VPN network can make port-for's localhost probe hang;
 # CI or a developer may pin an isolated port without changing the fixture.
 _TEST_POSTGRESQL_PORT = os.environ.get("SKEINIX_TEST_PG_PORT", "").strip()
-postgresql_proc = factories.postgresql_proc(
-    executable=_find_test_pg_ctl(),
-    # 127.0.0.1 may be intercepted by a mirrored Windows VPN and leave a
-    # closed-port probe in SYN_SENT until timeout. Another loopback address is
-    # still local-only but fails/accepts immediately on both Linux and WSL.
-    host=os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2"),
-    port=int(_TEST_POSTGRESQL_PORT) if _TEST_POSTGRESQL_PORT else None,
-    unixsocketdir=os.environ.get("SKEINIX_TEST_PG_SOCKET_DIR", "/tmp"),
-    postgres_options=(
-        "-c listen_addresses="
-        + os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2")
-    ),
-)
+if os.environ.get("SKEINIX_TEST_PG_URL", "").strip():
+    @pytest.fixture(scope="session")
+    def postgresql_proc():
+        raise RuntimeError(
+            "postgresql_proc is unavailable when SKEINIX_TEST_PG_URL is set"
+        )
+else:
+    postgresql_proc = factories.postgresql_proc(
+        executable=_find_test_pg_ctl(),
+        # 127.0.0.1 may be intercepted by a mirrored Windows VPN and leave a
+        # closed-port probe in SYN_SENT until timeout. Another loopback address
+        # is still local-only but fails/accepts immediately on Linux and WSL.
+        host=os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2"),
+        port=int(_TEST_POSTGRESQL_PORT) if _TEST_POSTGRESQL_PORT else None,
+        unixsocketdir=os.environ.get("SKEINIX_TEST_PG_SOCKET_DIR", "/tmp"),
+        postgres_options=(
+            "-c listen_addresses="
+            + os.environ.get("SKEINIX_TEST_PG_HOST", "127.0.0.2")
+        ),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -230,16 +237,58 @@ def monkeypatch_session():
 
 
 @pytest.fixture(scope="session")
-def pg_url(postgresql_proc) -> str:
-    """Session-scoped asyncpg SQLAlchemy URL for a dedicated test database
-    created on the pytest-postgresql-managed server.
+def pg_url(request) -> str:
+    """Return a superuser URL for an isolated, disposable test database.
 
-    pytest-postgresql's DatabaseJanitor is the supported way to
-    create/drop a database on the running server. v8 constructor is
-    keyword-only: user, host, port, version, dbname, password.
+    The default starts a local ``pytest-postgresql`` process. A host which
+    intentionally keeps PostgreSQL in Docker may set ``SKEINIX_TEST_PG_URL``
+    to an existing cluster's administrative database. That mode creates and
+    later drops only ``SKEINIX_TEST_PG_DATABASE``; the database named by the
+    administrative URL is never migrated or truncated.
     """
-    proc = postgresql_proc
-    dbname = "vibecanvas_test"
+    external_url = os.environ.get("SKEINIX_TEST_PG_URL", "").strip()
+    dbname = os.environ.get(
+        "SKEINIX_TEST_PG_DATABASE", "vibecanvas_test"
+    ).strip()
+    if not dbname or not dbname.replace("_", "").isalnum():
+        raise RuntimeError(
+            "SKEINIX_TEST_PG_DATABASE must contain only letters, digits, "
+            "and underscores"
+        )
+
+    if external_url:
+        admin_url = make_url(external_url)
+        if not admin_url.database:
+            raise RuntimeError("SKEINIX_TEST_PG_URL must name an admin database")
+        sync_admin_url = admin_url.set(drivername="postgresql").render_as_string(
+            hide_password=False
+        )
+
+        def _drop_database(conn) -> None:
+            conn.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = %s AND pid <> pg_backend_pid()",
+                (dbname,),
+            )
+            conn.execute(f'DROP DATABASE IF EXISTS "{dbname}"')
+
+        with psycopg.connect(sync_admin_url, autocommit=True) as conn:
+            _drop_database(conn)
+            conn.execute(
+                f'CREATE DATABASE "{dbname}" OWNER "vibecanvas_app"'
+            )
+        try:
+            yield admin_url.set(
+                drivername="postgresql+asyncpg", database=dbname
+            ).render_as_string(hide_password=False)
+        finally:
+            with psycopg.connect(sync_admin_url, autocommit=True) as conn:
+                _drop_database(conn)
+        return
+
+    # Resolve the process fixture lazily so external-cluster mode does not
+    # require local PostgreSQL server binaries merely to import conftest.py.
+    proc = request.getfixturevalue("postgresql_proc")
     with DatabaseJanitor(
         user=proc.user,
         host=proc.host,
@@ -273,12 +322,41 @@ def _migrate(pg_url, monkeypatch_session):
     """
     su_url = make_url(pg_url)
     dbname = su_url.database
-    # 1. Create the non-superuser app role via a superuser connection.
+    external_cluster = bool(os.environ.get("SKEINIX_TEST_PG_URL", "").strip())
+    app_password = (
+        os.environ.get("SKEINIX_TEST_APP_PASSWORD", "").strip()
+        if external_cluster
+        else "vibecanvas_app"
+    )
+    if external_cluster and not app_password:
+        raise RuntimeError(
+            "SKEINIX_TEST_APP_PASSWORD is required with SKEINIX_TEST_PG_URL"
+        )
+
+    # 1. Local ephemeral clusters get a fresh app role. External-cluster mode
+    # reuses and validates the deployment role; it must never drop or alter a
+    # role that can own product data in another database.
     with psycopg.connect(pg_url.replace("+asyncpg", ""),
                          autocommit=True) as conn:
-        conn.execute("DROP ROLE IF EXISTS vibecanvas_app")
-        conn.execute("CREATE ROLE vibecanvas_app LOGIN PASSWORD "
-                     "'vibecanvas_app' NOSUPERUSER NOBYPASSRLS")
+        if external_cluster:
+            role = conn.execute(
+                "SELECT rolcanlogin, rolsuper, rolbypassrls FROM pg_roles "
+                "WHERE rolname = 'vibecanvas_app'"
+            ).fetchone()
+            if role is None:
+                raise RuntimeError(
+                    "external test cluster must provide vibecanvas_app"
+                )
+            if not role[0] or role[1] or role[2]:
+                raise RuntimeError(
+                    "vibecanvas_app must be LOGIN, NOSUPERUSER, NOBYPASSRLS"
+                )
+        else:
+            conn.execute("DROP ROLE IF EXISTS vibecanvas_app")
+            conn.execute(
+                "CREATE ROLE vibecanvas_app LOGIN PASSWORD "
+                "'vibecanvas_app' NOSUPERUSER NOBYPASSRLS"
+            )
         # CREATE on the DB → can run `CREATE EXTENSION pgcrypto` (a
         # trusted extension); ALL on schema public → can create tables.
         # NOTE: these test grants are deliberately broader than a hardened
@@ -290,7 +368,7 @@ def _migrate(pg_url, monkeypatch_session):
         conn.execute("GRANT ALL ON SCHEMA public TO vibecanvas_app")
     # 2. App-role URL — migrations + the app both connect as it.
     app_url = su_url.set(username="vibecanvas_app",
-                         password="vibecanvas_app").render_as_string(
+                         password=app_password).render_as_string(
         hide_password=False)
     monkeypatch_session.setenv("DATABASE_URL", app_url)
     _live_config.database.url = app_url

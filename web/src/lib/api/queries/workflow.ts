@@ -40,14 +40,18 @@ export const useWorkflow = (wfId: string) =>
   });
 
 /**
- * VFS 2c: version history for the left Explorer. The endpoint is in the
- * generated schema, so this uses the typed apiClient. The payload has NO
- * active marker — the section marks "current" by comparing (major,sub) to
- * the workflow's active_major/active_sub.
+ * Version history intentionally lives outside the `['workflow', wfId]`
+ * namespace. Workflow execution and chat SSE events invalidate the live
+ * snapshot frequently; nesting history below that prefix caused every event
+ * to refetch the complete version tree and could make the Explorer unresponsive.
+ * History-changing mutations invalidate this key explicitly instead.
  */
+export const workflowVersionsQueryKey = (wfId: string | undefined) =>
+  ['workflow-versions', wfId] as const;
+
 export const useWorkflowVersions = (wfId: string | undefined) =>
   useQuery({
-    queryKey: ['workflow', wfId, 'versions'],
+    queryKey: workflowVersionsQueryKey(wfId),
     queryFn: async () => {
       const { data, error } = await apiClient.GET(
         '/api/v1/workflows/{wf_id}/versions',

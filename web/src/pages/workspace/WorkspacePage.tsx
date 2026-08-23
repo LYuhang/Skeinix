@@ -53,6 +53,11 @@ import { WorkflowPagination } from '@/pages/workspace/WorkflowPagination';
 import { ManagementPageShell, ManagementToolbar } from '@/components/layout/management-page-shell';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { SharedResourceList } from '@/components/resources/SharedResourceList';
+import {
+  ResourceScopeSwitch,
+  type ResourceListScope,
+} from '@/components/resources/ResourceScopeSwitch';
 
 type WorkflowMetaOut = components['schemas']['WorkflowMetaOut'];
 
@@ -97,6 +102,9 @@ export function WorkspacePage() {
     useState<WorkflowMetaOut | null>(null);
 
   const search = searchParams.get('q') ?? '';
+  const resourceScope: ResourceListScope = searchParams.get('scope') === 'shared'
+    ? 'shared'
+    : 'owned';
   const sortValue = searchParams.get('sort');
   const sortOption: SortOption = sortValue === 'updated_asc' || sortValue === 'name_asc' || sortValue === 'name_desc'
     ? sortValue
@@ -114,9 +122,12 @@ export function WorkspacePage() {
   const pageWorkspace = useWorkspaceList(
     PAGE_SIZE,
     page * PAGE_SIZE,
-    !needsCatalog,
+    resourceScope === 'owned' && !needsCatalog,
   );
-  const catalogWorkspace = useWorkspaceCatalog(needsCatalog, FETCH_LIMIT);
+  const catalogWorkspace = useWorkspaceCatalog(
+    resourceScope === 'owned' && needsCatalog,
+    FETCH_LIMIT,
+  );
   const workspace = needsCatalog ? catalogWorkspace : pageWorkspace;
   const updateListParams = (updates: Record<string, string | null>) => {
     const next = new URLSearchParams(searchParams);
@@ -136,6 +147,11 @@ export function WorkspacePage() {
     page: null,
   });
   const setPage = (value: number) => updateListParams({ page: value > 0 ? String(value) : null });
+  const setResourceScope = (value: ResourceListScope) => updateListParams({
+    scope: value === 'shared' ? 'shared' : null,
+    page: null,
+    sandbox: null,
+  });
 
   const items = useMemo(
     () => workspace.data?.items ?? [],
@@ -169,7 +185,7 @@ export function WorkspacePage() {
   }, [items, needsCatalog, page, sandboxFilter, textMatchedAndSorted]);
   const sandboxStatuses = useWorkflowSandboxStatuses(
     sandboxStatusIds,
-    sandboxStatusIds.length > 0,
+    resourceScope === 'owned' && sandboxStatusIds.length > 0,
   );
   const sandboxByWorkflowId = useMemo(() => {
     const map = new Map<string, WorkflowSandboxStatus>();
@@ -237,6 +253,30 @@ export function WorkspacePage() {
     );
   };
 
+  if (resourceScope === 'shared') {
+    return (
+      <ManagementPageShell
+        resourceKind="workflow"
+        title={t('workspace_header', 'Workflows')}
+        className="gap-6"
+      >
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
+        <ManagementToolbar className="rounded-lg border-x border-edge-subtle">
+          <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder={t('workspace.searchShared', 'Search shared workflows…')}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+        </ManagementToolbar>
+        <SharedResourceList resourceType="workflow" search={search} />
+      </ManagementPageShell>
+    );
+  }
+
   return (
     <>
       <ManagementPageShell
@@ -248,6 +288,8 @@ export function WorkspacePage() {
           </Button>}
         className="gap-6"
       >
+
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
 
         {isLoading ? (
           <div className="flex flex-col gap-3">

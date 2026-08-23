@@ -2,28 +2,27 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
-import json
 import mimetypes
 import os
-import re
 import zipfile
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vibecanvas_api.auth.deps import AuthContext, current_user, tenant_db
 from vibecanvas_api.authorization.dependencies import (
+    authz_service_for_session,
     context_for_auth,
     get_authz_service,
     principal_for_auth,
+    scope_authz_service,
 )
 from vibecanvas_api.authorization.service import AuthzService
 from vibecanvas_api.authorization.stream_guard import (
@@ -35,20 +34,13 @@ from vibecanvas_api.authorization.types import (
     ResourceRef,
     ResourceType,
 )
-from vibecanvas_api.diagrams.compiler import compile_diagram
-from vibecanvas_api.diagrams.isolated_render import (
-    render_scene_pdf_isolated,
-    render_scene_png_isolated,
-    render_scene_svg_isolated,
+from vibecanvas_api.drawio import (
+    DRAWIO_MIME_TYPE,
+    MAX_DRAWIO_SOURCE_BYTES,
+    inspect_drawio,
 )
-from vibecanvas_api.diagrams.limits import (
-    MAX_SOURCE_BYTES,
-    DiagramLimitError,
-)
-from vibecanvas_api.diagrams.validator import parse_and_validate
 from vibecanvas_api.schemas.preview import (
     ChatFileRefV1,
-    DiagramPreviewExportBody,
     FileRefV1,
     MountFileRefV1,
     PreviewCapabilities,
@@ -60,6 +52,7 @@ from vibecanvas_api.schemas.preview import (
     PreviewResolveBody,
     PreviewResourceMount,
     PreviewResourceSession,
+    PreviewRendition,
     PreviewTextMetadata,
     RunFileRefV1,
 )
@@ -69,20 +62,23 @@ from vibecanvas_api.services.file_revision import (
     vfs_row_revision,
 )
 from vibecanvas_api.services.object_store import get_object_store
-from vibecanvas_api.services.sandbox.manager import get_sandbox_manager
+from vibecanvas_api.services.office_preview import (
+    OfficePreviewError,
+    render_office_preview_pdf,
+)
 from vibecanvas_api.services.preview_resource_policy import (
     html_vfs_read_rules,
+    markdown_vfs_read_rules,
     rules_for_root,
 )
+from vibecanvas_api.services.sandbox.manager import get_sandbox_manager
 from vibecanvas_api.services.user_mount_workspace import mount_scope_id
 from vibecanvas_api.services.vfs_signing import (
     issue_vfs_resource_capability,
     sign_vfs_url,
 )
 from vibecanvas_api.storage.db import session_scope
-from vibecanvas_api.storage.diagram_draft_repo import DiagramDraftRepo
 from vibecanvas_api.storage.models import (
-    DiagramRenderRevision,
     VfsArtifact,
     VfsArtifactEvent,
     VfsRun,
@@ -110,127 +106,12 @@ SSE_HEADERS = {
 }
 
 
-def _draft_etag(draft) -> str:
-    value = (
-        f"{draft.draft_id}:{draft.latest_source_sequence}:"
-        f"{draft.latest_ready_sequence}:{draft.status}:{int(draft.terminal)}"
-    ).encode()
-    return f'"diagram-draft-{hashlib.sha256(value).hexdigest()[:24]}"'
-
-
-async def _ready_revision_payload(
-    *,
-    revision: DiagramRenderRevision,
-    workspace_scope_id: str,
-    session: AsyncSession,
-) -> dict:
-    if not revision.scene_path or not revision.scene_ref or not revision.scene_hash:
-        raise HTTPException(status_code=409, detail="diagram_ready_scene_unavailable")
-    raw = await VfsRepo(session, object_store=get_object_store()).read_bytes(
-        wf_id=workspace_scope_id,
-        path=revision.scene_path,
-    )
-    if raw is None:
-        raise HTTPException(status_code=409, detail="diagram_ready_scene_unavailable")
-    actual_hash = f"sha256:{hashlib.sha256(raw).hexdigest()}"
-    if actual_hash != revision.scene_hash:
-        raise HTTPException(status_code=409, detail="diagram_ready_scene_corrupt")
-    try:
-        scene = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="diagram_ready_scene_corrupt",
-        ) from exc
-    return {
-        "revision_id": str(revision.revision_id),
-        "sequence": int(revision.sequence),
-        "operation": revision.operation,
-        "element_ids": list(revision.element_ids or []),
-        "scene_ref": revision.scene_ref,
-        "scene_hash": revision.scene_hash,
-        "scene": scene,
-        "created_at": revision.created_at.isoformat(),
-    }
-
-
-@router.get("/diagram-drafts/{draft_id}/render-revisions")
-async def get_diagram_draft_render_revisions(
-    draft_id: str,
-    request: Request,
-    after: int = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=20),
-    auth: AuthContext = Depends(current_user),
-    session: AsyncSession = Depends(tenant_db),
-) -> Response:
-    """Return only trusted, server-compiled Ready Revisions for one owner.
-
-    The database cursor and Scene bodies live in shared durable storage, so a
-    caller may land on any API worker. Draft IDs are lookup keys, never an
-    authorization grant.
-    """
-    repo = DiagramDraftRepo(session)
-    draft = await repo.get_owned(draft_id, auth.user_id)
-    if draft is None:
-        raise HTTPException(status_code=404, detail="diagram_draft_not_found")
-    etag = _draft_etag(draft)
-    revisions, minimum_ready_sequence = await repo.ready_revisions(
-        draft_id,
-        after=after,
-        limit=limit,
-    )
-    reset_to_latest = bool(
-        minimum_ready_sequence is not None
-        and after < minimum_ready_sequence - 1
-    )
-    if reset_to_latest and int(draft.latest_ready_sequence) > 0:
-        revisions, _ = await repo.ready_revisions(
-            draft_id,
-            after=int(draft.latest_ready_sequence) - 1,
-            limit=1,
-        )
-    if (
-        request.headers.get("if-none-match") == etag
-        and not revisions
-        and not reset_to_latest
-    ):
-        return Response(status_code=304, headers={"ETag": etag})
-    items = [
-        await _ready_revision_payload(
-            revision=revision,
-            workspace_scope_id=draft.workspace_scope_id,
-            session=session,
-        )
-        for revision in revisions
-    ]
-    payload = {
-        "draft_id": str(draft.draft_id),
-        "chat_id": draft.chat_id,
-        "turn_id": draft.turn_id,
-        "status": draft.status,
-        "items": items,
-        "latest_source_sequence": int(draft.latest_source_sequence),
-        "latest_ready_sequence": int(draft.latest_ready_sequence),
-        "latest_ready_scene_ref": draft.latest_ready_scene_ref,
-        "pending_sequences": list(range(
-            int(draft.latest_ready_sequence) + 1,
-            min(int(draft.latest_source_sequence), int(draft.latest_ready_sequence) + 20) + 1,
-        )),
-        "terminal": bool(draft.terminal),
-        "reset_to_latest": reset_to_latest,
-    }
-    return JSONResponse(
-        payload,
-        headers={
-            "ETag": etag,
-            "Cache-Control": "private, no-cache",
-        },
-    )
-
 TEXT_EXTENSIONS = {
-    ".css", ".ini", ".js", ".jsx", ".json", ".jsonl", ".log", ".py",
-    ".sh", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
-    ".csv", ".tsv",
+    ".c", ".cc", ".cpp", ".cs", ".css", ".go", ".graphql", ".h",
+    ".hpp", ".ini", ".java", ".js", ".jsx", ".json", ".jsonl", ".kt",
+    ".kts", ".log", ".lua", ".php", ".py", ".pyw", ".rb", ".rs",
+    ".scala", ".sh", ".sql", ".svelte", ".swift", ".toml", ".ts",
+    ".tsx", ".txt", ".vue", ".xml", ".yaml", ".yml", ".csv", ".tsv",
 }
 LEGACY_OFFICE_EXTENSIONS = {
     ".doc", ".dot", ".odt", ".rtf", ".ppt", ".pps", ".ppsx", ".odp",
@@ -344,6 +225,21 @@ def _safe_inline_url(*, resolved: _ResolvedFile, auth: AuthContext) -> str:
     )
 
 
+def _office_rendition_url(
+    *, file_ref: FileRefV1, revision: str
+) -> str:
+    params: dict[str, str] = {
+        "scope": file_ref.scope,
+        "path": file_ref.path,
+        "revision": revision,
+    }
+    if isinstance(file_ref, ChatFileRefV1):
+        params["chat_id"] = file_ref.chat_id
+    elif isinstance(file_ref, RunFileRefV1):
+        params["run_id"] = file_ref.run_id
+    return "/api/v1/previews/office-rendition?" + urlencode(params)
+
+
 def _preview_error(code: str, **params) -> PreviewErrorInfo:
     return PreviewErrorInfo(code=code, params=params)
 
@@ -404,8 +300,8 @@ def _text_metadata(data: bytes) -> tuple[str | None, PreviewTextMetadata | None,
 def _detect(path: str, content_type: str, data: bytes) -> tuple[str, str]:
     ext = os.path.splitext(path.lower())[1]
     mime = (content_type or "").split(";", 1)[0].lower()
-    if path.lower().endswith(".vdiagram.json"):
-        return "diagram", "application/vnd.vibecanvas.diagram+json"
+    if ext == ".drawio" or mime == DRAWIO_MIME_TYPE:
+        return "drawio", DRAWIO_MIME_TYPE
     if data.startswith(b"%PDF-"):
         return "pdf", "application/pdf"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -470,50 +366,13 @@ def _descriptor(
     renderer = detected
     load_policy = "unsupported"
     editable = False
+    rendition = None
 
     diagram = None
-    if detected == "diagram":
-        document, issues = parse_and_validate(data)
-        renderer = "diagram"
-        load_policy = "inline"
-        if document is not None and not any(issue.severity == "error" for issue in issues):
-            try:
-                scene = compile_diagram(document)
-            except DiagramLimitError as exc:
-                diagram = {
-                    "status": "invalid",
-                    "scene": None,
-                    "issues": [
-                        *[
-                            issue.model_dump(mode="json", by_alias=True)
-                            for issue in issues
-                        ],
-                        {
-                            "severity": "error",
-                            "stage": "compile",
-                            "code": exc.code,
-                            "json_pointer": "/view",
-                            "message": str(exc),
-                        },
-                    ],
-                }
-            else:
-                all_issues = [*issues, *scene.issues]
-                diagram = {
-                    "status": "valid",
-                    "scene": scene.model_dump(mode="json", by_alias=True),
-                    "issues": [
-                        issue.model_dump(mode="json", by_alias=True)
-                        for issue in all_issues
-                    ],
-                    "sourceHash": f"sha256:{hashlib.sha256(data).hexdigest()}",
-                }
-        else:
-            diagram = {
-                "status": "invalid",
-                "scene": None,
-                "issues": [issue.model_dump(mode="json", by_alias=True) for issue in issues],
-            }
+    if detected == "drawio":
+        renderer = "drawio"
+        load_policy = "range"
+        diagram = inspect_drawio(data).preview_metadata()
         content = PreviewContent(
             url=_safe_inline_url(resolved=resolved, auth=auth),
             rangeSupported=True,
@@ -594,6 +453,17 @@ def _descriptor(
                     url=_safe_inline_url(resolved=resolved, auth=auth),
                     rangeSupported=True,
                 )
+                if detected in {"docx", "pptx"}:
+                    revision = vfs_row_revision(row)
+                    rendition = PreviewRendition(
+                        format="pdf",
+                        contentType="application/pdf",
+                        url=_office_rendition_url(
+                            file_ref=resolved.file_ref,
+                            revision=revision,
+                        ),
+                        sourceRevision=revision,
+                    )
     elif detected == "legacy_office":
         renderer = "unsupported"
         error = _preview_error(
@@ -631,6 +501,7 @@ def _descriptor(
             download=True,
         ),
         content=content,
+        rendition=rendition,
         text=text_meta,
         diagram=diagram,
         error=error,
@@ -703,7 +574,6 @@ async def stream_preview_file_events(
     chat_id: str | None = Query(default=None),
     run_id: str | None = Query(default=None),
     auth: AuthContext = Depends(current_user),
-    service: AuthzService = Depends(get_authz_service),
 ) -> StreamingResponse:
     """Reconcile once, then follow durable changes for one Preview FileRef.
 
@@ -720,13 +590,6 @@ async def stream_preview_file_events(
         chat_id=chat_id,
         run_id=run_id,
     )
-    await _authorize_file_ref(
-        file_ref=file_ref,
-        request=request,
-        auth=auth,
-        service=service,
-        action=Action.VIEW,
-    )
     scope_kind, storage_scope_id = _event_scope(
         file_ref=file_ref,
         user_id=auth.user_id,
@@ -739,6 +602,31 @@ async def stream_preview_file_events(
         cursor = 0
 
     async with session_scope(tenant_id=auth.tenant_id) as initial_session:
+        # A StreamingResponse delays FastAPI dependency teardown until the
+        # client disconnects. Building AuthzService through the ordinary
+        # request-scoped tenant_db dependency would therefore retain an idle
+        # transaction for the entire Preview subscription. Authorize and
+        # reconcile inside this explicitly bounded session, then close it
+        # before returning the long-lived response.
+        initial_service = scope_authz_service(
+            authz_service_for_session(
+                session=initial_session,
+                organization_id=auth.active_organization_id,
+                openfga_client=getattr(
+                    request.app.state, "openfga_client", None
+                ),
+            ),
+            session=initial_session,
+            auth=auth,
+            request=request,
+        )
+        await _authorize_file_ref(
+            file_ref=file_ref,
+            request=request,
+            auth=auth,
+            service=initial_service,
+            action=Action.VIEW,
+        )
         # For a fresh subscription, establish the tail cursor before resolving
         # the current row. A write in either side of these statements is then
         # caught by the ready revision or by replay after the cursor.
@@ -916,13 +804,17 @@ async def resolve_preview(
         resolved.row.content_type,
         prefix,
     )
-    if detected == "diagram":
-        data = _object_prefix(resolved.row.object_key, size, MAX_SOURCE_BYTES + 1)
+    if detected == "drawio":
+        data = _object_prefix(
+            resolved.row.object_key,
+            size,
+            MAX_DRAWIO_SOURCE_BYTES + 1,
+        )
     elif detected in {"text", "markdown", "html", "csv", "tsv", "jsonl"}:
         # Full strict UTF-8 validation is required for bounded text and
-        # structured-table previews. Only source-like text renderers are
-        # editable; CSV/TSV/JSONL stay read-only to avoid maintaining a second
-        # structured write/serialization path.
+        # structured-table previews. Source-like text remains editable up to
+        # the explicit editor limit; larger files use a bounded read-only
+        # sample so Preview remains responsive.
         limit = size if size <= EDITABLE_TEXT_BYTES else LARGE_TEXT_SAMPLE_BYTES
         data = _object_prefix(resolved.row.object_key, size, limit)
     elif (
@@ -940,75 +832,77 @@ async def resolve_preview(
     return descriptor
 
 
-@router.post("/diagram/export")
-async def export_preview_diagram(
-    body: DiagramPreviewExportBody,
+@router.get("/office-rendition")
+async def office_preview_rendition(
     request: Request,
+    scope: Literal["chat", "mount", "run"] = Query(),
+    path: str = Query(min_length=1),
+    revision: str = Query(min_length=1),
+    chat_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
     auth: AuthContext = Depends(current_user),
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> Response:
-    """Export the exact diagram revision currently open in Preview."""
+    """Render an authorized DOCX/PPTX revision as a read-only PDF.
+
+    This endpoint intentionally requires the normal Bearer session.  The
+    browser fetches the complete bounded rendition before handing it to PDF.js,
+    while the original short-lived VFS URL remains the download target.
+    """
+
+    file_ref = _event_file_ref(
+        scope=scope,
+        path=path,
+        chat_id=chat_id,
+        run_id=run_id,
+    )
     await _authorize_file_ref(
-        file_ref=body.file_ref,
+        file_ref=file_ref,
         request=request,
         auth=auth,
         service=service,
         action=Action.VIEW,
     )
     resolved = await _resolve_file(
-        file_ref=body.file_ref,
+        file_ref=file_ref,
         auth=auth,
         session=session,
     )
-    if not body.file_ref.path.lower().endswith(".vdiagram.json"):
-        raise HTTPException(status_code=415, detail="preview_not_a_diagram")
-    if vfs_row_revision(resolved.row) != body.expected_revision:
+    current_revision = vfs_row_revision(resolved.row)
+    if revision != current_revision:
         raise HTTPException(status_code=409, detail="preview_revision_conflict")
-    if int(resolved.row.size_bytes) > MAX_SOURCE_BYTES:
-        raise HTTPException(status_code=413, detail="diagram_source_too_large")
-    raw = get_object_store().fetch_bytes(resolved.row.object_key)
-    document, issues = parse_and_validate(raw)
-    if document is None or any(issue.severity == "error" for issue in issues):
-        raise HTTPException(status_code=422, detail="diagram_not_compile_ready")
+    size = int(resolved.row.size_bytes)
+    if size > OFFICE_MANUAL_BYTES:
+        raise HTTPException(status_code=413, detail="file_too_large")
+    data = get_object_store().fetch_bytes(resolved.row.object_key)
+    detected, _content_type = _detect(
+        resolved.file_ref.path,
+        resolved.row.content_type,
+        data,
+    )
+    if detected not in {"docx", "pptx"}:
+        raise HTTPException(status_code=415, detail="unsupported_office_preview_type")
     try:
-        scene = compile_diagram(document)
-        if body.format == "svg":
-            payload = await render_scene_svg_isolated(
-                scene,
-                theme=body.theme,
-                background=body.background,
-            )
-            media_type = "image/svg+xml"
-        elif body.format == "png":
-            payload = await render_scene_png_isolated(
-                scene,
-                theme=body.theme,
-                max_width=min(2400, round(1600 * body.scale)),
-                max_height=min(1600, round(1000 * body.scale)),
-                background=body.background,
-            )
-            media_type = "image/png"
-        else:
-            payload = await render_scene_pdf_isolated(
-                scene,
-                theme=body.theme,
-                background=body.background,
-            )
-            media_type = "application/pdf"
-    except DiagramLimitError as exc:
-        raise HTTPException(
-            status_code=504 if exc.code.endswith("_timeout") else 413,
-            detail=exc.code,
-        ) from exc
-    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", document.id).strip("-.") or "diagram"
+        pdf = await asyncio.to_thread(
+            render_office_preview_pdf,
+            data,
+            os.path.splitext(resolved.file_ref.path)[1],
+        )
+    except OfficePreviewError as exc:
+        status = 503 if exc.code == "office_renderer_unavailable" else 422
+        raise HTTPException(status_code=status, detail=exc.code) from exc
+    filename = resolved.file_ref.path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     return Response(
-        content=payload,
-        media_type=media_type,
+        content=pdf,
+        media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}.{body.format}"',
-            "ETag": f'"{hashlib.sha256(payload).hexdigest()}"',
-            "Cache-Control": "private, no-store",
+            "Cache-Control": "private, max-age=300",
+            "Content-Disposition": (
+                "inline; filename*=UTF-8''" + quote(f"{filename}.pdf", safe="")
+            ),
+            "ETag": f'"{current_revision}:pdf"',
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -1021,7 +915,7 @@ async def create_preview_resource_session(
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> PreviewResourceSession:
-    """Mint opaque resource mounts for an HTML file Preview.
+    """Mint opaque resource mounts for a file Preview's local dependencies.
 
     FileRef ownership is resolved before capabilities are issued. The iframe
     only receives virtual path mounts and never learns workspace/object-store
@@ -1044,13 +938,22 @@ async def create_preview_resource_session(
     source_path = body.file_ref.path
     rules: set[str] = {source_path}
     content_type = str(resolved.row.content_type or "").lower()
-    if content_type in {"text/html", "application/xhtml+xml"} or source_path.lower().endswith(
+    is_html = content_type in {"text/html", "application/xhtml+xml"} or source_path.lower().endswith(
         (".html", ".htm")
-    ):
+    )
+    is_markdown = content_type in {"text/markdown", "text/x-markdown"} or source_path.lower().endswith(
+        (".md", ".markdown")
+    )
+    if is_html or is_markdown:
         size_bytes = int(resolved.row.size_bytes or 0)
         sample_size = min(size_bytes, 2 * 1024 * 1024)
-        html = _object_prefix(resolved.row.object_key, size_bytes, sample_size)
-        rules.update(html_vfs_read_rules(html.decode("utf-8", "replace")))
+        source = _object_prefix(resolved.row.object_key, size_bytes, sample_size).decode(
+            "utf-8", "replace"
+        )
+        if is_html:
+            rules.update(html_vfs_read_rules(source))
+        else:
+            rules.update(markdown_vfs_read_rules(source, source_path))
     sorted_rules = tuple(sorted(rules))
     if isinstance(body.file_ref, ChatFileRefV1):
         workspace_rules = tuple(
@@ -1135,6 +1038,7 @@ async def write_preview_file(
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> PreviewFileWriteOut:
+    """Persist an explicitly saved UTF-8 source draft with revision safety."""
     if (
         isinstance(body.file_ref, RunFileRefV1)
         or (
@@ -1164,6 +1068,8 @@ async def write_preview_file(
     )
     if vfs_row_revision(resolved.row) != body.expected_revision:
         raise HTTPException(status_code=409, detail="preview_revision_conflict")
+    if int(resolved.row.size_bytes) > EDITABLE_TEXT_BYTES:
+        raise HTTPException(status_code=413, detail="preview_text_too_large")
     original = get_object_store().fetch_bytes(resolved.row.object_key)
     detected, _detected_content_type = _detect(
         body.file_ref.path,
@@ -1186,6 +1092,8 @@ async def write_preview_file(
     if metadata.newline == "CRLF":
         normalized = normalized.replace("\n", "\r\n")
     data = normalized.encode("utf-8")
+    if len(data) > EDITABLE_TEXT_BYTES:
+        raise HTTPException(status_code=413, detail="preview_text_too_large")
     if metadata.bom:
         data = b"\xef\xbb\xbf" + data
     repo = VfsRepo(session, object_store=get_object_store())
@@ -1196,12 +1104,8 @@ async def write_preview_file(
         data=data,
         content_type=requested_content_type,
     )
-    # Re-read the ORM row after ON CONFLICT UPDATE so the returned revision is
-    # derived from the committed metadata rather than client input.
     await session.refresh(resolved.row)
     await session.commit()
-    # Preview is another VFS writer. Keep an already-mounted Agent workspace in
-    # the same state immediately; a cold sandbox will hydrate from durable VFS.
     await get_sandbox_manager().mirror_vfs_write(
         auth.tenant_id,
         resolved.scope_id,

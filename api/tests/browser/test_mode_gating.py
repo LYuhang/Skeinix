@@ -10,7 +10,7 @@ def _names(tools):
 
 def test_langchain_private_tools_never_register_platform_browser_tools():
     assert not (_BROWSER_NAMES & _names(build_tools(set())))
-    assert not (_BROWSER_NAMES & _names(build_tools({"build"})))
+    assert not (_BROWSER_NAMES & _names(build_tools({"workflow"})))
     assert not (_BROWSER_NAMES & _names(build_tools({"browser"})))
     assert _names(build_tools({"browser"})) == _names(build_tools(set()))
 

@@ -264,8 +264,8 @@ class RemoteSandboxSession:
         async for item in self._stream("submit_workflow_stream", **kwargs):
             yield item
 
-    async def clear_workflow_run(self) -> None:
-        await self._call("clear_workflow_run")
+    async def clear_workflow_run(self, workflow_run_id: str | None = None) -> None:
+        await self._call("clear_workflow_run", workflow_run_id)
 
     async def submit_node_job(self, **kwargs: Any) -> dict:
         return await self._call("submit_node_job", **kwargs)

@@ -125,18 +125,6 @@ try {
         // chunk resolved below the deployment mount instead of /management/.
         status = 403;
         payload = { detail: 'platform_management_forbidden' };
-      } else if (url.pathname.endsWith('/api/v1/mcp-servers/platform')) {
-        payload = {
-          items: [{
-            id: 'browser',
-            name: 'Browser',
-            description: 'Browser platform tools',
-            activation: '/browser',
-            activation_mode: 'command',
-            runtime_types: ['langchain', 'codex'],
-            tools: [],
-          }],
-        };
       }
       await route.fulfill({
         status,
@@ -154,15 +142,15 @@ try {
   await page.evaluate(() => localStorage.setItem('vibecanvas.token', 'prefix-smoke-token'));
   await page.goto(`${origin}${mountPath}/management`, { waitUntil: 'domcontentloaded' });
   await page.getByText(/platform management is not available/i).waitFor();
-  await page.goto(`${origin}${mountPath}/mcp-servers/platform/browser`, {
+  await page.goto(`${origin}${mountPath}/mcp-servers`, {
     waitUntil: 'domcontentloaded',
   });
   try {
-    await page.getByRole('heading', { name: /Browser|浏览器/ }).waitFor();
+    await page.getByRole('heading', { name: /MCP services|MCP 服务/i }).waitFor();
   } catch (error) {
     const bodyText = (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 500);
     throw new Error(
-      `direct platform MCP route did not render the expected service: ${bodyText}`,
+      `direct MCP route did not render the expected page: ${bodyText}`,
       { cause: error },
     );
   }
@@ -200,10 +188,10 @@ try {
     localStorage.setItem('vibecanvas.token', 'prefix-smoke-token');
   });
   const deepTab = await page.context().newPage();
-  await deepTab.goto(`${origin}${mountPath}/mcp-servers/platform/browser`, {
+  await deepTab.goto(`${origin}${mountPath}/mcp-servers`, {
     waitUntil: 'domcontentloaded',
   });
-  await deepTab.getByRole('heading', { name: /Browser|浏览器/ }).waitFor();
+  await deepTab.getByRole('heading', { name: /MCP services|MCP 服务/i }).waitFor();
   await deepTab.close();
 
   if (badAssetRequests.length > 0) {

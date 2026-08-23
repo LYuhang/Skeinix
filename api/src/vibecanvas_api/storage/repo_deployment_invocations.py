@@ -30,7 +30,7 @@ def _encode_cursor(submitted_at: datetime, row_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
-def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
+def _decode_cursor(cursor: str | None) -> tuple[datetime, uuid.UUID] | None:
     if not cursor:
         return None
     try:
@@ -40,7 +40,7 @@ def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
         row_id = data.get("id")
         if not isinstance(submitted_at, str) or not isinstance(row_id, str):
             return None
-        return submitted_at, row_id
+        return datetime.fromisoformat(submitted_at), uuid.UUID(row_id)
     except Exception:
         return None
 
@@ -146,18 +146,29 @@ class DeploymentInvocationsRepo:
         limit: int,
         cursor: str | None = None,
         statuses: Iterable[str] | None = None,
+        from_: datetime | None = None,
+        to: datetime | None = None,
+        descending: bool = True,
     ) -> dict:
         cursor_parts = _decode_cursor(cursor)
         clauses = ["deployment_id = :deployment_id"]
         params: dict = {"deployment_id": deployment_id, "limit": limit + 1}
         if cursor_parts:
-            clauses.append("(submitted_at, id) < (:cursor_submitted_at, :cursor_id)")
+            operator = "<" if descending else ">"
+            clauses.append(f"(submitted_at, id) {operator} (:cursor_submitted_at, :cursor_id)")
             params["cursor_submitted_at"] = cursor_parts[0]
             params["cursor_id"] = cursor_parts[1]
         statuses_list = [s for s in (statuses or []) if s]
         if statuses_list:
             clauses.append("status = ANY(:statuses)")
             params["statuses"] = statuses_list
+        if from_ is not None:
+            clauses.append("submitted_at >= :from_")
+            params["from_"] = from_
+        if to is not None:
+            clauses.append("submitted_at <= :to")
+            params["to"] = to
+        direction = "DESC" if descending else "ASC"
         rows = (
             await self.session.execute(
                 text(
@@ -168,7 +179,11 @@ class DeploymentInvocationsRepo:
                     WHERE """
                     + " AND ".join(clauses)
                     + """
-                    ORDER BY submitted_at DESC, id DESC
+                    ORDER BY submitted_at """
+                    + direction
+                    + ", id "
+                    + direction
+                    + """
                     LIMIT :limit
                     """
                 ),

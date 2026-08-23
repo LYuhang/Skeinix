@@ -86,7 +86,7 @@ async def test_chat_runtime_binding_is_immutable_after_first_start(pg_engine) ->
 
 
 @pytest.mark.asyncio
-async def test_chat_runtime_configuration_is_frozen_after_first_turn(
+async def test_chat_runtime_model_selection_can_advance_between_turns(
     pg_engine,
 ) -> None:
     tenant_id, user_id = await _seed(pg_engine)
@@ -96,14 +96,14 @@ async def test_chat_runtime_configuration_is_frozen_after_first_turn(
     async with session_scope(tenant_id=tenant_id) as session:
         repo = AgentRuntimeRepo(session, user_id)
         await repo.bind_chat(chat_id, runtime_type="codex")
-        first = await repo.set_runtime_model_id(
+        first = await repo.set_runtime_model_selection(
             chat_id,
             runtime_type="codex",
             model_id="codex:account:gpt-first",
             connection_id="codex:account",
             agent_settings={"reasoning_effort": "high"},
         )
-        resumed = await repo.set_runtime_model_id(
+        resumed = await repo.set_runtime_model_selection(
             chat_id,
             runtime_type="codex",
             model_id="codex:account:gpt-first",
@@ -124,28 +124,28 @@ async def test_chat_runtime_configuration_is_frozen_after_first_turn(
 
     async with session_scope(tenant_id=tenant_id) as session:
         repo = AgentRuntimeRepo(session, user_id)
-        with pytest.raises(
-            ValueError,
-            match="runtime configuration is immutable after first turn",
-        ):
-            await repo.set_runtime_model_id(
-                chat_id,
-                runtime_type="codex",
-                model_id="codex:account:gpt-second",
-                connection_id="codex:account",
-                agent_settings={"reasoning_effort": "high"},
-            )
-        with pytest.raises(
-            ValueError,
-            match="runtime connection is immutable after first turn",
-        ):
-            await repo.set_runtime_model_id(
-                chat_id,
-                runtime_type="codex",
-                model_id="codex:managed:company:gpt-default",
-                connection_id="codex:api",
-                agent_settings={"reasoning_effort": "high"},
-            )
+        switched_model = await repo.set_runtime_model_selection(
+            chat_id,
+            runtime_type="codex",
+            model_id="codex:account:gpt-second",
+            connection_id="codex:account",
+            agent_settings={"reasoning_effort": "low"},
+        )
+        switched_source = await repo.set_runtime_model_selection(
+            chat_id,
+            runtime_type="codex",
+            model_id="codex:managed:company:gpt-default",
+            connection_id="codex:api",
+            agent_settings={"reasoning_effort": "high"},
+        )
+        await session.commit()
+
+    assert switched_model is not None
+    assert switched_model["runtime_model_id"] == "codex:account:gpt-second"
+    assert switched_model["runtime_agent_settings"]["reasoning_effort"] == "low"
+    assert switched_source is not None
+    assert switched_source["runtime_model_id"] == "codex:managed:company:gpt-default"
+    assert switched_source["runtime_connection_id"] == "codex:api"
 
 
 @pytest.mark.asyncio

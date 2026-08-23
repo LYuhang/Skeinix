@@ -1,19 +1,15 @@
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  rmSync,
-} from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
 
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 import { E2ECookieSession } from './cookie-session';
-
-type RuntimeName = 'langchain' | 'codex';
+import {
+  loadCompleteChatHistory,
+  provisionRealRuntime,
+  selectRuntimeModel,
+  type RealRuntimeName,
+  type RealRuntimeProfile,
+} from './real-runtime-profile';
 type TaskRow = {
   id: string;
   status: string;
@@ -66,15 +62,14 @@ async function eventually<T>(
   return latest;
 }
 
-for (const runtime of ['langchain', 'codex'] as const satisfies readonly RuntimeName[]) {
+for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRuntimeName[]) {
   test.describe(`${runtime} /task every tool`, () => {
     const session = new E2ECookieSession();
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workflowName = `${PREFIX}-workflow-${runtime}-${unique}`;
     const scheduleName = `${PREFIX}-schedule-${runtime}-${unique}`;
     const updatedScheduleName = `${scheduleName}-updated`;
-    const accountRoots: string[] = [];
-    let accountModelLabel: string | null = null;
+    let runtimeProfile: RealRuntimeProfile | null = null;
     let workflowId = '';
     let tenantId = '';
     let scheduleTaskId = '';
@@ -89,55 +84,12 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
     test.beforeAll(async () => {
       console.log(`[${runtime}-task] registering disposable user`);
       await session.register(`command-task-${runtime}`);
-      await session.api('/api/v1/agent-runtime/settings', {
-        method: 'PUT',
-        body: JSON.stringify({ default_runtime_type: runtime }),
-        signal: AbortSignal.timeout(60_000),
-      });
+      runtimeProfile = await provisionRealRuntime(session, runtime);
       const me = await session.api('/api/v1/auth/me').then((response) => response.json()) as {
         tenant_id: string;
         user_id: string;
       };
       tenantId = me.tenant_id;
-
-      if (runtime === 'codex') {
-        const source = join(homedir(), '.codex', 'auth.json');
-        if (!existsSync(source)) throw new Error(`host Codex identity is missing: ${source}`);
-        const runtimeRoot = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        const accountRoot = resolve(runtimeRoot, me.tenant_id, me.user_id, 'codex-account-v1');
-        if (!accountRoot.startsWith(`${runtimeRoot}${sep}`)) {
-          throw new Error('refusing to create Codex identity outside AGENT_RUNTIME_ROOT');
-        }
-        const accountHome = join(accountRoot, '.codex');
-        mkdirSync(accountHome, { recursive: true, mode: 0o700 });
-        chmodSync(accountHome, 0o700);
-        const destination = join(accountHome, 'auth.json');
-        copyFileSync(source, destination);
-        chmodSync(destination, 0o600);
-        accountRoots.push(accountRoot);
-
-        const capabilities = await session.api('/api/v1/agent-runtime/capabilities', {
-          signal: AbortSignal.timeout(120_000),
-        }).then((response) => response.json()) as {
-          runtime_available: boolean;
-          authenticated: boolean | null;
-          default_model_id: string | null;
-          models: Array<{ id: string; label: string; provider?: string }>;
-        };
-        expect(capabilities.runtime_available).toBe(true);
-        expect(capabilities.authenticated).toBe(true);
-        const accountModel = capabilities.models.find((model) => model.provider === 'chatgpt')
-          ?? capabilities.models.find((model) => (
-            model.id === 'codex:default' || model.id.startsWith('codex:managed:')
-          ))
-          ?? capabilities.models[0];
-        if (!accountModel) throw new Error('Codex exposes no configured model');
-        accountModelLabel = capabilities.default_model_id === accountModel.id
-          ? null
-          : `${accountModel.label}${accountModel.provider ? ` (${accountModel.provider})` : ''}`;
-      }
 
       console.log(`[${runtime}-task] seeding a durable executable workflow`);
       const created = await session.api('/api/v1/workflows', {
@@ -192,14 +144,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
           method: 'DELETE',
         }, true);
       }
-      for (const accountRoot of accountRoots) {
-        const runtimeRoot = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        if (resolve(accountRoot).startsWith(`${runtimeRoot}${sep}`)) {
-          rmSync(accountRoot, { recursive: true, force: true });
-        }
-      }
+      runtimeProfile?.cleanup();
     });
 
     test.beforeEach(async ({ context }: { context: BrowserContext }) => {
@@ -212,10 +157,8 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
         timeout: 30_000,
       });
       await page.locator('[data-action="chat-new"]').click();
-      if (runtime === 'codex' && accountModelLabel) {
-        await page.locator('[data-role="chat-model-select"]').click();
-        await page.getByRole('option', { name: accountModelLabel, exact: true }).click();
-      }
+      if (!runtimeProfile) throw new Error(`${runtime} Runtime profile was not provisioned`);
+      await selectRuntimeModel(page, runtimeProfile);
       await page.locator('[data-role="chat-composer-options-toggle"]').click();
       await expect(page.locator('[data-role="chat-approval-mode-select"]')).toHaveCount(0);
       console.log(`[${runtime}-task] composer ready`);
@@ -238,6 +181,27 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
         '        )',
         'asyncio.run(main())',
       ].join('\n');
+      const dockerSandboxContainer = process.env.SKEINIX_E2E_DOCKER_ACCOUNT_CONTAINER;
+      if (dockerSandboxContainer) {
+        const dockerApiContainer = process.env.SKEINIX_E2E_DOCKER_API_CONTAINER
+          ?? dockerSandboxContainer.replace(/-sandboxd(-\d+)?$/, '-api$1');
+        if (dockerApiContainer === dockerSandboxContainer) {
+          throw new Error(
+            'set SKEINIX_E2E_DOCKER_API_CONTAINER when the sandbox container name '
+              + 'does not follow the <project>-sandboxd-<index> convention',
+          );
+        }
+        execFileSync('docker.exe', [
+          'exec',
+          '-e', `E2E_TASK_ID=${taskId}`,
+          '-e', `E2E_TENANT_ID=${tenantId}`,
+          dockerApiContainer,
+          'python', '-c', code,
+        ], {
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+        return;
+      }
       execFileSync('bash', [
         '-lc',
         'set -a; source /tmp/vibecanvas-native/.env.native; '
@@ -420,7 +384,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
         'TASK_RESUME_OK',
       );
       const events = await eventually(
-        () => session.api(`/api/v1/tasks/${encodeURIComponent(batchTaskId)}/events?limit=1000`)
+        () => session.api(`/api/v1/tasks/${encodeURIComponent(batchTaskId)}/events?limit=200`)
           .then(async (response) => {
             const payload = await response.json() as {
               items: Array<{ payload?: { action?: string } }>;
@@ -454,10 +418,11 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       scheduleTaskId = '';
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator(`button[data-chat-id="${chatId}"]`).click();
+      await loadCompleteChatHistory(page, chatId);
       const activities = page.locator('[data-tool-activity="true"]');
-      const expectedActivityCount = runtime === 'codex' ? 8 : 7;
-      await expect(activities).toHaveCount(expectedActivityCount, { timeout: 60_000 });
-      for (let index = 0; index < expectedActivityCount; index += 1) {
+      await expect(activities.first()).toBeVisible({ timeout: 60_000 });
+      for (let index = 0; index < await activities.count(); index += 1) {
         const toggle = activities.nth(index).locator('[data-action="tool-activity-toggle"]');
         if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
       }

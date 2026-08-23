@@ -10,7 +10,7 @@ from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeContextManifest,
     RuntimeContextSection,
     RuntimeInstruction,
-    RuntimeMcpServer,
+    HostMcpServerAuthority,
     RuntimeSkill,
 )
 
@@ -51,7 +51,7 @@ def build_context_manifest(
     max_tokens: int,
     message: dict[str, Any],
     instructions: Iterable[RuntimeInstruction],
-    mcp_servers: Iterable[RuntimeMcpServer],
+    mcp_servers: Iterable[HostMcpServerAuthority],
     skills: Iterable[RuntimeSkill],
     todo_items: list[dict[str, Any]],
     artifact_refs: dict[str, dict[str, Any]],

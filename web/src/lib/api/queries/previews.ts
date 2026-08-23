@@ -35,7 +35,10 @@ export function usePreviewDescriptor(fileRef: FileRefV1) {
   return useQuery({
     queryKey,
     queryFn: ({ signal }) => resolvePreview(fileRef, signal),
-    staleTime: Number.POSITIVE_INFINITY,
+    // Descriptor media URLs are signed for five minutes. Mark the descriptor
+    // stale before that boundary so returning to an already-open Preview tab
+    // refreshes its URL instead of attempting an expired one.
+    staleTime: 4 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: false,

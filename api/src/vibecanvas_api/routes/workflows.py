@@ -55,6 +55,7 @@ from ..authorization.dependencies import (
     principal_for_auth,
 )
 from ..authorization.openfga_client import OpenFgaUnavailableError
+from ..authorization.share_resolution import binding_from_share_resolution
 from ..authorization.projection import (
     apply_committed_structural_mutations,
     enqueue_structural_delta,
@@ -81,6 +82,7 @@ from ..authorization.types import (
 from ..celery_app import celery_app
 from ..config import config
 from ..schemas.access import (
+    DirectBindingGrantIn,
     DirectBindingIn,
     DirectBindingListOut,
     DirectBindingOut,
@@ -88,7 +90,9 @@ from ..schemas.access import (
     decision_allows_content,
 )
 from ..services.batch_output import build_output_sink
+from ..services.access_presentation import direct_binding_out
 from ..services.object_store import get_object_store
+from ..services.resource_provenance import ResourceProvenanceBuilder
 from ..services.service_account_credentials import bind_workflow_credentials
 from ..services.sandbox.manager import get_sandbox_manager
 from ..services.user_mount_workspace import mount_scope_id as _mount_scope_id
@@ -139,7 +143,11 @@ async def _workflow_sandbox_status_payload(
     }
 
 
-def _meta_to_out(meta: dict, decision: Decision) -> WorkflowMetaOut:
+async def _meta_to_out(
+    meta: dict,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> WorkflowMetaOut:
     # Organization administrators and auditors intentionally receive
     # ``view_metadata`` without ``view``.  A workflow description and tags are
     # user-authored private content, not safe directory metadata, so the list
@@ -157,6 +165,9 @@ def _meta_to_out(meta: dict, decision: Decision) -> WorkflowMetaOut:
         created_at=meta.get("created_at", 0.0),
         tags=meta.get("tags", []) if can_view_content else [],
         access=access_from_decision(decision),
+        provenance=await provenance.build(
+            creator_user_id=meta.get("creator"),
+        ),
     )
 
 
@@ -206,7 +217,7 @@ def _binding_out(binding: RelationshipBinding) -> DirectBindingOut:
 
 
 def _binding_from_body(
-    body: DirectBindingIn,
+    body: DirectBindingIn | DirectBindingGrantIn,
     *,
     auth: AuthContext,
     wf_id: str,
@@ -257,6 +268,7 @@ async def list_workflows(
     request: Request,
     page: PageRequest = Depends(PageRequest.as_query),
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -282,11 +294,13 @@ async def list_workflows(
         resources=resources,
         context=context,
     )
+    provenance = ResourceProvenanceBuilder(session)
+    items = [
+        await _meta_to_out(item, decisions[resource], provenance)
+        for item, resource in zip(rows, resources, strict=True)
+    ]
     return Page[WorkflowMetaOut](
-        items=[
-            _meta_to_out(item, decisions[resource])
-            for item, resource in zip(rows, resources, strict=True)
-        ],
+        items=items,
         total=total,
         limit=page.limit,
         offset=page.offset,
@@ -359,7 +373,11 @@ async def create_workflow(
         raise OpenFgaUnavailableError(
             "authorization_projection_not_visible"
         )
-    return _meta_to_out(meta, decision)
+    return await _meta_to_out(
+        meta,
+        decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.get("/sandboxes")
@@ -408,6 +426,7 @@ async def get_workflow(
     wf_id: str,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -424,7 +443,11 @@ async def get_workflow(
     wf = await repo.get_current_workflow(wf_id)
     return WorkflowSnapshotOut(
         workflow=wf,
-        meta=_meta_to_out(meta, authorized.decision),
+        meta=await _meta_to_out(
+            meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
     )
 
 
@@ -531,6 +554,7 @@ async def get_workflow_at(
     sv: int,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -561,7 +585,11 @@ async def get_workflow_at(
                             detail=f"snapshot v{v}.sv{sv} not found")
     return WorkflowSnapshotOut(
         workflow=wf,
-        meta=_meta_to_out(meta, authorized.decision),
+        meta=await _meta_to_out(
+            meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
     )
 
 
@@ -571,6 +599,7 @@ async def update_workflow_meta(
     body: WorkflowMetaPatch,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -596,7 +625,11 @@ async def update_workflow_meta(
     meta = await repo.update_meta(wf_id, **fields)
     if not meta:
         raise HTTPException(status_code=404, detail=f"workflow {wf_id} not found")
-    return _meta_to_out(meta, authorized.decision)
+    return await _meta_to_out(
+        meta,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.delete("/{wf_id}", status_code=204)
@@ -715,6 +748,7 @@ async def list_workflow_access(
     request: Request,
     continuation_token: str = "",
     auth: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> DirectBindingListOut:
     _require_sharing_enabled()
@@ -739,7 +773,10 @@ async def list_workflow_access(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DirectBindingListOut(
-        items=[_binding_out(item) for item in page.bindings],
+        items=[
+            await direct_binding_out(session, item)
+            for item in page.bindings
+        ],
         continuation_token=page.continuation_token,
     )
 
@@ -762,7 +799,17 @@ async def _change_workflow_access(
         wf_id=wf_id,
         action=Action.MANAGE_ACCESS,
     )
-    binding = _binding_from_body(body, auth=auth, wf_id=wf_id)
+    binding = (
+        binding_from_share_resolution(
+            body.resolution_token,
+            relation=body.relation,
+            actor_user_id=auth.user_id,
+            session_id=auth.session_id,
+            resource=_workflow_resource(auth, wf_id),
+        )
+        if desired_present and isinstance(body, DirectBindingGrantIn)
+        else _binding_from_body(body, auth=auth, wf_id=wf_id)
+    )
     try:
         result = await (
             service.grant(
@@ -803,7 +850,7 @@ async def _change_workflow_access(
 )
 async def grant_workflow_access(
     wf_id: str,
-    body: DirectBindingIn,
+    body: DirectBindingGrantIn,
     request: Request,
     idempotency_key: str = Header(
         min_length=1,
@@ -859,6 +906,7 @@ async def apply_edits(
     body: EditsRequest,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -913,7 +961,11 @@ async def apply_edits(
     return EditsResponse(
         applied_count=len(applied),
         total_count=len(body.updates),
-        new_meta=_meta_to_out(meta, authorized.decision),
+        new_meta=await _meta_to_out(
+            meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
         first_error=first_error,
         first_error_index=first_error_index,
     )
@@ -925,6 +977,7 @@ async def commit_workflow(
     body: CommitRequest,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -960,7 +1013,11 @@ async def commit_workflow(
         # repo.commit raises ValueError when target_major doesn't exist.
         raise HTTPException(status_code=404, detail=str(e)) from e
     meta = await repo.get_meta(wf_id)
-    return _meta_to_out(meta, authorized.decision)
+    return await _meta_to_out(
+        meta,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.post("/{wf_id}/major-versions", response_model=WorkflowMetaOut)
@@ -969,6 +1026,7 @@ async def new_major_version(
     body: CommitRequest,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -993,7 +1051,11 @@ async def new_major_version(
         wf_id, body.workflow, note=body.note or "New Major Version",
     )
     meta = await repo.get_meta(wf_id)
-    return _meta_to_out(meta, authorized.decision)
+    return await _meta_to_out(
+        meta,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.get("/{wf_id}/versions")
@@ -1001,6 +1063,7 @@ async def list_versions(
     wf_id: str,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -1021,6 +1084,7 @@ async def undo_workflow(
     wf_id: str,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -1050,7 +1114,11 @@ async def undo_workflow(
     wf = await repo.get_current_workflow(wf_id)
     return WorkflowSnapshotOut(
         workflow=wf,
-        meta=_meta_to_out(new_meta, authorized.decision),
+        meta=await _meta_to_out(
+            new_meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
     )
 
 
@@ -1059,6 +1127,7 @@ async def redo_workflow(
     wf_id: str,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -1089,7 +1158,11 @@ async def redo_workflow(
     wf = await repo.get_current_workflow(wf_id)
     return WorkflowSnapshotOut(
         workflow=wf,
-        meta=_meta_to_out(new_meta, authorized.decision),
+        meta=await _meta_to_out(
+            new_meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
     )
 
 
@@ -1099,6 +1172,7 @@ async def checkout_version(
     body: CheckoutRequest,
     request: Request,
     repo: WorkflowRepo = Depends(get_workflow_repo),
+    session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
 ):
@@ -1129,7 +1203,11 @@ async def checkout_version(
     new_meta = await repo.set_head(wf_id, body.v, body.sv)
     return WorkflowSnapshotOut(
         workflow=wf,
-        meta=_meta_to_out(new_meta, authorized.decision),
+        meta=await _meta_to_out(
+            new_meta,
+            authorized.decision,
+            ResourceProvenanceBuilder(session),
+        ),
     )
 
 

@@ -157,11 +157,19 @@ export function sanitizeVisibleContent(content: string): string {
 }
 
 function toolResultStatus(chunk: RawChunk): MergedToolCall['status'] {
+  const persistedStatus = typeof chunk.meta?.status === 'string'
+    ? chunk.meta.status
+    : '';
+  const invocationStatus = chunk.invocation?.status ?? '';
   const artifact = chunk.artifact;
   const status = artifact && typeof artifact.status === 'string'
     ? artifact.status
     : '';
-  if (status === 'error' || status === 'cancelled' || status === 'canceled') {
+  if (
+    ['error', 'failed', 'errored', 'cancelled', 'canceled'].includes(persistedStatus)
+    || ['error', 'cancelled'].includes(invocationStatus)
+    || ['error', 'failed', 'errored', 'cancelled', 'canceled'].includes(status)
+  ) {
     return 'error';
   }
   return 'done';

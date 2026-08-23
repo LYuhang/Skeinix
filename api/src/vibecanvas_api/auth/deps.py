@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import uuid
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vibecanvas_api.auth.repo import AuthRepo
@@ -202,9 +204,8 @@ async def require_recent_step_up(
 ) -> AuthContext:
     """Require an unexpired phishing-resistant high-risk step-up boundary.
 
-    TOTP and recovery codes remain useful account factors but deliberately do
-    not satisfy privileged administration. The production security profile
-    requires this gate; development may opt in explicitly.
+    The production security profile requires a phishing-resistant passkey for
+    this gate; development may opt in explicitly.
     """
     if not config.high_risk_step_up_required:
         return ctx
@@ -229,8 +230,74 @@ async def require_webauthn_step_up(
     return ctx
 
 
-async def tenant_db(ctx: AuthContext = Depends(current_user)):
+_SHAREABLE_PATH_PARAMETERS = (
+    ("wf_id", "workflow"),
+    ("task_id", "task"),
+    ("dep_id", "deployment"),
+    ("kb_id", "knowledge_base"),
+)
+
+
+async def _admit_shared_resource(
+    request: Request,
+    ctx: AuthContext,
+    session: AsyncSession,
+) -> None:
+    """Rebind RLS to one explicitly shared resource's owning tenant.
+
+    The recipient projection is only a locator. Every resource route still
+    performs its ordinary OpenFGA check, and the authorization context admits
+    only the exact projected root. Ambiguous IDs fail closed.
+    """
+    resource_type = ""
+    resource_id = ""
+    for parameter, candidate_type in _SHAREABLE_PATH_PARAMETERS:
+        candidate_id = request.path_params.get(parameter)
+        if candidate_id:
+            resource_type = candidate_type
+            resource_id = str(candidate_id)
+            break
+    if not resource_id:
+        return
+
+    from vibecanvas_api.storage.models_authorization import (
+        SharedResourceProjection,
+    )
+
+    owner_ids = list((await session.execute(
+        select(SharedResourceProjection.owner_tenant_id)
+        .where(
+            SharedResourceProjection.recipient_user_id
+            == uuid.UUID(ctx.user_id),
+            SharedResourceProjection.resource_type == resource_type,
+            SharedResourceProjection.resource_id == resource_id,
+        )
+        .distinct()
+        .limit(2)
+    )).scalars())
+    if len(owner_ids) != 1:
+        return
+    owner_id = str(owner_ids[0])
+    if owner_id == ctx.active_organization_id:
+        return
+    await session.execute(
+        text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+        {"tenant_id": owner_id},
+    )
+    request.state.admitted_resource_organization_id = owner_id
+    request.state.admitted_resource_type = resource_type
+    request.state.admitted_resource_id = resource_id
+
+
+async def tenant_db(
+    request: Request,
+    ctx: AuthContext = Depends(current_user),
+):
     """Request-scoped, tenant-bound DB session for business routes.
     RLS sees `app.tenant_id` for the whole request transaction."""
-    async with session_scope(tenant_id=ctx.active_organization_id) as s:
+    async with session_scope(
+        tenant_id=ctx.active_organization_id,
+        user_id=ctx.user_id,
+    ) as s:
+        await _admit_shared_resource(request, ctx, s)
         yield s

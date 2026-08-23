@@ -24,13 +24,14 @@ from vibecanvas_api.services.platform_mcp.interactive_tools.schema import (
     validate_view,
 )
 from vibecanvas_api.config import config
-from vibecanvas_api.diagrams.render_validation import validate_diagram_for_render
 
 logger = logging.getLogger(__name__)
 
 INTERACTIVE_CONTENT_TYPE = "application/vnd.vibecanvas.interactive-artifact+json"
 
 def _default_height(component_type: str) -> int:
+    if component_type == "url_preview":
+        return 520
     return 360 if component_type == "html_preview" else 320
 
 
@@ -39,7 +40,7 @@ def _default_preview(component_type: str) -> dict[str, str]:
     # expansion for HTML/file content; the browser side panel stays inline.
     return {
         "mode": "optional"
-        if component_type in {"html_preview", "file_preview"}
+        if component_type in {"html_preview", "file_preview", "url_preview"}
         else "none"
     }
 
@@ -54,52 +55,17 @@ def _preview_payload(full: dict[str, Any], preview_chars: int) -> dict[str, Any]
     }
 
 
-async def _validate_diagram_file_preview(
-    *, runtime: ToolRuntime, path: str
-) -> dict[str, Any]:
-    if (
-        not path.startswith("/data/diagrams/")
-        or not path.endswith(".vdiagram.json")
-        or ".." in path.split("/")
-    ):
-        raise ToolError(
-            "invalid_diagram_path",
-            "Diagram Preview requires an exact /data/diagrams/*.vdiagram.json path.",
-            info={"path": path},
-        )
+async def _prepare_file_preview(*, runtime: ToolRuntime, path: str) -> None:
+    """Persist a generated file before publishing its path to Preview."""
+    if not path.startswith("/data/"):
+        return
     session = await _require_session(runtime.context)
-    result = await session.read_file(path)
-    if not result.get("ok") or result.get("kind") == "binary":
+    if not await session.sync_workspace_path(path):
         raise ToolError(
-            "diagram_not_found",
-            f"Unable to read Diagram file {path}.",
+            "file_preview_sync_failed",
+            f"Unable to persist {path} before creating its Preview.",
             info={"path": path},
         )
-    raw = str(result.get("content") or "").encode()
-    validation = validate_diagram_for_render(raw)
-    if not validation.ready:
-        issues = list(validation.issues)
-        summary = "; ".join(
-            f"{issue.get('json_pointer', '/')}: {issue.get('message', issue.get('code', 'invalid'))}"
-            for issue in issues[:8]
-        )
-        raise ToolError(
-            "invalid_diagram",
-            "Diagram validation failed; no Preview card was created. "
-            f"Repair the file and call check_diagram again. {summary}",
-            info={"path": path, "issues": issues},
-        )
-    assert validation.document is not None
-    assert validation.scene is not None
-    return {
-        "path": path,
-        "source_hash": f"sha256:{hashlib.sha256(raw).hexdigest()}",
-        "family": validation.document.diagram.family,
-        "type": validation.document.diagram.type,
-        "nodes": len(validation.document.model.nodes),
-        "edges": len(validation.document.model.edges),
-        "issues": list(validation.issues),
-    }
 
 
 @tool(response_format="content_and_artifact")
@@ -115,16 +81,22 @@ async def render_interactive(
 
     Use this instead of a long text response when a rich visual, interactive
     control, or file preview communicates the result better. The public surface
-    intentionally has only two view types:
+    intentionally has three view types:
 
     - ``html_preview`` for any custom UI. It accepts self-contained HTML with
       inline JavaScript/CSS and local VFS/data/blob resources, and can render
       images, tables, charts, Canvas/SVG, sliders, forms, and other dynamic
       presentations in an isolated iframe. External code and network
       subresources are blocked; save any required remote asset into VFS first.
-    - ``file_preview`` for a file that already exists in your local environment.
-      An HTML file uses the same dynamic HTML runtime; other common formats use
-      their native file preview.
+    - ``file_preview`` for any file that already exists in your local
+      environment. Supply the file path and optional description. ``file_type``
+      defaults to ``auto``; set it only when the file has no reliable extension
+      or MIME metadata. The Preview service interprets the hint and selects a
+      renderer.
+    - ``url_preview`` for an ordinary HTTP(S) page. The browser opens the URL
+      in an isolated interactive WebView without Skeinix authentication data.
+      There is no destination allowlist, but sites may refuse iframe embedding
+      through their own browser security headers.
 
     ``view`` is a strict object selected by ``view.type``. Valid examples:
 
@@ -139,9 +111,11 @@ async def render_interactive(
       A standard named form with ``action="/data/labels.json"`` also saves its
       current values as JSON when the user submits it.
     - Preview an existing file:
-      ``{"type":"file_preview","path":"/data/report.pdf","mime":"application/pdf","description":"Generated report"}``
-    - Render an existing HTML file without copying its contents into the call:
-      ``{"type":"file_preview","path":"/mount/data/viewer.html","mime":"text/html"}``
+      ``{"type":"file_preview","path":"/data/report.pdf","description":"Generated report"}``
+    - Preview a mounted file without copying its contents into the call:
+      ``{"type":"file_preview","path":"/mount/data/report.docx"}``
+    - Open a web page in Preview:
+      ``{"type":"url_preview","url":"https://example.com/docs","description":"Reference"}``
 
     Agent contract for HTML:
 
@@ -196,15 +170,12 @@ async def render_interactive(
     view_obj = validate_view(view)
     component_type = view_obj.type
     props_obj = view_obj.model_dump(exclude={"type"}, exclude_none=True, mode="json")
-    diagram_validation: dict[str, Any] | None = None
     if component_type == "file_preview":
         preview_path = str(props_obj.get("path") or "")
-        if preview_path.lower().endswith(".vdiagram.json"):
-            diagram_validation = await _validate_diagram_file_preview(
-                runtime=runtime,
-                path=preview_path,
-            )
-            props_obj["mime"] = "application/vnd.vibecanvas.diagram+json"
+        await _prepare_file_preview(
+            runtime=runtime,
+            path=preview_path,
+        )
     schema_obj = (
         {
             "interaction_type": "continue",
@@ -278,8 +249,6 @@ async def render_interactive(
         "full_tokens": _approx_tokens(serialized),
         "hash": f"sha256:{content_hash}",
     }
-    if diagram_validation is not None:
-        output["diagram_validation"] = diagram_validation
     if path:
         output["path"] = path
 
@@ -305,11 +274,6 @@ async def render_interactive(
             "hitl_request_id": None,
             "hash": f"sha256:{content_hash}",
             "size": {"chars": len(serialized), "tokens": _approx_tokens(serialized)},
-            **(
-                {"diagram_validation": diagram_validation}
-                if diagram_validation is not None
-                else {}
-            ),
         },
         "meta": {
             "tool": "render_interactive",

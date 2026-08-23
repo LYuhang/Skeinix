@@ -6,6 +6,7 @@ export type ComponentType =
   | 'approval'
   | 'html_preview'
   | 'file_preview'
+  | 'url_preview'
   | 'user_input';
 
 export type CompletionMode = 'render_only' | 'wait_for_submit';
@@ -173,6 +174,47 @@ export function interactiveArtifactRenderError(
     const hasQuestions = Array.isArray(artifact.props.questions);
     const hasUrl = typeof artifact.props.url === 'string' && artifact.props.url.length > 0;
     return hasQuestions || hasUrl ? null : 'user input questions are missing';
+  }
+  if (artifact.component_type === 'file_preview') {
+    // A file card is deliberately a non-executing summary. Persisted
+    // artifacts may contain additive metadata (for example an older `mime`
+    // hint), but the Preview resolver remains authoritative for type
+    // detection, authorization and content validation after the user opens
+    // the file. Do not turn a valid path into a heavy inline error card merely
+    // because the producer and the current tool schema differ on metadata.
+    const allowedFields = new Set([
+      'path',
+      'file_type',
+      'description',
+      // Older persisted artifacts used these content hints. They remain
+      // non-authoritative; the Preview resolver detects the actual type.
+      'mime',
+      'content_type',
+    ]);
+    const unsupportedField = Object.keys(artifact.props)
+      .find((field) => !allowedFields.has(field));
+    if (unsupportedField) return `/${unsupportedField} is not allowed`;
+
+    const path = artifact.props.path;
+    if (
+      typeof path !== 'string'
+      || path.length === 0
+      || !path.startsWith('/')
+      || path.split('/').includes('..')
+    ) {
+      return 'file preview path is missing or invalid';
+    }
+    const fileType = artifact.props.file_type;
+    if (fileType !== undefined && (typeof fileType !== 'string' || fileType.length === 0)) {
+      return 'file preview type must be a non-empty string';
+    }
+    for (const field of ['description', 'mime', 'content_type'] as const) {
+      const value = artifact.props[field];
+      if (value !== undefined && typeof value !== 'string') {
+        return `/${field} must be a string`;
+      }
+    }
+    return null;
   }
   const view = { ...artifact.props, type: artifact.component_type };
   const errors = validateView(view);

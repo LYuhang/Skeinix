@@ -55,6 +55,14 @@ _STATUS_DENY = b"\x00"
 # task forever before the relay even starts.
 _CONNECT_TIMEOUT = 10.0
 
+# A single transient VPN/proxy dial failure must not abort a long Agent turn
+# after its model stream has already produced useful work. Keep retries inside
+# the existing broker policy boundary: DNS is still resolved and validated
+# once, every attempt uses only those pinned addresses, and no new destination
+# becomes reachable.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_DELAY = 0.25
+
 # Generous overall guard on the relay so a stuck (never-EOF) tunnel is reaped.
 _RELAY_TIMEOUT = 3600.0
 
@@ -123,6 +131,26 @@ async def _resolve_public_addresses(
         if not any(address in network for network in trusted_proxy_networks):
             return ()
     return addresses
+
+
+async def _open_validated_connection(
+    addresses: tuple[str, ...],
+    port: int,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Dial pinned, policy-validated addresses with bounded transient retries."""
+    last_error: BaseException | None = None
+    for attempt in range(_CONNECT_ATTEMPTS):
+        for address in addresses:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.open_connection(address, port),
+                    timeout=_CONNECT_TIMEOUT,
+                )
+            except Exception as exc:
+                last_error = exc
+        if attempt + 1 < _CONNECT_ATTEMPTS:
+            await asyncio.sleep(_CONNECT_RETRY_DELAY)
+    raise OSError("all validated destination addresses failed") from last_error
 
 
 class EgressBroker:
@@ -313,10 +341,7 @@ class EgressBroker:
             # example the internal Platform MCP origin), never wildcard rules.
             try:
                 if private_target_allowed:
-                    target_r, target_w = await asyncio.wait_for(
-                        asyncio.open_connection(host, port),
-                        timeout=_CONNECT_TIMEOUT,
-                    )
+                    target_r, target_w = await _open_validated_connection((host,), port)
                 else:
                     resolve = (
                         _resolve_public_addresses(host, port)
@@ -332,21 +357,7 @@ class EgressBroker:
                     )
                     if not addresses:
                         raise OSError("destination did not resolve exclusively public")
-                    last_error: BaseException | None = None
-                    target_r = target_w = None
-                    for address in addresses:
-                        try:
-                            target_r, target_w = await asyncio.wait_for(
-                                asyncio.open_connection(address, port),
-                                timeout=_CONNECT_TIMEOUT,
-                            )
-                            break
-                        except Exception as exc:
-                            last_error = exc
-                    if target_r is None or target_w is None:
-                        raise OSError(
-                            "all validated destination addresses failed"
-                        ) from last_error
+                    target_r, target_w = await _open_validated_connection(addresses, port)
             except Exception:
                 writer.write(_STATUS_DENY)
                 try:

@@ -5,7 +5,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from vibecanvas_api.schemas.access import ResourceAccessOut
+from vibecanvas_api.schemas.access import (
+    ResourceAccessOut,
+    ResourceProvenanceOut,
+)
 
 
 class SkillOut(BaseModel):
@@ -24,6 +27,7 @@ class SkillOut(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
 
 
 class SkillDetailOut(SkillOut):
@@ -46,6 +50,7 @@ class SkillDraftOut(BaseModel):
     has_changes: bool
     updated_at: Optional[str] = None
     access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
 
 
 class SkillDraftSave(BaseModel):
@@ -69,6 +74,7 @@ class SkillRevisionOut(BaseModel):
     size_bytes: int
     created_at: Optional[str] = None
     access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
 
 
 class SkillRevisionDetailOut(SkillRevisionOut):

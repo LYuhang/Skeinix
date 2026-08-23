@@ -9,9 +9,7 @@ No LangGraph or Codex wire object crosses this boundary.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
-import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from time import perf_counter
@@ -25,6 +23,9 @@ from vibecanvas_api.services.agent_runtime.checkpoint_store import (
 )
 from vibecanvas_api.services.agent_runtime.codex_runtime import CodexSandboxRuntime
 from vibecanvas_api.services.agent_runtime.langchain import LangChainSandboxRuntime
+from vibecanvas_api.services.agent_runtime.mcp_host_gateway import (
+    handle_mcp_gateway_request,
+)
 from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeBackgroundJobResponse,
     RuntimeControlResponse,
@@ -46,25 +47,10 @@ from vibecanvas_api.services.vfs_volume import get_chat_runtime_volume_provider
 from vibecanvas_api.storage.agent_runtime_repo import AgentRuntimeRepo
 from vibecanvas_api.storage.background_delivery_repo import BackgroundDeliveryRepo
 from vibecanvas_api.storage.db import session_scope
-from vibecanvas_api.storage.diagram_draft_repo import DiagramDraftRepo
 from vibecanvas_api.storage.hitl_repo import HitlRepo
 
 _SAFE_SEGMENT = re.compile(r"[^A-Za-z0-9_.-]+")
 logger = structlog.get_logger(__name__)
-
-_DIAGRAM_PROTOCOL_TOOLS = {
-    "get_diagram_spec",
-    "search_diagram_assets",
-    "inspect_diagram",
-    "check_diagram",
-    "render_interactive",
-    "review_diagram",
-    "export_diagram",
-}
-_DIAGRAM_CONTINUE_ACTIONS = {"call_tool", "edit_source"}
-_DIAGRAM_FAILURE_STATUSES = {"error", "errored", "failed", "failure"}
-_MAX_DIAGRAM_CONTINUATIONS = 3
-
 
 def _runtime_status_payload(
     turn_request: RuntimeTurnRequest,
@@ -84,276 +70,6 @@ def _runtime_status_payload(
     if label:
         payload["label"] = label
     return payload
-
-
-def _diagram_tool_name(value: Any) -> str:
-    name = str(value or "").strip()
-    if "__" in name:
-        name = name.rsplit("__", 1)[-1]
-    if name not in _DIAGRAM_PROTOCOL_TOOLS:
-        name = re.split(r"[.:/]", name)[-1]
-    return name
-
-
-def _tool_end_payload(event: RuntimeEvent) -> dict[str, Any] | None:
-    """Return one SDK-neutral tool-end payload, including projections."""
-    if event.type == "tool.end":
-        return dict(event.payload)
-    if event.type != "projection":
-        return None
-    if event.payload.get("event_type") != "CHAT_EVENT":
-        return None
-    payload = event.payload.get("payload")
-    if not isinstance(payload, dict) or payload.get("type") != "tool_end":
-        return None
-    return dict(payload)
-
-
-def _tool_end_name(payload: dict[str, Any]) -> str:
-    """Read a tool name from either native or projected event envelopes."""
-    direct_name = payload.get("name")
-    if direct_name:
-        return _diagram_tool_name(direct_name)
-    invocation = payload.get("invocation")
-    if isinstance(invocation, dict):
-        return _diagram_tool_name(invocation.get("name"))
-    return ""
-
-
-def _nested_diagram_protocol_payload(*values: Any) -> dict[str, Any] | None:
-    """Find Diagram structured output across Codex/MCP envelope variants."""
-    queue = list(values)
-    seen: set[int] = set()
-    visited = 0
-    while queue and visited < 256:
-        value = queue.pop(0)
-        visited += 1
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except (TypeError, ValueError):
-                continue
-        if isinstance(value, list):
-            queue.extend(value)
-            continue
-        if not isinstance(value, dict):
-            continue
-        identity = id(value)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        if isinstance(value.get("next"), dict):
-            return value
-        queue.extend(value.values())
-    return None
-
-
-def _diagram_continuation_directive(
-    payload: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Describe why the latest Diagram tool requires another native turn."""
-    if payload is None:
-        return None
-    tool_name = _tool_end_name(payload)
-    if tool_name not in _DIAGRAM_PROTOCOL_TOOLS:
-        return None
-    structured = _nested_diagram_protocol_payload(
-        payload.get("artifact"),
-        payload.get("content"),
-        payload.get("invocation"),
-    )
-    next_step = structured.get("next") if isinstance(structured, dict) else None
-    action = (
-        str(next_step.get("action") or "")
-        if isinstance(next_step, dict)
-        else ""
-    )
-    if action in _DIAGRAM_CONTINUE_ACTIONS:
-        return {"tool": tool_name, "action": action, "reason": "next_action"}
-
-    artifact = payload.get("artifact")
-    artifact_status = (
-        str(artifact.get("status") or "").casefold()
-        if isinstance(artifact, dict)
-        else ""
-    )
-    status = str(payload.get("status") or "").casefold()
-    if status in _DIAGRAM_FAILURE_STATUSES or artifact_status in _DIAGRAM_FAILURE_STATUSES:
-        return {"tool": tool_name, "action": "recover", "reason": "tool_error"}
-    return None
-
-
-def _diagram_required_tool_directive(
-    payload: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Track an exact next.tool even when later tools obscure that result."""
-    if payload is None:
-        return None
-    source_tool = _tool_end_name(payload)
-    if source_tool not in _DIAGRAM_PROTOCOL_TOOLS:
-        return None
-    structured = _nested_diagram_protocol_payload(
-        payload.get("artifact"),
-        payload.get("content"),
-        payload.get("invocation"),
-    )
-    next_step = structured.get("next") if isinstance(structured, dict) else None
-    if not isinstance(next_step, dict) or next_step.get("action") != "call_tool":
-        return None
-    required_tool = _diagram_tool_name(next_step.get("tool"))
-    if required_tool not in _DIAGRAM_PROTOCOL_TOOLS:
-        return None
-    request_payload = next_step.get("request")
-    return {
-        "tool": source_tool,
-        "action": "call_tool",
-        "required_tool": required_tool,
-        "request_json": json.dumps(
-            request_payload if isinstance(request_payload, dict) else {},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ),
-        "reason": "required_tool",
-    }
-
-
-def _tool_end_failed(payload: dict[str, Any]) -> bool:
-    artifact = payload.get("artifact")
-    artifact_status = (
-        str(artifact.get("status") or "").casefold()
-        if isinstance(artifact, dict)
-        else ""
-    )
-    status = str(payload.get("status") or "").casefold()
-    return status in _DIAGRAM_FAILURE_STATUSES or artifact_status in _DIAGRAM_FAILURE_STATUSES
-
-
-def _diagram_continuation_request(
-    request: RuntimeTurnRequest,
-    *,
-    directive: dict[str, Any],
-    continuation_index: int,
-    state_ref: str | None,
-) -> RuntimeTurnRequest:
-    if directive["reason"] == "tool_error":
-        instruction = (
-            f"The latest current-turn {directive['tool']} call failed. Correct "
-            "only the rejected argument using the published schema and exact "
-            "previously returned values, then retry that same Diagram stage. "
-            "A validation error creates no ref: never fabricate a ref, hash, "
-            "revision, path, version, or downstream result."
-        )
-    elif directive["reason"] == "required_tool":
-        instruction = (
-            f"The current-turn {directive['tool']} result required the next "
-            f"tool {directive['required_tool']}, but that successful call is "
-            "still missing. Call it now with exactly this JSON argument "
-            f"object: {directive.get('request_json', '{}')}. Do not substitute "
-            "another preview, review the Diagram first, or fabricate arguments. "
-            "After the tool succeeds, preserve and restate the concrete "
-            "user-facing conclusions already established in this Turn. If a "
-            "review image was already read, include the exact answer to the "
-            "user's visual question instead of returning only a generic "
-            "completion statement."
-        )
-    else:
-        instruction = (
-            f"The latest current-turn {directive['tool']} result returned "
-            f"next.action={directive['action']}. Follow that action using the "
-            "exact returned refs and pointers."
-        )
-    reminder = (
-        "<system-reminder>\n"
-        "Diagram protocol continuation: this is not a new user request. "
-        f"{instruction} Do not repeat completed work. Continue until the latest "
-        "Diagram result says deliver or ask_user.\n"
-        "</system-reminder>"
-    )
-    return request.model_copy(update={
-        "runtime_state_ref": state_ref or request.runtime_state_ref,
-        "continuation_index": continuation_index,
-        "message": {"role": "user", "content": reminder},
-        "attachments": [],
-    })
-
-
-async def _runtime_events_with_diagram_continuations(
-    runtime: Any,
-    request: RuntimeTurnRequest,
-) -> AsyncIterator[RuntimeEvent]:
-    """Collapse bounded native continuation turns into one product Turn."""
-    diagram_active = (
-        "diagram" in request.command_context.active_modes
-        and "diagram" in request.active_platform_mcps
-    )
-    current_request = request
-    continuation_count = 0
-    latest_state_ref = request.runtime_state_ref
-    pending_required_tool: dict[str, Any] | None = None
-    while True:
-        latest_tool_end: dict[str, Any] | None = None
-        user_gate_required = False
-        completed_event: RuntimeEvent | None = None
-        runtime_events = runtime.run_turn(current_request)
-        try:
-            async for event in runtime_events:
-                if event.type == "checkpoint":
-                    candidate = str(event.payload.get("state_ref") or "")
-                    if candidate:
-                        latest_state_ref = candidate
-                tool_end = _tool_end_payload(event)
-                if tool_end is not None:
-                    latest_tool_end = tool_end
-                    completed_tool = _tool_end_name(tool_end)
-                    if (
-                        pending_required_tool is not None
-                        and completed_tool == pending_required_tool.get("required_tool")
-                        and not _tool_end_failed(tool_end)
-                    ):
-                        pending_required_tool = None
-                    required_tool = _diagram_required_tool_directive(tool_end)
-                    if required_tool is not None:
-                        pending_required_tool = required_tool
-                if event.type in {"approval.required", "interaction.required"}:
-                    user_gate_required = True
-                if event.type == "runtime.completed":
-                    completed_event = event
-                    continue
-                yield event
-        finally:
-            await runtime_events.aclose()
-
-        if completed_event is None:
-            return
-        directive = None
-        if diagram_active and not user_gate_required:
-            directive = pending_required_tool or _diagram_continuation_directive(
-                latest_tool_end
-            )
-        if (
-            directive is None
-            or continuation_count >= _MAX_DIAGRAM_CONTINUATIONS
-        ):
-            yield completed_event
-            return
-        continuation_count += 1
-        current_request = _diagram_continuation_request(
-            current_request,
-            directive=directive,
-            continuation_index=continuation_count,
-            state_ref=latest_state_ref,
-        )
-        logger.info(
-            "diagram_runtime_protocol_continuation",
-            runtime_type=request.runtime_type.value,
-            chat_id=request.chat_id,
-            turn_id=request.turn_id,
-            continuation_index=continuation_count,
-            tool=directive["tool"],
-            action=directive["action"],
-            reason=directive["reason"],
-        )
 
 
 def private_runtime_root(runtime_type: RuntimeType, chat_id: str) -> str:
@@ -1058,10 +774,7 @@ class AgentRuntimeOrchestrator:
                 first_turn=first_turn,
             ),
         )
-        runtime_events = _runtime_events_with_diagram_continuations(
-            runtime,
-            turn_request,
-        )
+        runtime_events = runtime.run_turn(turn_request)
         stop_task = asyncio.create_task(stop_event.wait())
         completed = False
         first_runtime_event = True
@@ -1160,6 +873,13 @@ class AgentRuntimeOrchestrator:
                             raise RuntimeError(
                                 "runtime checkpoint Chat no longer exists"
                             )
+                if event.type == "mcp.gateway.requested":
+                    await runtime.respond(
+                        await handle_mcp_gateway_request(event, turn_request)
+                    )
+                    # Private MCP transport traffic is never persisted as a
+                    # product event or exposed to the browser client.
+                    continue
                 if event.type == "approval.requested":
                     payload = dict(event.payload)
                     correlation = RuntimeRequestCorrelation.model_validate(
@@ -1454,31 +1174,6 @@ class AgentRuntimeOrchestrator:
                 task.cancel()
             await asyncio.gather(*approval_tasks, return_exceptions=True)
             await runtime.close()
-            try:
-                uuid.UUID(turn_request.tenant_id)
-            except ValueError:
-                # Lightweight Runtime unit tests use a deliberately synthetic
-                # tenant. Production request validation only admits UUIDs.
-                pass
-            else:
-                try:
-                    async with session_scope(
-                        tenant_id=turn_request.tenant_id
-                    ) as draft_session:
-                        await DiagramDraftRepo(draft_session).finalize_latest(
-                            chat_id=turn_request.chat_id,
-                            turn_id=turn_request.turn_id,
-                            completed=completed and not stop_event.is_set(),
-                        )
-                except Exception:
-                    # Preview finalization is recoverable from its durable cursor;
-                    # it must not mask the Runtime's actual completion outcome.
-                    logger.warning(
-                        "diagram_draft_finalize_failed",
-                        chat_id=turn_request.chat_id,
-                        turn_id=turn_request.turn_id,
-                        exc_info=True,
-                    )
             # A Turn pins its sandbox while active. Background jobs and
             # terminal-but-undelivered results extend that pin; otherwise the
             # ordinary idle TTL may reclaim the now-quiescent session.

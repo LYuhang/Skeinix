@@ -118,8 +118,7 @@ export type ShareableResourceKind =
   | 'workflow'
   | 'task'
   | 'deployment'
-  | 'knowledge_base'
-  | 'skill';
+  | 'knowledge_base';
 
 export interface DirectBinding {
   relation: ShareRelation;
@@ -127,6 +126,46 @@ export interface DirectBinding {
   subject_id: string;
   subject_relation: 'direct_member' | 'member' | null;
   source: 'direct';
+  display_name?: string;
+  detail?: string;
+}
+
+export type ShareTargetType = 'user' | 'group' | 'organization';
+
+export interface ResolvedShareTarget {
+  target_type: ShareTargetType;
+  display_name: string;
+  detail: string;
+  resolution_token: string;
+  allowed_relations: ShareRelation[];
+}
+
+export interface ResourceParty {
+  type: 'user' | 'organization' | 'platform';
+  display_name: string;
+}
+
+export interface ResourceProvenance {
+  ownership_scope: 'personal' | 'organization' | 'platform';
+  origin_type:
+    | 'created'
+    | 'uploaded'
+    | 'imported'
+    | 'catalog_install'
+    | 'derived'
+    | 'system';
+  owner: ResourceParty;
+  created_by?: ResourceParty | null;
+}
+
+export interface SharedResource {
+  resource_type: ShareableResourceKind;
+  resource_id: string;
+  name: string;
+  description: string;
+  updated_at: string;
+  access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export class OrganizationApiError extends Error {
@@ -335,8 +374,6 @@ function resourceAccessPath(kind: ShareableResourceKind, resourceId: string): st
       return `/api/v1/deployments/${encodedId}/access`;
     case 'knowledge_base':
       return `/api/v1/kb/${encodedId}/access`;
-    case 'skill':
-      return `/api/v1/skills/${encodedId}/access`;
   }
 }
 
@@ -350,14 +387,54 @@ export async function listResourceBindings(
   return data.items;
 }
 
-export async function changeResourceBinding(
+export async function resolveResourceShareTarget(
+  kind: ShareableResourceKind,
+  resourceId: string,
+  input: { target_type: ShareTargetType; identifier: string },
+): Promise<ResolvedShareTarget | null> {
+  const data = await requestJson<{ target: ResolvedShareTarget | null }>(
+    `/api/v1/resource-access/${encodeURIComponent(kind)}/${encodeURIComponent(resourceId)}/resolve-target`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return data.target;
+}
+
+export async function listSharedResources(
+  resourceType: ShareableResourceKind,
+  limit = 30,
+  offset = 0,
+): Promise<{ items: SharedResource[]; next_offset: number | null }> {
+  const params = new URLSearchParams({
+    resource_type: resourceType,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return requestJson(`/api/v1/resource-access/shared?${params.toString()}`);
+}
+
+export async function grantResolvedResourceBinding(
+  kind: ShareableResourceKind,
+  resourceId: string,
+  relation: ShareRelation,
+  resolutionToken: string,
+): Promise<DirectBinding> {
+  return requestJson(resourceAccessPath(kind, resourceId), {
+    method: 'POST',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify({
+      relation,
+      resolution_token: resolutionToken,
+    }),
+  });
+}
+
+export async function revokeResourceBinding(
   kind: ShareableResourceKind,
   resourceId: string,
   binding: Omit<DirectBinding, 'source'>,
-  desiredPresent: boolean,
 ): Promise<DirectBinding> {
   return requestJson(resourceAccessPath(kind, resourceId), {
-    method: desiredPresent ? 'POST' : 'DELETE',
+    method: 'DELETE',
     headers: { 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify(binding),
   });

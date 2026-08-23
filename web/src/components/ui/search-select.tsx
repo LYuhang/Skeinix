@@ -57,6 +57,7 @@ export interface SearchSelectProps {
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
+  contentClassName?: string;
   triggerTestId?: string;
   /**
    * Optional host for the floating list. Pass the containing Dialog element so
@@ -77,6 +78,7 @@ export function SearchSelect({
   disabled = false,
   className,
   triggerClassName,
+  contentClassName,
   triggerTestId,
   portalContainer,
   renderOption,
@@ -201,7 +203,10 @@ export function SearchSelect({
           align="start"
           sideOffset={6}
           collisionPadding={12}
-          className="pointer-events-auto z-modal-popover w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border border-edge-structural bg-popover text-popover-foreground shadow-popover duration-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:animate-none"
+          className={cn(
+            'pointer-events-auto z-modal-popover w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border border-edge-structural bg-popover text-popover-foreground shadow-popover duration-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:animate-none',
+            contentClassName,
+          )}
         >
           <div className="sticky top-0 z-[1] flex items-center border-b border-edge-subtle bg-popover px-3">
             <Search className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -212,6 +217,7 @@ export function SearchSelect({
               aria-expanded={open}
               aria-controls={listboxId}
               aria-activedescendant={activeOption ? `${listboxId}-${activeIndex}` : undefined}
+              aria-label={searchPlaceholder ?? t('common_search')}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={onInputKeyDown}

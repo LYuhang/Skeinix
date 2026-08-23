@@ -24,6 +24,9 @@ from vibecanvas_api.routes.runtime_model_broker import (
     _input_message_phase_rejected,
     _namespace_tools_rejected,
     _reasoning_summary_rejected,
+    _requires_eager_namespace_compatibility,
+    _responses_request_shape,
+    _SseShapeObserver,
     _rewrite_namespace_response_json,
     _rewrite_namespace_sse_line,
     _target_url,
@@ -33,6 +36,7 @@ from vibecanvas_api.routes.runtime_model_broker import (
     _web_search_external_access_rejected,
     _with_completed_assistant_status,
     _with_function_compatible_custom_tool_history,
+    _with_openrouter_server_tools,
     _without_reasoning_summary,
     _without_input_message_phase,
     _without_optional_request_fields,
@@ -237,6 +241,70 @@ def test_runtime_model_capability_cannot_select_a_different_model():
     assert exc_info.value.detail["code"] == "runtime_model_selection_denied"
 
 
+def test_responses_request_shape_never_includes_content_or_arguments():
+    shape = _responses_request_shape(json.dumps({
+        "model": "gpt-test",
+        "input": [
+            {"type": "message", "content": "private prompt"},
+            {"type": "function_call", "arguments": "private arguments"},
+        ],
+        "tools": [
+            {"type": "function", "name": "private_name", "description": "private"},
+            {"type": "local_shell"},
+        ],
+        "metadata": {"private": "value"},
+        "stream": True,
+    }).encode())
+
+    assert shape == {
+        "json": True,
+        "keys": ["input", "metadata", "model", "stream", "tools"],
+        "tool_types": {"function": 1, "local_shell": 1},
+        "input_types": {"function_call": 1, "message": 1},
+        "stream": True,
+    }
+    assert "private" not in repr(shape)
+
+
+def test_sse_shape_observer_counts_only_event_and_item_discriminators():
+    observer = _SseShapeObserver()
+    private = json.dumps({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "name": "private_tool_name",
+            "arguments": "private arguments",
+        },
+    }).encode()
+    observer.feed(b"data: " + private[:23])
+    observer.feed(private[23:] + b"\n\ndata: [DONE]\n\n")
+
+    assert observer.summary() == {
+        "event_types": {"[DONE]": 1, "response.output_item.done": 1},
+        "item_types": {"function_call": 1},
+        "failed_codes": {},
+        "chunks": 2,
+        "bytes": len(b"data: " + private + b"\n\ndata: [DONE]\n\n"),
+        "oversized_lines": 0,
+    }
+    assert "private" not in repr(observer.summary())
+
+
+def test_sse_shape_observer_exposes_only_bounded_failure_discriminators():
+    observer = _SseShapeObserver()
+    observer.feed(b'data: {"type":"response.failed","response":{"error":'
+                  b'{"code":"server_error","type":"provider_error",'
+                  b'"message":"private prompt must never be logged"}}}\n\n')
+
+    summary = observer.summary()
+
+    assert summary["failed_codes"] == {
+        "code:server_error": 1,
+        "type:provider_error": 1,
+    }
+    assert "private" not in repr(summary)
+
+
 def test_namespace_compatibility_preserves_tools_and_multistep_calls():
     body = json.dumps(
         {
@@ -298,6 +366,33 @@ def test_namespace_compatibility_preserves_tools_and_multistep_calls():
         "mcp__canvas__render": ("mcp__canvas", "render"),
         "mcp__canvas__save": ("mcp__canvas", "save"),
     }
+
+
+def test_openrouter_eagerly_uses_lossless_namespace_compatibility():
+    assert _requires_eager_namespace_compatibility("openrouter")
+    assert _requires_eager_namespace_compatibility("Open-Router")
+    assert not _requires_eager_namespace_compatibility("openai")
+
+
+def test_openrouter_responses_projects_only_the_hosted_search_descriptor():
+    body = json.dumps({
+        "model": "stealth/ox-alpha",
+        "tools": [
+            {"type": "function", "name": "shell", "parameters": {}},
+            {
+                "type": "web_search",
+                "external_web_access": True,
+                "search_context_size": "medium",
+            },
+        ],
+    }).encode()
+
+    projected = json.loads(_with_openrouter_server_tools(body))
+
+    assert projected["tools"] == [
+        {"type": "function", "name": "shell", "parameters": {}},
+        {"type": "openrouter:web_search"},
+    ]
 
 
 def test_namespace_compatibility_restores_json_and_sse_function_calls():
@@ -645,35 +740,6 @@ def test_workflow_model_capability_is_execution_scoped_and_secret_free():
         "workflow:wf-1",
         "workflow_execution:execution-1",
     ]
-
-
-def test_execution_plan_model_capability_is_chat_and_run_scoped():
-    token = mint_runtime_workflow_model_capability(
-        organization_id="org-1",
-        user_id="user-1",
-        workflow_id="chat-1",
-        execution_id="planrun-1",
-        execution_resource_type="agent_plan",
-        credential_id=None,
-        provider="openai",
-        model="gpt-test",
-        config_revision="r" * 64,
-        authorization_generation="a" * 64,
-        secret="s" * 64,
-        ttl_s=120,
-        now=1000,
-    )
-    capability = verify_runtime_workflow_model_capability(
-        token, secret="s" * 64, now=1050,
-    )
-    assert capability is not None
-    assert capability.workflow_id == "chat-1"
-    assert capability.execution_resource_type == "agent_plan"
-    payload = json.loads(
-        __import__("base64").urlsafe_b64decode(token.split(".", 1)[0] + "==")
-    )
-    assert payload["res"] == ["agent_plan:planrun-1", "chat:chat-1"]
-    assert payload["act"] == ["agent_plan:execute", "chat:execute", "model:invoke"]
 
 
 def test_service_account_workflow_capability_is_generation_fenced():

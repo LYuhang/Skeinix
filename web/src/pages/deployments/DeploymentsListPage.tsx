@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { toast } from 'sonner';
 import {
   MoreHorizontal,
@@ -48,26 +49,33 @@ import {
 import { useFormatDateTime } from '@/lib/timezone';
 import { cn } from '@/lib/utils';
 import { CreateDeploymentModal } from '@/pages/deployments/CreateDeploymentModal';
-import { ManagementPageShell } from '@/components/layout/management-page-shell';
+import { ManagementPageShell, ManagementToolbar } from '@/components/layout/management-page-shell';
+import { OperationalSummary } from '@/components/layout/operational-summary';
 import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
 import { CopyButton } from '@/components/ui/copy-button';
 import { StatusBadge } from '@/components/ui/status';
 import { formatNumber } from '@/lib/format/number';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { AsyncState } from '@/components/ui/async-state';
 import { ResourceIcon } from '@/components/presentation/ResourceIcon';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
 import { WorkflowPagination } from '@/pages/workspace/WorkflowPagination';
+import { SharedResourceList } from '@/components/resources/SharedResourceList';
+import {
+  ResourceScopeSwitch,
+  type ResourceListScope,
+} from '@/components/resources/ResourceScopeSwitch';
 
-type DeploymentKind = Extract<TriggerType, 'api' | 'webhook'>;
+type DeploymentKind = TriggerType;
 type StatusFilter = 'all' | 'active' | 'disabled';
 
 const DEPLOYMENT_TYPES: DeploymentKind[] = ['api', 'webhook'];
 const PAGE_SIZE = 25;
 
-function triggerLabel(type: TriggerType): string {
+function triggerLabel(type: TriggerType, t: TFunction): string {
   if (type === 'api') return 'API';
-  if (type === 'webhook') return 'Webhook';
-  return type;
+  return t('deployments.type.webhook', 'Webhook');
 }
 
 function endpointFor(dep: Deployment): string {
@@ -76,40 +84,14 @@ function endpointFor(dep: Deployment): string {
     : `/api/v1/deployments/${dep.slug}/invoke`;
 }
 
-function isSupportedDeployment(dep: Deployment): dep is Deployment & { trigger_type: DeploymentKind } {
-  return dep.trigger_type === 'api' || dep.trigger_type === 'webhook';
-}
-
-function SummaryCard({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  icon: typeof Rocket;
-  label: string;
-  value: string | number;
-  hint: string;
-  tone: string;
-}) {
-  return (
-    <div className="border-l border-edge-structural px-4 py-2 first:border-l-0">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className={cn('h-3.5 w-3.5', tone)} />
-        {label}
-      </div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
-      <div className="mt-1 text-xs leading-4 text-muted-foreground">{hint}</div>
-    </div>
-  );
-}
-
 export function DeploymentsListPage() {
   const { t } = useTranslation();
   const formatTime = useFormatDateTime();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const resourceScope: ResourceListScope = searchParams.get('scope') === 'shared'
+    ? 'shared'
+    : 'owned';
   const typeParam = searchParams.get('type');
   const typeFilter: 'all' | DeploymentKind = DEPLOYMENT_TYPES.includes(typeParam as DeploymentKind)
     ? typeParam as DeploymentKind
@@ -180,13 +162,13 @@ export function DeploymentsListPage() {
       q: search || undefined,
       trigger_type: typeFilter === 'all' ? undefined : typeFilter,
       enabled: statusFilter === 'all' ? undefined : statusFilter === 'active',
-      serving_only: true,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     }),
     placeholderData: (previous) => previous,
     refetchOnWindowFocus: false,
     refetchInterval: 15_000,
+    enabled: resourceScope === 'owned',
   });
 
   const enabledMutation = useMutation({
@@ -210,10 +192,7 @@ export function DeploymentsListPage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
-  const filtered = useMemo(
-    () => (query.data?.items ?? []).filter(isSupportedDeployment),
-    [query.data?.items],
-  );
+  const filtered = useMemo(() => query.data?.items ?? [], [query.data?.items]);
   const total = query.data?.total ?? filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const summary = query.data?.summary;
@@ -221,16 +200,51 @@ export function DeploymentsListPage() {
   const disabledCount = summary?.disabled ?? filtered.filter((dep) => !dep.enabled).length;
   const invokeCount = summary?.invocations
     ?? filtered.reduce((acc, dep) => acc + (dep.invoke_count ?? 0), 0);
-  const lastInvoked = summary?.last_invoked_at
-    ?? filtered.map((dep) => dep.last_invoked_at).filter(Boolean).sort().at(-1)
+  const lastActivity = summary?.last_invoked_at
+    ?? filtered
+      .map((dep) => dep.last_invoked_at)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1)
     ?? null;
+
+  const setResourceScope = (value: ResourceListScope) => updateListParams({
+    scope: value === 'shared' ? 'shared' : null,
+    page: null,
+    type: null,
+    status: null,
+  });
+
+  if (resourceScope === 'shared') {
+    return (
+      <ManagementPageShell
+        resourceKind="deployment"
+        title={t('deployments.title', 'Deployment')}
+        description={t('deployments.subtitle', 'Publish workflows as APIs or webhooks.')}
+        icon={Rocket}
+        className="gap-5"
+      >
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
+        <div className="relative min-w-[240px] sm:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            value={searchDraft}
+            onChange={(event) => setSearchDraft(event.target.value)}
+            placeholder={t('deployments.searchShared', 'Search shared deployments')}
+            className="pl-9"
+          />
+        </div>
+        <SharedResourceList resourceType="deployment" search={searchDraft} />
+      </ManagementPageShell>
+    );
+  }
 
   return (
     <>
       <ManagementPageShell
         resourceKind="deployment"
         title={t('deployments.title', 'Deployment')}
-        description={t('deployments.subtitle', 'Publish workflows as API endpoints or webhooks.')}
+        description={t('deployments.subtitle', 'Publish workflows as APIs or webhooks.')}
         icon={Rocket}
         className="gap-5"
         actions={<>
@@ -240,7 +254,7 @@ export function DeploymentsListPage() {
               onClick={() => void query.refetch()}
               disabled={query.isFetching}
             >
-              <RefreshCw className={cn('mr-2 h-4 w-4', query.isFetching && 'animate-spin')} />
+              <RefreshCw className={cn('mr-2 h-4 w-4', query.isFetching && 'animate-spin')} aria-hidden="true" />
               {t('refresh', 'Refresh')}
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
@@ -249,45 +263,29 @@ export function DeploymentsListPage() {
           </>}
       >
 
-        <section className="grid rounded-lg border border-edge-subtle bg-surface-sunken/30 py-2 md:grid-cols-4">
-          <SummaryCard
-            icon={ShieldCheck}
-            label={t('deployments.summary.active', 'Active')}
-            value={activeCount}
-            hint={t('deployments.summaryHint.active', 'Deployments accepting requests.')}
-            tone="text-state-success"
-          />
-          <SummaryCard
-            icon={PlugZap}
-            label={t('deployments.summary.disabled', 'Disabled')}
-            value={disabledCount}
-            hint={t('deployments.summaryHint.disabled', 'Deployments kept but not serving traffic.')}
-            tone="text-content-tertiary"
-          />
-          <SummaryCard
-            icon={Rocket}
-            label={t('deployments.summary.invokes', 'Total calls')}
-            value={invokeCount}
-            hint={t('deployments.summaryHint.invokes', 'Recorded API, webhook, and test invocations.')}
-            tone="text-state-info"
-          />
-          <SummaryCard
-            icon={RefreshCw}
-            label={t('deployments.summary.lastInvoked', 'Last invoked')}
-            value={formatTime(lastInvoked)}
-            hint={t('deployments.summaryHint.lastInvoked', 'Most recent request across deployments.')}
-            tone="text-focus"
-          />
-        </section>
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
+
+        <OperationalSummary
+          label={t('deployments.summary.label', 'Deployment status summary')}
+          items={[
+            { icon: ShieldCheck, label: t('deployments.summary.active', 'Active'), value: activeCount, tone: 'success', hint: t('deployments.summaryHint.active', 'Deployments accepting requests.') },
+            { icon: PlugZap, label: t('deployments.summary.disabled', 'Disabled'), value: disabledCount, tone: 'neutral', hint: t('deployments.summaryHint.disabled', 'Deployments kept but not serving traffic.') },
+            { icon: Rocket, label: t('deployments.summary.invokes', 'Total calls'), value: invokeCount, tone: 'info', hint: t('deployments.summaryHint.invokes', 'Recorded API, webhook, and test invocations.') },
+            { icon: RefreshCw, label: t('deployments.summary.lastActivity', 'Last activity'), value: formatTime(lastActivity), tone: 'neutral', hint: t('deployments.summaryHint.lastActivity', 'Most recent API, webhook, or test request.') },
+          ]}
+        />
 
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-edge-structural bg-surface-work">
-          <div className="flex flex-wrap items-center gap-3 border-b bg-surface-sunken/70 px-4 py-3">
+          <ManagementToolbar className="border-x-0 border-t-0 bg-surface-sunken/70 px-4 py-3">
             <div className="relative min-w-[240px] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input
                 value={searchDraft}
                 onChange={(event) => setSearchDraft(event.target.value)}
                 placeholder={t('deployments.search', 'Search name, endpoint, workflow, or id')}
+                aria-label={t('deployments.search', 'Search name, endpoint, workflow, or id')}
+                name="deployment-search"
+                autoComplete="off"
                 className="pl-9"
               />
             </div>
@@ -299,7 +297,7 @@ export function DeploymentsListPage() {
                 <SelectItem value="all">{t('deployments.filter.allTypes', 'All types')}</SelectItem>
                 {DEPLOYMENT_TYPES.map((type) => (
                   <SelectItem key={type} value={type}>
-                    {triggerLabel(type)}
+                    {triggerLabel(type, t)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -314,10 +312,10 @@ export function DeploymentsListPage() {
                 <SelectItem value="disabled">{t('deployments.status.disabled', 'Disabled')}</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </ManagementToolbar>
 
           {query.isLoading ? (
-            <div className="empty-state">{t('tasks.loading', 'Loading...')}</div>
+            <AsyncState kind="loading" title={t('tasks.loading', 'Loading…')} className="m-4" />
           ) : query.isError ? (
             <ActionableError
               className="m-4"
@@ -335,7 +333,7 @@ export function DeploymentsListPage() {
                 : t('deployments.emptyFiltered', 'No deployments match the current filters.')}
               description={t(
                 'deployments.emptyHint',
-                'Create an API endpoint or webhook from a workflow.',
+                'Create an API or webhook deployment from a workflow.',
               )}
             />
           ) : (
@@ -348,7 +346,7 @@ export function DeploymentsListPage() {
                     <th className="px-4 py-3 font-medium">{t('deployments.col.status', 'Status')}</th>
                     <th className="px-4 py-3 font-medium">{t('deployments.col.workflow', 'Workflow')}</th>
                     <th className="px-4 py-3 text-right font-medium">{t('deployments.col.invokes', 'Calls')}</th>
-                    <th className="px-4 py-3 font-medium">{t('deployments.col.lastInvoked', 'Last invoked')}</th>
+                    <th className="px-4 py-3 font-medium">{t('deployments.col.lastActivity', 'Last activity')}</th>
                     <th className="px-4 py-3 text-right font-medium">{t('deployments.col.actions', 'Actions')}</th>
                   </tr>
                 </thead>
@@ -369,21 +367,20 @@ export function DeploymentsListPage() {
                                 {dep.name}
                               </Link>
                               <div className="mt-1 flex max-w-[360px] items-center gap-1.5 text-xs text-muted-foreground">
-                                <code className="truncate font-mono">{endpoint}</code>
-                                <span onClick={(event) => event.stopPropagation()}>
-                                  <CopyButton
-                                    value={endpoint}
-                                    label={t('deployments.actions.copyEndpoint', 'Copy endpoint')}
-                                    copiedLabel={t('deployments.actions.copied', 'Copied')}
-                                  />
-                                </span>
+                                <code className="truncate font-mono" translate="no">{endpoint}</code>
+                                <CopyButton
+                                  value={endpoint}
+                                  label={t('deployments.actions.copyEndpoint', 'Copy endpoint')}
+                                  copiedLabel={t('deployments.actions.copied', 'Copied')}
+                                />
                               </div>
+                              <ResourceProvenanceLine provenance={dep.provenance} className="mt-0.5 flex" />
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <StatusBadge status="neutral" showDot={false}>
-                            {triggerLabel(dep.trigger_type)}
+                            {triggerLabel(dep.trigger_type, t)}
                           </StatusBadge>
                         </td>
                         <td className="px-4 py-3">
@@ -416,7 +413,7 @@ export function DeploymentsListPage() {
                                   name: dep.name,
                                 })}
                               >
-                                <MoreHorizontal className="h-4 w-4" />
+                                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
@@ -439,7 +436,7 @@ export function DeploymentsListPage() {
                               ) : null}
                               {capabilities.has('manage_access') ? (
                                 <DropdownMenuItem onClick={() => setShareTarget(dep)}>
-                                  <Share2 className="h-4 w-4" />
+                                  <Share2 className="h-4 w-4" aria-hidden="true" />
                                   {t('deployments.action.share', 'Share deployment')}
                                 </DropdownMenuItem>
                               ) : null}
@@ -450,7 +447,7 @@ export function DeploymentsListPage() {
                                     className="text-destructive focus:text-destructive"
                                     onClick={() => setConfirmDelete(dep)}
                                   >
-                                    <Trash2 className="h-4 w-4" />
+                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
                                     {t('deployments.actions.delete', 'Delete')}
                                   </DropdownMenuItem>
                                 </>

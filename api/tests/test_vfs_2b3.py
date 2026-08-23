@@ -1,7 +1,7 @@
 """VFS 2b-3 — ref-store deletion guards."""
 def test_read_ref_and_register_blob_gone():
     from vibecanvas_api.agents.tools import build_tools
-    names = {t.name for t in build_tools({"build"})}
+    names = {t.name for t in build_tools({"workflow"})}
     assert "read_ref" not in names
     # register_blob retired in the industry-standard FS redesign — pasted data
     # is now saved with write_file('/memory/…').

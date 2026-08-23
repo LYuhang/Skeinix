@@ -632,7 +632,6 @@ _PRESERVED_TENANT_TABLES = frozenset({
 
 _USER_SCOPED_TABLES = frozenset({
     "auth_identities",
-    "diagram_drafts",
     "enterprise_directory_users",
     "group_memberships",
     "mcp_oauth_connections",
@@ -643,8 +642,6 @@ _USER_SCOPED_TABLES = frozenset({
     "session_exchange_codes",
     "sessions",
     "user_agent_preferences",
-    "user_login_mfa_challenges",
-    "user_mfa_totp",
     "user_webauthn_challenges",
     "user_webauthn_credentials",
 })

@@ -475,6 +475,15 @@ async def test_oidc_pkce_callback_creates_oauth_session_and_state_is_one_time(
 
 
 async def test_enterprise_identity_schema_is_at_current_head(pg_engine) -> None:
+    from pathlib import Path
+
+    from alembic.config import Config as AlembicConfig
+    from alembic.script import ScriptDirectory
+
+    api_root = Path(__file__).resolve().parents[1]
+    alembic_config = AlembicConfig(str(api_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(api_root / "alembic"))
+    expected_head = ScriptDirectory.from_config(alembic_config).get_current_head()
     async with pg_engine.connect() as connection:
         revision = (await connection.execute(
             text("SELECT version_num FROM alembic_version")
@@ -485,7 +494,7 @@ async def test_enterprise_identity_schema_is_at_current_head(pg_engine) -> None:
             "('enterprise_identity_providers','enterprise_directory_users',"
             "'oidc_login_transactions')"
         ))).scalars())
-    assert revision == "120"
+    assert revision == expected_head
     assert {
         "enterprise_identity_providers.organization_slug",
         "enterprise_identity_providers.scim_token_hash",

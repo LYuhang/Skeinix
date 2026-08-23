@@ -27,6 +27,11 @@ def test_taxonomy_covers_security_control_plane_actions():
     assert "deployment.key_rotate" in actions.AUDIT_ACTIONS
     # dropped actions must NOT be present (no endpoint)
     assert "auth.password_change" not in actions.AUDIT_ACTIONS
+    assert "auth.passkey_register" in actions.AUDIT_ACTIONS
+    assert "auth.passkey_verify" in actions.AUDIT_ACTIONS
+    assert "auth.passkey_remove" in actions.AUDIT_ACTIONS
+    assert "auth.mfa_enroll" not in actions.AUDIT_ACTIONS
+    assert "auth.mfa_challenge" not in actions.AUDIT_ACTIONS
     assert "auth.session_revoke" in actions.AUDIT_ACTIONS
     assert "share.grant" in actions.AUDIT_ACTIONS
     assert "service_account.status_change" in actions.AUDIT_ACTIONS

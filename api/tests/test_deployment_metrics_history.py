@@ -335,6 +335,32 @@ async def test_metrics_and_history_read_invocation_store(
             session=s,
             service=_AllowAuthz(),
         )
+        bounded_history = await history(
+            dep_id=dep_id,
+            request=_StubRequest(),
+            limit=10,
+            cursor=None,
+            status_filter=None,
+            from_=base - timedelta(seconds=1),
+            to=base + timedelta(seconds=1),
+            order="asc",
+            ctx=ctx,
+            session=s,
+            service=_AllowAuthz(),
+        )
+        excluded_history = await history(
+            dep_id=dep_id,
+            request=_StubRequest(),
+            limit=10,
+            cursor=None,
+            status_filter=None,
+            from_=base + timedelta(hours=1),
+            to=None,
+            order="desc",
+            ctx=ctx,
+            session=s,
+            service=_AllowAuthz(),
+        )
 
     assert metric_resp["series"]
     assert metric_resp["series"][0]["calls"] == 1
@@ -342,6 +368,91 @@ async def test_metrics_and_history_read_invocation_store(
     assert history_resp["items"][0]["id"] == str(inv_id)
     assert history_resp["items"][0]["source"] == "sync_api"
     assert history_resp["items"][0]["latency_ms"] == 123.4
+    assert bounded_history["items"][0]["id"] == str(inv_id)
+    assert excluded_history["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_history_cursor_traverses_both_orders_without_duplicates(
+    pg_engine, app_engine, monkeypatch, pg_url,
+):
+    from vibecanvas_api.routes.deployments import history
+    from vibecanvas_api.storage import db as db_mod
+    from vibecanvas_api.storage.db import session_scope
+    monkeypatch.setattr(db_mod, "_admin_engine", None)
+    monkeypatch.setenv("ADMIN_DATABASE_URL", pg_url)
+
+    tenant_id, user_id, dep_id, base = await _seed_dep(pg_engine, app_engine)
+    invocation_ids = [uuid.uuid4() for _ in range(5)]
+    async with app_engine.connect() as c:
+        await c.execute(
+            text("SELECT set_config('app.tenant_id', :t, false)"),
+            {"t": str(tenant_id)},
+        )
+        wf_id = (
+            await c.execute(
+                text("SELECT wf_id FROM deployments WHERE id = :id"),
+                {"id": dep_id},
+            )
+        ).scalar_one()
+        for index, invocation_id in enumerate(invocation_ids):
+            submitted_at = base + timedelta(minutes=index)
+            await c.execute(
+                text(
+                    """
+                    INSERT INTO deployment_invocations(
+                        id, tenant_id, deployment_id, wf_id, trigger_type,
+                        source, status, submitted_at
+                    )
+                    VALUES (
+                        :id, :tenant_id, :deployment_id, :wf_id, 'api',
+                        'test', 'succeeded', :submitted_at
+                    )
+                    """
+                ),
+                {
+                    "id": invocation_id,
+                    "tenant_id": tenant_id,
+                    "deployment_id": dep_id,
+                    "wf_id": wf_id,
+                    "submitted_at": submitted_at,
+                },
+            )
+        await c.commit()
+
+    ctx = _Ctx(tenant_id, user_id)
+    collected: dict[str, tuple[list[dict], list[str]]] = {}
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        for order in ("desc", "asc"):
+            pages = []
+            cursor = None
+            while True:
+                page = await history(
+                    dep_id=dep_id,
+                    request=_StubRequest(),
+                    limit=2,
+                    cursor=cursor,
+                    status_filter=None,
+                    order=order,
+                    ctx=ctx,
+                    session=s,
+                    service=_AllowAuthz(),
+                )
+                pages.append(page)
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+            ids = [item["id"] for page in pages for item in page["items"]]
+            collected[order] = (pages, ids)
+
+    desc_pages, desc_ids = collected["desc"]
+    asc_pages, asc_ids = collected["asc"]
+    assert [len(page["items"]) for page in desc_pages] == [2, 2, 1]
+    assert [len(page["items"]) for page in asc_pages] == [2, 2, 1]
+    assert desc_ids == [str(value) for value in reversed(invocation_ids)]
+    assert asc_ids == [str(value) for value in invocation_ids]
+    assert len(desc_ids) == len(set(desc_ids))
+    assert len(asc_ids) == len(set(asc_ids))
 
 
 def test_routes_mounted():

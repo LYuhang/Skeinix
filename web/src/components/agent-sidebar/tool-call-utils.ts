@@ -1,17 +1,5 @@
 import type { MergedToolCall } from './types';
 
-export interface ExecutionPlanToolTarget {
-  planId: string;
-  runId: string;
-  revision?: number;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
 export function workflowIdFromToolCall(call: MergedToolCall): string | null {
   const artifact = call.artifact;
   const nested = artifact?.artifact;
@@ -38,24 +26,4 @@ export function workflowIdFromToolCall(call: MergedToolCall): string | null {
     // Legacy plain-text results carry no workflow id.
   }
   return null;
-}
-
-export function executionPlanFromToolCall(
-  call: MergedToolCall,
-): ExecutionPlanToolTarget | null {
-  if (call.name !== 'create_execution_plan') return null;
-  const artifact = record(call.artifact);
-  const artifactBody = record(artifact?.artifact);
-  const handles = record(artifactBody?.handles);
-  const plan = record(handles?.execution_plan);
-  const planId = plan?.plan_id;
-  const runId = plan?.plan_run_id;
-  if (typeof planId !== 'string' || !planId || typeof runId !== 'string' || !runId) {
-    return null;
-  }
-  return {
-    planId,
-    runId,
-    revision: typeof plan.revision === 'number' ? plan.revision : undefined,
-  };
 }

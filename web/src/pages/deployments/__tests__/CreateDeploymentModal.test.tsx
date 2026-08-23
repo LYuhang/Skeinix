@@ -154,4 +154,5 @@ describe('<CreateDeploymentModal>', () => {
     expect(trigger).toHaveTextContent('Workflow 24');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
+
 });

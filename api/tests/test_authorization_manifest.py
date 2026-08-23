@@ -34,13 +34,32 @@ def test_every_api_route_has_a_complete_typed_permission_manifest():
     assert all(
         item.permission.admission is AdmissionKind.PUBLIC
         or (
-            item.permission.resource_type is not None
+            (
+                item.permission.resource_type is not None
+                or item.permission.resource_type_options
+            )
             and item.permission.action is not None
             and item.permission.selector not in {"", "none"}
             and item.permission.parent_resolver not in {"", "none"}
         )
         for item in manifest
     )
+
+
+def test_share_target_resolver_manifest_has_exact_dynamic_resource_allowlist():
+    by_endpoint = {
+        item.endpoint: item.permission
+        for item in route_permission_manifest(build_app())
+    }
+    permission = by_endpoint["resolve_share_target"]
+    assert permission.resource_type is None
+    assert {item.value for item in permission.resource_type_options} == {
+        "workflow",
+        "task",
+        "deployment",
+        "knowledge_base",
+    }
+    assert permission.action is Action.MANAGE_ACCESS
 
 
 def test_every_session_protected_http_route_resolves_current_user():
@@ -98,12 +117,10 @@ def test_platform_mcp_manifest_has_one_policy_per_exported_tool():
         "build",
         "config",
         "deployment",
-        "diagram",
         "interactive",
         "knowledge",
         "task",
         "workflow",
-        "plan",
     }
     assert all(item.parent_resolver for item in manifest)
     actions = {
@@ -117,13 +134,14 @@ def test_platform_mcp_manifest_has_one_policy_per_exported_tool():
     assert actions[("deployment", "deployment_create")] is Action.DEPLOY
     assert actions[("deployment", "deployment_delete")] is Action.DELETE
     assert (
-        actions[("knowledge", "list_knowledge_bases")]
+        actions[("knowledge", "knowledge_list")]
         is Action.VIEW_METADATA
     )
-    assert actions[("knowledge", "get_knowledge_base")] is Action.VIEW
-    assert actions[("knowledge", "list_knowledge_files")] is Action.VIEW
-    assert actions[("knowledge", "search_knowledge")] is Action.USE
-    assert actions[("knowledge", "read_knowledge_file")] is Action.USE
+    assert actions[("knowledge", "knowledge_get")] is Action.USE
+    assert actions[("knowledge", "knowledge_create")] is Action.CREATE
+    assert actions[("knowledge", "knowledge_update")] is Action.UPDATE
+    assert actions[("knowledge", "knowledge_delete")] is Action.DELETE
+    assert actions[("knowledge", "knowledge_search")] is Action.USE
     assert actions[("build", "run_workflow")] is Action.EXECUTE
     assert all(server != "browser" for server, _tool in actions)
 

@@ -239,6 +239,7 @@ class KbRepo:
                     KbFile.kb_id,
                     func.count(KbFile.id).label("file_count"),
                     func.coalesce(func.sum(KbFile.chunk_count), 0).label("chunk_count"),
+                    func.sum(case((KbFile.status == "stored", 1), else_=0)).label("stored_count"),
                     func.sum(case((KbFile.status == "pending", 1), else_=0)).label("pending_count"),
                     func.sum(case((KbFile.status == "indexing", 1), else_=0)).label("indexing_count"),
                     func.sum(case((KbFile.status == "indexed", 1), else_=0)).label("indexed_count"),
@@ -256,6 +257,7 @@ class KbRepo:
             str(row["kb_id"]): {
                 "file_count": int(row["file_count"] or 0),
                 "chunk_count": int(row["chunk_count"] or 0),
+                "stored_count": int(row["stored_count"] or 0),
                 "pending_count": int(row["pending_count"] or 0),
                 "indexing_count": int(row["indexing_count"] or 0),
                 "indexed_count": int(row["indexed_count"] or 0),
@@ -304,6 +306,24 @@ class KbRepo:
             summary=kb.summary,
         )
         await self.session.flush()
+
+    async def bump_package_version(self, kb_id: uuid.UUID) -> int:
+        """Serialize and increment the authoritative file-tree revision."""
+        kb = (
+            await self.session.execute(
+                select(KnowledgeBase)
+                .where(
+                    KnowledgeBase.id == kb_id,
+                    KnowledgeBase.deleted_at.is_(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if kb is None:
+            raise LookupError("knowledge_not_found")
+        kb.package_version += 1
+        await self.session.flush()
+        return kb.package_version
 
     async def set_summary_if_empty(
         self,
@@ -355,19 +375,6 @@ class KbRepo:
         self.session.add(kf)
         await self.session.flush()
         return kf
-
-    async def find_by_content_hash(
-        self, kb_id: uuid.UUID, content_hash: str,
-    ) -> Optional[KbFile]:
-        result = await self.session.execute(
-            select(KbFile).where(
-                KbFile.kb_id == kb_id,
-                KbFile.content_hash == content_hash,
-                KbFile.deleted_at.is_(None),
-            )
-        )
-        file = result.scalar_one_or_none()
-        return await self._materialize_file(file) if file is not None else None
 
     async def get_file(self, file_id: uuid.UUID) -> Optional[KbFile]:
         """Look up a live (non-soft-deleted) file by id. Returns None if
@@ -435,25 +442,6 @@ class KbRepo:
             update(KbFile).where(KbFile.id == file_id)
             .values(deleted_at=datetime.now(timezone.utc))
         )
-        await self.session.flush()
-
-    async def reset_for_reindex(self, file_id: uuid.UUID) -> None:
-        """Clear status / error / soft-delete so a new ``tasks`` row can
-        be enqueued for re-indexing. Chunks are wiped by the indexer
-        service layer (see T4 / T11), NOT here."""
-        file = await self.session.get(KbFile, file_id)
-        if file is None:
-            raise LookupError(f"Knowledge Base file {file_id} not found")
-        await self._materialize_file(file)
-        await self._store_file_private(
-            file,
-            name=file.name,
-            error_message=None,
-        )
-        file.status = "pending"
-        file.deleted_at = None
-        file.chunk_count = 0
-        file.indexed_at = None
         await self.session.flush()
 
     async def fail_pending_if_stale(
@@ -537,29 +525,6 @@ class KbRepo:
             await self._materialize_file(file)
             result.append((chunk, file))
         return result
-
-    async def read_file_chunks(
-        self,
-        *,
-        kb_id: uuid.UUID,
-        file_id: uuid.UUID,
-        offset: int,
-        limit: int,
-    ) -> tuple[KbFile | None, list[KbChunk]]:
-        """Read one page from the normalized, encrypted source text view."""
-        file = await self.get_file(file_id)
-        if file is None or file.kb_id != kb_id or file.status != "indexed":
-            return None, []
-        rows = list((await self.session.execute(
-            select(KbChunk)
-            .where(KbChunk.kb_id == kb_id, KbChunk.file_id == file_id)
-            .order_by(KbChunk.chunk_index)
-            .offset(offset)
-            .limit(limit)
-        )).scalars().all())
-        for chunk in rows:
-            await self.materialize_chunk(chunk)
-        return file, rows
 
     async def delete_chunks_for_file(self, file_id: uuid.UUID) -> int:
         result = await self.session.execute(

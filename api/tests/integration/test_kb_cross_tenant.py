@@ -47,6 +47,17 @@ async def _seed_tenant_and_user(pg_engine, tenant_id, user_id) -> None:
             {"u": user_id, "t": tenant_id,
              "e": f"kb-cross-{uuid.uuid4().hex[:6]}@example.com"},
         )
+        # Production registration and migration 055 establish one personal
+        # organization per account. Knowledge responses now include resource
+        # provenance, so the route-level fixture must preserve that invariant.
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"test-{tenant_id.hex}"},
+        )
 
 
 class _StubCtx:

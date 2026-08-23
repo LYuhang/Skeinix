@@ -155,60 +155,37 @@ describe('Preview descriptor live updates', () => {
     expect(mocks.resolvePreview).toHaveBeenCalledTimes(2);
   });
 
-  it('records Diagram T0/T1 from the initial revision reconciliation frame', async () => {
-    const diagramRef: ChatFileRefV1 = {
-      ...fileRef,
-      path: '/data/diagrams/live.vdiagram.json',
-    };
-    const current = {
-      ...descriptor('sha256:diagram'),
-      fileRef: diagramRef,
-      name: 'live.vdiagram.json',
-      renderer: 'diagram' as const,
-      detectedType: 'diagram' as const,
-    };
-    mocks.resolvePreview.mockResolvedValue(current);
-    let streamOptions: {
-      onmessage: (message: { event: string; data: string }) => void;
-    } | undefined;
+  it('shares one live event transport across duplicate views of the same file', async () => {
+    mocks.resolvePreview.mockResolvedValue(descriptor('sha256:first'));
+    let streamSignal: AbortSignal | undefined;
     mocks.fetchEventSource.mockImplementation(
-      async (_url: string, options: typeof streamOptions) => {
-        streamOptions = options;
+      async (_url: string, options: { signal?: AbortSignal }) => {
+        streamSignal = options.signal;
+        await new Promise<void>(() => {});
       },
     );
-    window.__VIBECANVAS_DIAGRAM_TIMELINE__ = [];
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const { result } = renderHook(
-      () => usePreviewDescriptor(diagramRef),
+    const first = renderHook(
+      () => usePreviewDescriptor(fileRef),
       { wrapper: createWrapper(queryClient) },
     );
-    await waitFor(() => expect(result.current.data?.revision).toBe('sha256:diagram'));
+    const second = renderHook(
+      () => usePreviewDescriptor({ ...fileRef }),
+      { wrapper: createWrapper(queryClient) },
+    );
 
-    act(() => streamOptions?.onmessage({
-      event: 'preview_ready',
-      data: JSON.stringify({
-        event_id: 20,
-        path: diagramRef.path,
-        revision: 'sha256:diagram',
-        committed_at: '2026-08-05T10:00:00.000Z',
-        committed_event_id: 20,
-      }),
-    }));
+    await waitFor(() => expect(mocks.fetchEventSource).toHaveBeenCalledTimes(1));
+    expect(streamSignal?.aborted).toBe(false);
 
-    expect(window.__VIBECANVAS_DIAGRAM_TIMELINE__).toEqual([
-      {
-        stage: 'T0', path: diagramRef.path, revision: 'sha256:diagram',
-        timestamp: Date.parse('2026-08-05T10:00:00.000Z'), eventId: 20,
-      },
-      expect.objectContaining({
-        stage: 'T1', path: diagramRef.path, revision: 'sha256:diagram', eventId: 20,
-      }),
-    ]);
+    first.unmount();
+    expect(streamSignal?.aborted).toBe(false);
+    second.unmount();
+    expect(streamSignal?.aborted).toBe(true);
   });
 
-  it('installs a successful Save locally without resolving the file again', async () => {
+  it('installs an explicit Save result locally without resolving again', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -222,7 +199,6 @@ describe('Preview descriptor live updates', () => {
       sizeBytes: 5,
       contentType: 'text/markdown',
     });
-    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderHook(
       () => useWritePreviewFile(fileRef),
       { wrapper: createWrapper(queryClient) },
@@ -234,7 +210,6 @@ describe('Preview descriptor live updates', () => {
         content: 'after',
       });
     });
-
     expect(queryClient.getQueryData<PreviewDescriptorV1>(
       previewDescriptorQueryKey(fileRef),
     )).toMatchObject({
@@ -242,7 +217,6 @@ describe('Preview descriptor live updates', () => {
       sizeBytes: 5,
       content: { inlineText: 'after' },
     });
-    expect(invalidate).not.toHaveBeenCalled();
     expect(mocks.resolvePreview).not.toHaveBeenCalled();
   });
 });

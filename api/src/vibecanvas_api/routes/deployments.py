@@ -1,10 +1,9 @@
 """Deployments — CRUD routes. T4 ships ``POST /api/v1/deployments``.
 
-Single create path for all three trigger types (api / webhook / cron).
+Single create path for the two external trigger types (API / webhook).
 The handler:
 
-1. Validates the request body (slug pattern, trigger enum, version_pin
-   enum, IANA timezone, cron expression syntax).
+1. Validates the request body (slug pattern, trigger enum and version_pin).
 2. Resolves ``pinned_major`` / ``pinned_sub`` when ``version_pin == 'specific'``
    (defaults to current HEAD if the caller did not supply them — 404 if
    the workflow has no versions yet).
@@ -12,7 +11,6 @@ The handler:
    - ``api`` → ``api_key`` (returned once; stored as SHA-256 hash).
    - ``webhook`` → ``hmac_secret`` (returned once; envelope-encrypted by
      host-side SecretService).
-   - ``cron`` → no credential (the dispatcher iterates rows under admin).
 4. Inserts the row via ``DeploymentsRepo`` under the tenant-bound DI
    session (RLS applies). ``IntegrityError`` becomes a 409 (slug already
    in use OR wf_id FK violation).
@@ -30,10 +28,7 @@ import re
 import uuid
 from datetime import datetime
 from time import perf_counter
-from typing import List, Optional
-from zoneinfo import ZoneInfo
-
-from croniter import croniter
+from typing import Annotated, List, Literal, Optional
 from fastapi import (
     APIRouter,
     Depends,
@@ -44,7 +39,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +62,9 @@ from vibecanvas_api.authorization.dependencies import (
 from vibecanvas_api.authorization.mutations import AuthzMutationError
 from vibecanvas_api.authorization.openfga_client import (
     OpenFgaUnavailableError,
+)
+from vibecanvas_api.authorization.share_resolution import (
+    binding_from_share_resolution,
 )
 from vibecanvas_api.authorization.projection import (
     apply_committed_structural_mutations,
@@ -92,6 +90,7 @@ from vibecanvas_api.authorization.types import (
 )
 from vibecanvas_api.config import config
 from vibecanvas_api.schemas.access import (
+    DirectBindingGrantIn,
     DirectBindingIn,
     DirectBindingListOut,
     DirectBindingOut,
@@ -99,6 +98,10 @@ from vibecanvas_api.schemas.access import (
 )
 from vibecanvas_api.security.secret_service import secret_service
 from vibecanvas_api.services.secrets import generate_api_key, generate_hmac_secret
+from vibecanvas_api.services.access_presentation import direct_binding_out
+from vibecanvas_api.services.resource_provenance import (
+    ResourceProvenanceBuilder,
+)
 from vibecanvas_api.services.service_account_credentials import (
     bind_workflow_credentials,
 )
@@ -117,7 +120,6 @@ router = APIRouter(prefix="/api/v1/deployments", tags=["deployments"])
 
 # Module-level constants — keep cheap to import-time validate.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-_ALLOWED_TRIGGER_TYPES = frozenset({"api", "webhook", "cron"})
 _ALLOWED_VERSION_PIN = frozenset({"head", "specific"})
 
 
@@ -219,7 +221,7 @@ def _binding_out(binding: RelationshipBinding) -> DirectBindingOut:
 
 
 def _binding_from_body(
-    body: DirectBindingIn,
+    body: DirectBindingIn | DirectBindingGrantIn,
     *,
     ctx: AuthContext,
     deployment_id: uuid.UUID,
@@ -255,12 +257,10 @@ class CreateDeploymentBody(BaseModel):
     wf_id: str
     name: str = Field(..., min_length=1, max_length=200)
     slug: str
-    trigger_type: str
+    trigger_type: Literal["api", "webhook"]
     version_pin: str
     pinned_major: Optional[int] = None
     pinned_sub: Optional[int] = None
-    cron_expr: Optional[str] = None
-    cron_tz: str = "UTC"
     rate_limit_qps: int = 10
 
     @field_validator("slug")
@@ -274,27 +274,11 @@ class CreateDeploymentBody(BaseModel):
             )
         return v
 
-    @field_validator("trigger_type")
-    @classmethod
-    def _tt(cls, v: str) -> str:
-        if v not in _ALLOWED_TRIGGER_TYPES:
-            raise ValueError("trigger_type must be one of: api, webhook, cron")
-        return v
-
     @field_validator("version_pin")
     @classmethod
     def _vp(cls, v: str) -> str:
         if v not in _ALLOWED_VERSION_PIN:
             raise ValueError("version_pin must be one of: head, specific")
-        return v
-
-    @field_validator("cron_tz")
-    @classmethod
-    def _tz(cls, v: str) -> str:
-        try:
-            ZoneInfo(v)
-        except Exception as exc:
-            raise ValueError(f"invalid IANA timezone: {v}") from exc
         return v
 
     @field_validator("rate_limit_qps")
@@ -303,23 +287,6 @@ class CreateDeploymentBody(BaseModel):
         if v < 0:
             raise ValueError("rate_limit_qps must be >= 0")
         return v
-
-    @model_validator(mode="after")
-    def _cron_required(self):
-        """``trigger_type='cron'`` ⇒ ``cron_expr`` is required and must
-        parse. We do NOT enforce ``cron_expr is None`` for non-cron
-        triggers — a caller might preset a future cron expression
-        before flipping the trigger; the DB CHECK only requires
-        ``cron_expr IS NOT NULL`` when ``trigger_type='cron'``."""
-        if self.trigger_type == "cron":
-            if not self.cron_expr:
-                raise ValueError(
-                    "cron_expr is required when trigger_type='cron'"
-                )
-            if not croniter.is_valid(self.cron_expr):
-                raise ValueError(f"invalid cron expression: {self.cron_expr}")
-        return self
-
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_deployment(
@@ -330,13 +297,13 @@ async def create_deployment(
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ):
-    """Create a deployment of any trigger type. Returns ``{id, ...one-shot
+    """Create an API or webhook deployment. Returns ``{id, ...one-shot
     plaintext credentials...}``. Subsequent GETs (T5) MUST NOT include
     the plaintext credentials.
 
     Resolution rules for ``pinned_major`` / ``pinned_sub``:
     * ``version_pin='head'`` → both forced to ``None`` (the row tracks
-      the workflow's HEAD pointer; the dispatcher resolves at fire-time).
+      the workflow's HEAD pointer; invocation resolves it at run time).
     * ``version_pin='specific'`` + both supplied → trust the caller (FK
       / CHECK constraint will reject an invalid pair at INSERT time).
     * ``version_pin='specific'`` + either missing → default to the
@@ -424,8 +391,6 @@ async def create_deployment(
         version_pin=body.version_pin,
         pinned_major=pinned_major,
         pinned_sub=pinned_sub,
-        cron_expr=body.cron_expr,
-        cron_tz=body.cron_tz,
         rate_limit_qps=body.rate_limit_qps,
     )
 
@@ -461,9 +426,6 @@ async def create_deployment(
         response_extras["webhook_url"] = (
             f"/api/v1/deployments/{body.slug}/webhook"
         )
-    # cron: no plaintext credential. The dispatcher (T10) walks rows
-    # under the admin role; no secret is exposed at create time.
-
     try:
         dep_id = await repo.insert(**fields)
         await session.flush()  # surface IntegrityError NOW, not on dep teardown
@@ -550,6 +512,11 @@ async def create_deployment(
     return {
         "id": str(dep_id),
         "access": access_from_decision(decision).model_dump(mode="json"),
+        "provenance": (
+            await ResourceProvenanceBuilder(session).build(
+                creator_user_id=ctx.user_id,
+            )
+        ).model_dump(mode="json"),
         **response_extras,
     }
 
@@ -583,14 +550,16 @@ class PatchDeploymentBody(BaseModel):
     name: Optional[str] = None
     enabled: Optional[bool] = None
     rate_limit_qps: Optional[int] = None
-    cron_expr: Optional[str] = None
-    cron_tz: Optional[str] = None
     version_pin: Optional[str] = None
     pinned_major: Optional[int] = None
     pinned_sub: Optional[int] = None
 
 
-def _scrub_secret_fields(dep: dict, decision: Decision) -> dict:
+async def _scrub_secret_fields(
+    dep: dict,
+    decision: Decision,
+    provenance: ResourceProvenanceBuilder,
+) -> dict:
     """Strip credential material and references from a deployment row dict
     and normalise UUID / datetime values for JSON serialization.
 
@@ -611,23 +580,24 @@ def _scrub_secret_fields(dep: dict, decision: Decision) -> dict:
         if out.get(key) is not None:
             out[key] = str(out[key])
     # datetimes → isoformat strings (asyncpg returns ``datetime`` objects).
-    for key in ("created_at", "updated_at", "last_invoked_at",
-                "last_fire_at", "deleted_at"):
+    for key in ("created_at", "updated_at", "last_invoked_at", "deleted_at"):
         v = out.get(key)
         if v is not None and hasattr(v, "isoformat"):
             out[key] = v.isoformat()
     out["access"] = access_from_decision(decision).model_dump(mode="json")
+    out["provenance"] = (
+        await provenance.build(creator_user_id=dep.get("user_id"))
+    ).model_dump(mode="json")
     return out
 
 
 @router.get("")
 async def list_deployments(
     request: Request,
-    trigger_type: Optional[str] = Query(default=None),
+    trigger_type: Literal["api", "webhook"] | None = Query(default=None),
     enabled: Optional[bool] = Query(default=None),
     workflow_id: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None, max_length=200),
-    serving_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     ctx: AuthContext = Depends(current_user),
@@ -642,7 +612,6 @@ async def list_deployments(
     # unit tests. FastAPI's Query sentinel is only resolved on HTTP dispatch;
     # normalize it for direct in-process calls.
     q = q if isinstance(q, str) else None
-    serving_only = serving_only if isinstance(serving_only, bool) else False
     principal = principal_for_auth(ctx)
     context = context_for_auth(ctx, request)
     authorized_ids = await service.list_authorized_ids(
@@ -658,7 +627,6 @@ async def list_deployments(
         enabled=enabled,
         wf_id=workflow_id,
         query=q,
-        serving_only=serving_only,
         limit=limit,
         offset=offset,
     )
@@ -668,7 +636,6 @@ async def list_deployments(
         enabled=enabled,
         wf_id=workflow_id,
         query=q,
-        serving_only=serving_only,
     )
     summary = await repo.summary_for_tenant(deployment_ids=authorized_ids)
     if summary.get("last_invoked_at") is not None:
@@ -682,11 +649,13 @@ async def list_deployments(
         resources=resources,
         context=context,
     )
+    provenance = ResourceProvenanceBuilder(session)
+    output_items = [
+        await _scrub_secret_fields(item, decisions[resource], provenance)
+        for item, resource in zip(items, resources, strict=True)
+    ]
     return {
-        "items": [
-            _scrub_secret_fields(item, decisions[resource])
-            for item, resource in zip(items, resources, strict=True)
-        ],
+        "items": output_items,
         "limit": limit,
         "offset": offset,
         "total": total,
@@ -717,7 +686,11 @@ async def get_deployment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="deployment not found",
         )
-    return _scrub_secret_fields(dep, authorized.decision)
+    return await _scrub_secret_fields(
+        dep,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.patch("/{dep_id}")
@@ -732,7 +705,7 @@ async def patch_deployment(
     """Partial update. Each mutable field is validated INDEPENDENTLY here
     (vs T4's ``CreateDeploymentBody`` whole-object validators) because a
     PATCH may carry any subset, and Pydantic's per-field validators don't
-    run when a field is omitted. 422 on invalid cron / tz / version_pin /
+    run when a field is omitted. 422 on invalid version_pin or
     rate_limit_qps. Soft-deleted rows surface as 404 (repo filter).
     """
     await _authorize_deployment(
@@ -750,20 +723,6 @@ async def patch_deployment(
             detail="deployment not found",
         )
     fields = body.model_dump(exclude_unset=True)
-    if "cron_expr" in fields and fields["cron_expr"] is not None:
-        if not croniter.is_valid(fields["cron_expr"]):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"invalid cron expression: {fields['cron_expr']}",
-            )
-    if "cron_tz" in fields and fields["cron_tz"] is not None:
-        try:
-            ZoneInfo(fields["cron_tz"])
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"invalid IANA timezone: {fields['cron_tz']}",
-            ) from exc
     if "version_pin" in fields and fields["version_pin"] is not None:
         if fields["version_pin"] not in _ALLOWED_VERSION_PIN:
             raise HTTPException(
@@ -794,7 +753,11 @@ async def patch_deployment(
         await session.flush()
     updated = await repo.get(dep_id)
     assert updated is not None
-    return _scrub_secret_fields(updated, authorized.decision)
+    return await _scrub_secret_fields(
+        updated,
+        authorized.decision,
+        ResourceProvenanceBuilder(session),
+    )
 
 
 @router.delete("/{dep_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -806,7 +769,7 @@ async def delete_deployment(
     service: AuthzService = Depends(get_authz_service),
 ):
     """Soft delete. Sets ``deleted_at = now()`` AND ``enabled = FALSE``
-    so the cron dispatcher / api+webhook resolvers stop returning the row
+    so the API and webhook resolvers stop returning the row
     in the same tick. The slug becomes reusable (migration-088 partial
     UNIQUE excludes soft-deleted rows). Idempotent."""
     await _authorize_deployment(
@@ -972,6 +935,7 @@ async def list_deployment_access(
     request: Request,
     continuation_token: str = "",
     ctx: AuthContext = Depends(current_user),
+    session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
 ) -> DirectBindingListOut:
     _require_sharing_enabled()
@@ -996,7 +960,10 @@ async def list_deployment_access(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DirectBindingListOut(
-        items=[_binding_out(item) for item in page.bindings],
+        items=[
+            await direct_binding_out(session, item)
+            for item in page.bindings
+        ],
         continuation_token=page.continuation_token,
     )
 
@@ -1020,10 +987,20 @@ async def _change_deployment_access(
         action=Action.MANAGE_ACCESS,
         consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
     )
-    binding = _binding_from_body(
-        body,
-        ctx=ctx,
-        deployment_id=dep_id,
+    binding = (
+        binding_from_share_resolution(
+            body.resolution_token,
+            relation=body.relation,
+            actor_user_id=ctx.user_id,
+            session_id=ctx.session_id,
+            resource=_deployment_resource(ctx, dep_id),
+        )
+        if desired_present and isinstance(body, DirectBindingGrantIn)
+        else _binding_from_body(
+            body,
+            ctx=ctx,
+            deployment_id=dep_id,
+        )
     )
     try:
         result = await (
@@ -1065,7 +1042,7 @@ async def _change_deployment_access(
 )
 async def grant_deployment_access(
     dep_id: uuid.UUID,
-    body: DirectBindingIn,
+    body: DirectBindingGrantIn,
     request: Request,
     idempotency_key: str = Header(
         min_length=1,
@@ -1320,6 +1297,9 @@ async def history(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: Optional[str] = Query(default=None),
     status_filter: Optional[List[str]] = Query(default=None, alias="status"),
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+    order: Annotated[Literal["asc", "desc"], Query()] = "desc",
     ctx: AuthContext = Depends(current_user),
     session: AsyncSession = Depends(tenant_db),
     service: AuthzService = Depends(get_authz_service),
@@ -1343,9 +1323,23 @@ async def history(
             detail="deployment not found",
         )
 
+    if any(value is not None and value.utcoffset() is None for value in (from_, to)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="from and to must include a timezone offset",
+        )
+    if from_ is not None and to is not None and from_ > to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="from must be before or equal to to",
+        )
+
     return await DeploymentInvocationsRepo(session).history(
         deployment_id=dep_id,
         limit=limit,
         cursor=cursor,
         statuses=status_filter,
+        from_=from_,
+        to=to,
+        descending=order == "desc",
     )

@@ -127,7 +127,7 @@ async def test_chat_messages_are_ciphertext_only_without_stream_shape_change(
 
 
 @pytest.mark.asyncio
-async def test_active_diagram_view_update_is_exact_and_preserves_server_ref(
+async def test_active_diagram_context_is_an_ordinary_file_reference(
     pg_session,
 ):
     await _seed_and_bind(pg_session)
@@ -137,45 +137,13 @@ async def test_active_diagram_view_update_is_exact_and_preserves_server_ref(
         name="diagram context",
         chat_id=f"diagram_{uuid.uuid4().hex[:8]}",
     )
-    diagram_ref = {
-        "path": "/data/diagrams/system.vdiagram.json",
+    file_ref = {
+        "path": "/data/diagrams/system.drawio",
         "revision": "sha256:revision-1",
         "source_hash": "sha256:source-1",
-        "bundle_hash": "sha256:source-1",
-        "scene_ref": "scene://sha256:scene-1",
-        "compiler_version": "1.1.0",
-        "theme_version": "1.0.0",
     }
-    await repo.set_active_diagram(
-        chat_id,
-        diagram_ref,
-        family="architecture",
-        diagram_type="system-container",
-    )
-
-    updated = await repo.update_active_diagram_view(
-        chat_id,
-        expected_path=diagram_ref["path"],
-        expected_revision=diagram_ref["revision"],
-        expected_source_hash=diagram_ref["source_hash"],
-        selected_element_ids=["api"],
-        viewport_bounds={"x": 10, "y": 20, "width": 800, "height": 600},
-    )
-
-    assert updated["diagram_ref"] == diagram_ref
-    assert updated["family"] == "architecture"
-    assert updated["selected_element_ids"] == ["api"]
-    assert updated["viewport_bounds"]["width"] == 800
-    with pytest.raises(ValueError, match="revision_conflict"):
-        await repo.update_active_diagram_view(
-            chat_id,
-            expected_path=diagram_ref["path"],
-            expected_revision="sha256:stale",
-            expected_source_hash=diagram_ref["source_hash"],
-            selected_element_ids=[],
-            viewport_bounds=None,
-        )
-    assert (await repo.get_active_diagram(chat_id)) == updated
+    await repo.set_active_diagram(chat_id, file_ref)
+    assert (await repo.get_active_diagram(chat_id)) == {"file_ref": file_ref}
 
 
 @pytest.mark.asyncio
@@ -188,7 +156,7 @@ async def test_chat_display_metadata_is_ciphertext_only(pg_session):
         name=title,
         chat_id=f"metadata_{uuid.uuid4().hex[:8]}",
     )
-    await repo.set_active_modes(chat_id, {"build"})
+    await repo.set_active_modes(chat_id, {"workflow"})
 
     row = await pg_session.get(Chat, chat_id)
     assert row is not None and row.metadata_ciphertext
@@ -202,7 +170,7 @@ async def test_chat_display_metadata_is_ciphertext_only(pg_session):
     sessions = await repo.list_sessions("__encrypted_chat_metadata")
     restored = next(item for item in sessions if item["chat_id"] == chat_id)
     assert restored["name"] == title
-    assert restored["active_modes"] == ["build"]
+    assert restored["active_modes"] == ["workflow"]
 
 
 @pytest.mark.asyncio
@@ -342,7 +310,7 @@ async def test_chat_command_and_workflow_context_are_user_scoped(pg_session):
     chat_id = await owner.register_session(
         "__chat_owner", name="owned chat", chat_id="owned_chat"
     )
-    await owner.set_active_modes(chat_id, {"build"})
+    await owner.set_active_modes(chat_id, {"workflow"})
     await owner.set_current_workflow_id(chat_id, wf["wf_id"])
 
     other = ChatRepo(pg_session, str(other_user))
@@ -354,7 +322,7 @@ async def test_chat_command_and_workflow_context_are_user_scoped(pg_session):
     await other.set_active_modes(chat_id, {"browser"})
     await other.set_current_workflow_id(chat_id, None)
 
-    assert await owner.get_active_modes(chat_id) == {"build"}
+    assert await owner.get_active_modes(chat_id) == {"workflow"}
     assert await owner.get_current_workflow_id(chat_id) == wf["wf_id"]
     assert await owner.get_platform_context_binding(chat_id) == {
         "chat_id": chat_id,

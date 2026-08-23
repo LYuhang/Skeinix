@@ -10,7 +10,7 @@ import {
   type ComponentType,
   type LazyExoticComponent,
 } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AsyncState } from '@/components/ui/async-state';
@@ -27,8 +27,10 @@ import { RendererErrorBoundary } from '@/components/ui/renderer-error-boundary';
 import { usePreviewDescriptor } from '@/lib/api/queries/previews';
 import { formatBytes } from '@/lib/format/bytes';
 import type { FileRefV1, PreviewRendererId } from '@/lib/preview/protocol';
+import { standalonePreviewHref } from '@/lib/preview/standalone-preview';
 import type { PreviewRendererProps } from './renderer-types';
 import { PreviewErrorState } from './PreviewErrorState';
+import { routePreviewDescriptor } from './preview-routing';
 
 const TextRenderer = lazy(() => import('./TextPreviewRenderers').then(
   (module) => ({ default: module.TextPreviewRenderer }),
@@ -42,20 +44,14 @@ const HtmlRenderer = lazy(() => import('./TextPreviewRenderers').then(
 const PdfRenderer = lazy(() => import('./PdfPreviewRenderer').then(
   (module) => ({ default: module.PdfPreviewRenderer }),
 ));
-const DocxRenderer = lazy(() => import('./DocxPreviewRenderer').then(
-  (module) => ({ default: module.DocxPreviewRenderer }),
-));
-const PptxRenderer = lazy(() => import('./PptxPreviewRenderer').then(
-  (module) => ({ default: module.PptxPreviewRenderer }),
-));
 const SpreadsheetRenderer = lazy(() => import('./SpreadsheetPreviewRenderer').then(
   (module) => ({ default: module.SpreadsheetPreviewRenderer }),
 ));
 const MediaRenderer = lazy(() => import('./MediaPreviewRenderer').then(
   (module) => ({ default: module.MediaPreviewRenderer }),
 ));
-const DiagramRenderer = lazy(() => import('./DiagramPreviewRenderer').then(
-  (module) => ({ default: module.DiagramPreviewRenderer }),
+const DrawioRenderer = lazy(() => import('./DrawioPreviewRenderer').then(
+  (module) => ({ default: module.DrawioPreviewRenderer }),
 ));
 const UnsupportedRenderer = lazy(() => import('./UnsupportedPreviewRenderer').then(
   (module) => ({ default: module.UnsupportedPreviewRenderer }),
@@ -69,13 +65,13 @@ const rendererRegistry: Record<
   markdown: MarkdownRenderer,
   html: HtmlRenderer,
   pdf: PdfRenderer,
-  docx: DocxRenderer,
-  pptx: PptxRenderer,
+  docx: PdfRenderer,
+  pptx: PdfRenderer,
   spreadsheet: SpreadsheetRenderer,
   image: MediaRenderer,
   audio: MediaRenderer,
   video: MediaRenderer,
-  diagram: DiagramRenderer,
+  drawio: DrawioRenderer,
   unsupported: UnsupportedRenderer,
 };
 
@@ -85,15 +81,38 @@ export interface ChatFilePreviewHandle {
 
 export const ChatFilePreview = forwardRef<ChatFilePreviewHandle, {
   fileRef: FileRefV1;
+  fileType?: string;
+  allowEditing?: boolean;
+  allowOpenInNewPage?: boolean;
   onOpenFile?: (path: string) => void;
-}>(function ChatFilePreview({ fileRef, onOpenFile }, forwardedRef) {
+}>(function ChatFilePreview({
+  fileRef,
+  fileType = 'auto',
+  allowEditing = true,
+  allowOpenInNewPage = true,
+  onOpenFile,
+}, forwardedRef) {
   const { t } = useTranslation();
   const descriptorQuery = usePreviewDescriptor(fileRef);
   const [dirty, setDirty] = useState(false);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [manualLoadRevision, setManualLoadRevision] = useState<string | null>(null);
   const pendingLeaveRef = useRef<(() => void) | null>(null);
-  const descriptor = descriptorQuery.data;
+  const resolvedDescriptor = descriptorQuery.data;
+  const descriptor = useMemo(
+    () => resolvedDescriptor
+      ? (() => {
+          const routed = routePreviewDescriptor(resolvedDescriptor, fileType);
+          return allowEditing
+            ? routed
+            : {
+                ...routed,
+                capabilities: { ...routed.capabilities, edit: false },
+              };
+        })()
+      : undefined,
+    [allowEditing, fileType, resolvedDescriptor],
+  );
 
   const requestLeave = useCallback((onLeave: () => void) => {
     if (!dirty) {
@@ -142,6 +161,22 @@ export const ChatFilePreview = forwardRef<ChatFilePreviewHandle, {
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {descriptor.contentType} · {formatBytes(descriptor.sizeBytes)}
         </span>
+        {allowOpenInNewPage ? (
+          <Button asChild variant="ghost" size="sm">
+            <a
+              href={standalonePreviewHref(fileRef, fileType)}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={t('preview.action.openInNewPage', 'Open in new page')}
+              title={t('preview.action.openInNewPage', 'Open in new page')}
+            >
+              <ExternalLink className="mr-1 h-3.5 w-3.5" />
+              <span className="hidden sm:inline">
+                {t('preview.action.openInNewPage', 'Open in new page')}
+              </span>
+            </a>
+          </Button>
+        ) : null}
         {descriptor.capabilities.download && descriptor.content?.url ? (
           <Button asChild variant="ghost" size="sm">
             <a href={descriptor.content.url} download={descriptor.name}>
@@ -159,7 +194,7 @@ export const ChatFilePreview = forwardRef<ChatFilePreviewHandle, {
           <RefreshCw className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-hidden">
         {descriptor.loadPolicy === 'manual' && !loadAllowed ? (
           <AsyncState
             kind="empty"
@@ -196,6 +231,7 @@ export const ChatFilePreview = forwardRef<ChatFilePreviewHandle, {
                 loadAllowed={loadAllowed}
                 onDirtyChange={setDirty}
                 onOpenFile={onOpenFile}
+                onReload={() => void descriptorQuery.refetch()}
               />
             </Suspense>
           </RendererErrorBoundary>
@@ -204,9 +240,7 @@ export const ChatFilePreview = forwardRef<ChatFilePreviewHandle, {
       <Dialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {t('preview.leave.title', 'Discard unsaved changes?')}
-            </DialogTitle>
+            <DialogTitle>{t('preview.leave.title', 'Discard unsaved changes?')}</DialogTitle>
             <DialogDescription>
               {t(
                 'preview.leave.description',

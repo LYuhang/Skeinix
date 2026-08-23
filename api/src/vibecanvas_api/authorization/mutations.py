@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 
-from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vibecanvas_api.audit import actions as audit_actions
@@ -16,6 +17,7 @@ from vibecanvas_api.storage.db import short_session_scope
 from vibecanvas_api.storage.models_authorization import (
     AuthzEdgeRevision,
     AuthzMutation,
+    SharedResourceProjection,
 )
 from vibecanvas_api.storage.models_org import GroupMembership
 from vibecanvas_api.storage.repo_org import GroupRepo
@@ -283,6 +285,11 @@ class AuthzMutationCoordinator:
                     mutation.error_code = None
                     mutation.next_attempt_at = None
                     mutation.applied_at = datetime.now(timezone.utc)
+                    if mutation.kind == "direct_binding":
+                        await _sync_shared_resource_projection(
+                            session,
+                            mutation,
+                        )
             await session.flush()
 
         if failure is not None:
@@ -446,6 +453,25 @@ class AuthzMutationCoordinator:
             idempotency_key=idempotency_key,
         )
         session.add(mutation)
+        if (
+            kind == "direct_binding"
+            and not desired_present
+            and edge.subject_type == "user"
+        ):
+            # Recipient discovery fails closed as soon as revoke intent is
+            # durable. OpenFGA's revocation guard independently denies a stale
+            # tuple until the external delete is acknowledged.
+            await session.execute(
+                delete(SharedResourceProjection).where(
+                    SharedResourceProjection.owner_tenant_id
+                    == uuid.UUID(edge.organization_id),
+                    SharedResourceProjection.resource_type == edge.object_type,
+                    SharedResourceProjection.resource_id == edge.object_id,
+                    SharedResourceProjection.recipient_user_id
+                    == uuid.UUID(edge.subject_id),
+                    SharedResourceProjection.relation == edge.relation,
+                )
+            )
         if kind == "direct_binding":
             await record_audit(
                 session,
@@ -472,6 +498,68 @@ class AuthzMutationCoordinator:
             )
         await session.flush()
         return mutation
+
+
+_RECIPIENT_PROJECTED_TYPES = frozenset({
+    "workflow",
+    "task",
+    "deployment",
+    "knowledge_base",
+})
+
+
+async def _sync_shared_resource_projection(
+    session: AsyncSession,
+    mutation: AuthzMutation,
+) -> None:
+    """Project one applied direct User edge for recipient-side discovery."""
+    if (
+        mutation.subject_type != "user"
+        or mutation.object_type not in _RECIPIENT_PROJECTED_TYPES
+    ):
+        return
+    key = {
+        "owner_tenant_id": mutation.tenant_id,
+        "resource_type": mutation.object_type,
+        "resource_id": mutation.object_id,
+        "recipient_user_id": uuid.UUID(mutation.subject_id),
+        "relation": mutation.relation,
+    }
+    if mutation.desired_state == "absent":
+        await session.execute(
+            delete(SharedResourceProjection).where(
+                SharedResourceProjection.owner_tenant_id
+                == key["owner_tenant_id"],
+                SharedResourceProjection.resource_type
+                == key["resource_type"],
+                SharedResourceProjection.resource_id == key["resource_id"],
+                SharedResourceProjection.recipient_user_id
+                == key["recipient_user_id"],
+                SharedResourceProjection.relation == key["relation"],
+            )
+        )
+        return
+    statement = pg_insert(SharedResourceProjection).values(
+        **key,
+        source_mutation_id=mutation.mutation_id,
+        edge_revision=mutation.edge_revision,
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=(
+                SharedResourceProjection.owner_tenant_id,
+                SharedResourceProjection.resource_type,
+                SharedResourceProjection.resource_id,
+                SharedResourceProjection.recipient_user_id,
+                SharedResourceProjection.relation,
+            ),
+            set_={
+                "source_mutation_id": statement.excluded.source_mutation_id,
+                "edge_revision": statement.excluded.edge_revision,
+                "updated_at": func.now(),
+            },
+        )
+    )
 
 
 class RevocationGuard:

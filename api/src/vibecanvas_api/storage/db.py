@@ -66,12 +66,14 @@ async def dispose_engine(*, close: bool = True) -> None:
 @asynccontextmanager
 async def session_scope(
     tenant_id: str | None = None,
+    user_id: str | None = None,
 ) -> AsyncIterator[AsyncSession]:
     """Short-lived session for SSE / background writes. Commits on
     success, rolls back on exception, always closes.
 
-    When ``tenant_id`` is given, sets the transaction-local
-    ``app.tenant_id`` GUC so Postgres RLS applies. This is REQUIRED for
+    When ``tenant_id`` or ``user_id`` is given, sets the transaction-local
+    RLS context GUCs. ``app.user_id`` admits only caller-owned recipient
+    projection rows; it is not an authorization decision. This is REQUIRED for
     the SSE per-message / per-node short-session writes: they run in
     their own transactions, and `set_config(..., is_local=true)` is
     transaction-scoped, so without this they would hit FORCE RLS with no
@@ -86,6 +88,11 @@ async def session_scope(
                 await s.execute(
                     text("SELECT set_config('app.tenant_id', :t, true)"),
                     {"t": tenant_id})
+            if user_id is not None:
+                await s.execute(
+                    text("SELECT set_config('app.user_id', :u, true)"),
+                    {"u": user_id},
+                )
             yield s
             await s.commit()
         except Exception:
@@ -96,6 +103,7 @@ async def session_scope(
 @asynccontextmanager
 async def short_session_scope(
     tenant_id: str | None = None,
+    user_id: str | None = None,
 ) -> AsyncIterator[AsyncSession]:
     """Drop-in for :func:`session_scope` for the run/session-lifecycle
     write-back + release sites — same commit/rollback/RLS semantics, but
@@ -143,6 +151,11 @@ async def short_session_scope(
                     await s.execute(
                         text("SELECT set_config('app.tenant_id', :t, true)"),
                         {"t": tenant_id})
+                if user_id is not None:
+                    await s.execute(
+                        text("SELECT set_config('app.user_id', :u, true)"),
+                        {"u": user_id},
+                    )
                 yield s
                 await s.commit()
             except Exception:

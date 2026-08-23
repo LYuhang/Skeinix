@@ -42,6 +42,8 @@ from vibecanvas_engine.sandbox_bus import (
 )
 
 from vibecanvas_api.services.agent_runtime.control import RuntimeControlRouter
+from vibecanvas_api.services.agent_runtime.mcp_hub import SandboxMcpHub
+from vibecanvas_api.services.agent_runtime.mcp_runtime_protocol import McpDesiredServer
 from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeBackgroundJobRequest,
     RuntimeEvent,
@@ -76,8 +78,10 @@ def _command_instruction_projection(
 
 
 _codex_client = None
-_codex_gateways = {}
+_codex_hub_gateways = {}
 _codex_threads = {}
+_active_mcp_hub: SandboxMcpHub | None = None
+_active_mcp_adapter = None
 
 
 def _preload_runtime(runtime_type: str) -> None:
@@ -96,9 +100,9 @@ def _preload_runtime(runtime_type: str) -> None:
             filesystem_vfs as _filesystem_vfs,
         )
         from vibecanvas_api.services.agent_runtime import (
-            mcp as _mcp,
+            mcp_hub_adapter as _mcp_hub_adapter,
         )
-        _ = (_agent, _context, _filesystem_vfs, _mcp)
+        _ = (_agent, _context, _filesystem_vfs, _mcp_hub_adapter)
         return
     if runtime_type == RuntimeType.CODEX.value:
         from vibecanvas_api.services.agent_runtime import codex as _codex  # noqa: F401
@@ -114,16 +118,16 @@ async def _wait_for_bus_socket(socket_path: str) -> None:
 
 
 async def _close_codex_runtime_resources() -> None:
-    global _codex_client, _codex_gateways, _codex_threads
+    global _codex_client, _codex_hub_gateways, _codex_threads
     client = _codex_client
-    gateways = _codex_gateways
+    hub_gateways = _codex_hub_gateways
     _codex_client = None
-    _codex_gateways = {}
+    _codex_hub_gateways = {}
     _codex_threads = {}
     if client is not None:
         with suppress(Exception):
             await client.close()
-    for gateway in reversed(list(gateways.values())):
+    for gateway in reversed(list(hub_gateways.values())):
         with suppress(Exception):
             await gateway.close()
 
@@ -177,7 +181,10 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
     from vibecanvas_api.services.agent_runtime.filesystem_vfs import (
         FilesystemRuntimeVfsStore,
     )
-    from vibecanvas_api.services.agent_runtime.mcp import load_runtime_mcp_tools
+    from vibecanvas_api.services.agent_runtime.mcp_hub_adapter import (
+        SandboxMcpRuntimeAdapter,
+        build_langchain_hub_tools,
+    )
 
     if request.runtime_type != RuntimeType.LANGCHAIN:
         raise ValueError(f"unsupported runtime type: {request.runtime_type.value}")
@@ -371,8 +378,72 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
         """Publish metering facts without granting the sandbox database access."""
         await _emit(channel, event("usage", dict(payload)))
 
+    async def request_mcp_gateway(
+        operation: str,
+        server: McpDesiredServer,
+        tool_name: str | None,
+        arguments: dict,
+    ) -> dict:
+        request_id = f"mcpgw_{uuid.uuid4().hex}"
+        correlation = {
+            "source": "mcp_hub",
+            "runtime_request_id": request_id,
+            "runtime_method": operation,
+            "runtime_thread_id": request.runtime_state_ref,
+            "runtime_turn_id": request.turn_id,
+            "runtime_item_id": tool_name,
+        }
+        waiter = asyncio.create_task(
+            control_router.wait("mcp_hub", request_id)
+        )
+        try:
+            await _emit(channel, event("mcp.gateway.requested", {
+                "request_id": request_id,
+                "operation": operation,
+                "server": server.name,
+                "tool_name": tool_name,
+                "arguments": dict(arguments),
+                "execution_capability": (
+                    request.mcp_execution_context.capability.get_secret_value()
+                    if request.mcp_execution_context is not None
+                    else ""
+                ),
+                "runtime_correlation": correlation,
+            }))
+            response = await waiter
+            if response.get("action") != "accepted":
+                raise RuntimeError(
+                    str(response.get("error") or "Host MCP Gateway rejected the request")
+                )
+            payload = response.get("payload")
+            if not isinstance(payload, dict):
+                raise RuntimeError("Host MCP Gateway returned an invalid payload")
+            return payload
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
     completed = False
+    active_hub: SandboxMcpHub | None = None
     try:
+        if (
+            request.mcp_desired_state is None
+            or request.mcp_execution_context is None
+        ):
+            raise RuntimeError("active MCP Hub contracts are incomplete")
+        global _active_mcp_hub, _active_mcp_adapter
+        if _active_mcp_adapter is None:
+            _active_mcp_adapter = SandboxMcpRuntimeAdapter(
+                request_mcp_gateway
+            )
+        else:
+            _active_mcp_adapter.set_gateway(request_mcp_gateway)
+        if _active_mcp_hub is None:
+            _active_mcp_hub = SandboxMcpHub(_active_mcp_adapter)
+        active_hub = _active_mcp_hub
+        await active_hub.reconcile(request.mcp_desired_state)
+        await active_hub.activate(request.mcp_execution_context)
         await _emit(channel, event("runtime.started", {}))
         # Runtime-private state is created by the adapter and never projected
         # through VFS/user APIs. Ordinary Agent filesystem tools deliberately
@@ -385,24 +456,28 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
         command_contexts, activated_commands = _command_instruction_projection(
             request
         )
-        attached_platform_mcps = [
-            server.name for server in request.mcp_servers if server.source == "platform"
-        ]
         expected_platform_mcps = set(request.active_platform_mcps)
-        if set(attached_platform_mcps) != expected_platform_mcps:
-            raise RuntimeError(
-                "Platform MCP descriptors do not match active capabilities"
-            )
-        # build/browser are activated through platform MCP descriptors.  Until a
-        # descriptor is attached, never fall back to the legacy direct tool set.
-        active_modes.difference_update({"build", "browser"})
+        # workflow/browser are activated through Hub-managed MCP capabilities.
+        # Never fall back to the removed direct tool registration path.
+        active_modes.difference_update({"workflow", "browser"})
 
         # Workspace data is already hydrated into Chat-scoped mounts by the
         # host.  Middleware reads/writes those files directly; the host performs
         # durable VFS writeback once the turn is quiescent.
         vfs_store = FilesystemRuntimeVfsStore()
-        runtime_mcp_tools, runtime_mcp_catalog = await load_runtime_mcp_tools(
-            request.mcp_servers
+        desired_servers = [
+            server
+            for server in request.mcp_desired_state.servers
+            if (
+                server.activation == "base"
+                or server.name in expected_platform_mcps
+                or server.activation == "selected"
+            )
+        ]
+        runtime_mcp_tools, runtime_mcp_catalog = await build_langchain_hub_tools(
+            active_hub,
+            _active_mcp_adapter,
+            desired_servers,
         )
         # Tools such as ``subagent`` resolve Runtime-local services through the
         # legacy process context. Both state and files are sandbox-safe adapters;
@@ -471,6 +546,8 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
         await _emit(channel, event("runtime.completed", {}))
         completed = True
     finally:
+        if active_hub is not None:
+            await active_hub.deactivate()
         clear_stores(expected_checkpointer=checkpointer)
         state_client.fail_all("runtime turn completed")
         control_task.cancel()
@@ -557,44 +634,8 @@ async def _run_background_subagent(
             tool_call_id: str,
             arguments: dict,
         ) -> str:
-            if (
-                request.approval_owner != "execution_plan"
-                or request.approval_mode == "always_allow"
-            ):
-                return "approved"
-            if not tool_call_id:
-                return "denied"
-            seed = uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"vibecanvas:plan-node-approval:{request.job_id}:{tool_call_id}",
-            ).hex
-            hitl_request_id = f"hitl_plan_node_{seed[:16]}"
-            correlation = {
-                "source": "plan-node",
-                "runtime_request_id": tool_call_id,
-                "runtime_item_id": tool_call_id,
-                "job_id": request.job_id,
-            }
-            waiter = asyncio.create_task(
-                control_router.wait("plan-node", tool_call_id)
-            )
-            await channel.send({
-                "type": MSG_BACKGROUND_JOB_EVENT,
-                "event": {
-                    "type": "approval_requested",
-                    "approval": {
-                        "hitl_request_id": hitl_request_id,
-                        "title": f"Approve {tool_name}",
-                        "prompt_text": f"Allow this Plan subagent to execute {tool_name}?",
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "runtime_correlation": correlation,
-                    },
-                },
-            })
-            response = await waiter
-            action = str(response.get("action") or "deny")
-            return "approved" if action == "approve" else "denied"
+            del tool_name, tool_call_id, arguments
+            return "approved"
 
         worker_task = asyncio.create_task(
             run_bounded_agent(
@@ -661,29 +702,39 @@ async def _run_background_subagent(
 
 async def _run(channel, request: RuntimeTurnRequest) -> None:
     if request.runtime_type == RuntimeType.CODEX:
-        # Import only after the sandbox Python paths have been initialized. The
-        # Codex adapter owns its app-server process and never initializes the
-        # LangGraph/checkpointer stack above.
+        # Import only after the sandbox Python paths have been initialized.
+        # The Codex adapter owns its app-server process and never initializes
+        # the LangGraph/checkpointer stack above.
         from vibecanvas_api.services.agent_runtime.codex import (
             create_codex_app_server,
             run_codex_turn,
         )
 
-        global _codex_client, _codex_gateways, _codex_threads
+        global _active_mcp_adapter, _active_mcp_hub
+        global _codex_client, _codex_hub_gateways, _codex_threads
         if _codex_client is None:
             _codex_client = create_codex_app_server(request)
+        from vibecanvas_api.services.agent_runtime.mcp_hub_adapter import (
+            SandboxMcpRuntimeAdapter,
+        )
+
+        async def unconfigured_gateway(*_args, **_kwargs):
+            raise RuntimeError("MCP Host Gateway is not active")
+
+        if _active_mcp_adapter is None:
+            _active_mcp_adapter = SandboxMcpRuntimeAdapter(
+                unconfigured_gateway
+            )
+        if _active_mcp_hub is None:
+            _active_mcp_hub = SandboxMcpHub(_active_mcp_adapter)
         await run_codex_turn(
             channel,
             request,
             client=_codex_client,
-            # The app-server is part of the Chat-scoped Runtime and is reused
-            # across Turns. Platform capabilities remain Turn-scoped: Codex only
-            # receives an ephemeral loopback gateway URL, while the private
-            # Authorization header stays inside the gateway and is discarded at
-            # the end of the Turn. Every thread/start or thread/resume supplies
-            # the current gateway config.
             close_client=False,
-            gateway_registry=_codex_gateways,
+            mcp_hub=_active_mcp_hub,
+            mcp_adapter=_active_mcp_adapter,
+            hub_gateway_registry=_codex_hub_gateways,
             resident_threads=_codex_threads,
         )
         return
@@ -765,6 +816,11 @@ async def main() -> int:
     finally:
         # Keep the daemon-thread owner alive for the whole Runtime process.
         _ = egress_proxy
+        global _active_mcp_hub, _active_mcp_adapter
+        if _active_mcp_hub is not None:
+            await _active_mcp_hub.close()
+            _active_mcp_hub = None
+            _active_mcp_adapter = None
         await _close_codex_runtime_resources()
         await channel.close()
 

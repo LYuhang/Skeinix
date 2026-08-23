@@ -59,6 +59,12 @@ function makeTask(over: Partial<Task> & { id: string; status: TaskStatus }): Tas
     started_at: null,
     finished_at: null,
     access: { capabilities: ['view', 'export', 'update', 'delete', 'manage_access', 'execute', 'cancel', 'resume', 'inspect_runs'], effective_role: 'manager', source: 'computed' },
+    provenance: {
+      ownership_scope: 'personal',
+      origin_type: 'created',
+      owner: { type: 'user', display_name: 'Task owner' },
+      created_by: { type: 'user', display_name: 'Task owner' },
+    },
     ...over,
   };
 }
@@ -222,5 +228,24 @@ describe('<TasksListPage>', () => {
     expect(screen.getByText('Day of month')).toBeInTheDocument();
     expect(screen.getByText('Run time')).toBeInTheDocument();
     expect(screen.getByText(/previous run is still active/i)).toBeInTheDocument();
+  });
+
+  it('keeps status choices in one multi-select and renders only selected chips', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TasksListPage />);
+    await screen.findByText('wf_42');
+
+    expect(screen.queryByLabelText('Selected status filters')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Filter by status' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'running' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'failed' }));
+
+    const selected = screen.getByLabelText('Selected status filters');
+    expect(selected).toHaveTextContent('running');
+    expect(selected).toHaveTextContent('failed');
+    await waitFor(() => expect(listTasks).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: ['running', 'failed'],
+      offset: 0,
+    })));
   });
 });

@@ -86,31 +86,6 @@ const CATALOG = Array.from({ length: 20 }, (_, index) => ({
   auth_mode: 'none',
 }));
 
-const PLATFORM_SERVICES = [
-  ['config', 'Configuration', 'Always available'],
-  ['interactive', 'Interactive', 'Always available'],
-  ['workflow', 'Workflow', 'Always available'],
-  ['task', 'Task', '/task'],
-  ['deployment', 'Deployment', '/deployment'],
-  ['knowledge', 'Knowledge', '/knowledge'],
-  ['build', 'Build & Run', '/build'],
-  ['browser', 'Browser', '/browser'],
-  ['plan', 'Execution Plan', '/plan'],
-].map(([id, name, activation]) => ({
-  id,
-  name,
-  description: `${name} platform tools`,
-  activation,
-  activation_mode: activation.startsWith('/') ? 'command' : 'base',
-  runtime_types: id === 'plan' ? ['langchain'] : ['langchain', 'codex'],
-  tools: [{
-    name: `${id}_tool`,
-    description: `${name} tool`,
-    input_schema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: {},
-  }],
-}));
-
 // sonner toast is a side effect we don't assert on here. Spy (not vi.mock) for
 // the same isolate=false order-stability reason as the API client above.
 import * as sonner from 'sonner';
@@ -145,7 +120,6 @@ describe('McpServersPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(mcpClient, 'listMcpServers').mockResolvedValue(SERVERS as never);
-    vi.spyOn(mcpClient, 'listPlatformMcpServices').mockResolvedValue(PLATFORM_SERVICES as never);
     catalogSpy = vi.spyOn(mcpClient, 'searchMcpCatalog').mockImplementation(async (source, search, limit) => ({
       source,
       ranking: search ? 'search' : 'browse',
@@ -165,6 +139,8 @@ describe('McpServersPage', () => {
     );
     expect(screen.getByText('Weather API')).toBeInTheDocument();
     expect(screen.getAllByTestId('mcp-card')).toHaveLength(2);
+    expect(screen.queryByRole('heading', { name: /^Platform$/i })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-testid^="platform-mcp-"]')).toBeNull();
   });
 
   it('labels row actions with the server name and current toggle action', async () => {
@@ -187,18 +163,6 @@ describe('McpServersPage', () => {
 
     expect(await screen.findByTestId('mcp-auth')).toHaveTextContent('None');
     expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
-  });
-
-  it('renders every live platform service as a detail link', async () => {
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId('platform-mcp-task')).toBeInTheDocument());
-
-    expect(screen.getByTestId('platform-mcp-deployment')).toHaveAttribute(
-      'href',
-      '/mcp-servers/platform/deployment',
-    );
-    expect(screen.getByTestId('platform-mcp-knowledge')).toBeInTheDocument();
-    expect(screen.getAllByTestId(/^platform-mcp-/)).toHaveLength(9);
   });
 
   it('narrows by name when typing in the search box', async () => {

@@ -119,6 +119,8 @@ function RunOutput({ wfId }: { wfId: string }) {
 
   const displayStatus =
     status !== 'idle' ? status : (persisted.data?.status ?? 'idle');
+  const completedCount = rows.filter(([, row]) => row.status === 'completed').length;
+  const failedCount = rows.filter(([, row]) => row.status === 'failed' || !!row.error).length;
 
   // End-to-end time on the "Status:" line. Live wins (the terminal frame's
   // `duration`); otherwise derive it from the process-local record's
@@ -167,6 +169,15 @@ function RunOutput({ wfId }: { wfId: string }) {
             · {totalDuration.toFixed(2)}s
           </span>
         )}
+        {rows.length > 0 ? (
+          <span className="text-muted-foreground">
+            {' '}· {t('inspector.run.nodeSummary', '{{count}} nodes, {{completed}} completed, {{failed}} failed', {
+              count: rows.length,
+              completed: completedCount,
+              failed: failedCount,
+            })}
+          </span>
+        ) : null}
       </div>
       {rows.map(([nid, e]) => (
         <div
@@ -186,13 +197,18 @@ function RunOutput({ wfId }: { wfId: string }) {
             )}
           </div>
           {e.result && (
-            <pre className="app-scrollbar mt-1 max-h-40 overflow-auto rounded bg-muted p-2 text-code whitespace-pre-wrap break-words">
-              {/* Cap the laid-out text — a huge per-node result janks the list;
-                  the full value is in the Run-node panel + the /run file. */}
-              {e.result.length > MAX_NODE_RESULT_CHARS
-                ? `${e.result.slice(0, MAX_NODE_RESULT_CHARS)}\n… (${t('inspector.run.truncated', 'truncated')})`
-                : e.result}
-            </pre>
+            <details className="mt-2 rounded border border-edge-subtle bg-surface-sunken/35">
+              <summary className="cursor-pointer px-2 py-1.5 text-xs font-medium text-content-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+                {t('inspector.run.viewNodeOutput', 'View node output')}
+              </summary>
+              <pre className="app-scrollbar max-h-40 overflow-auto border-t border-edge-subtle p-2 text-code whitespace-pre-wrap break-words">
+                {/* Cap the laid-out text — a huge per-node result janks the list;
+                    the full value is in the Run-node panel + the /run file. */}
+                {e.result.length > MAX_NODE_RESULT_CHARS
+                  ? `${e.result.slice(0, MAX_NODE_RESULT_CHARS)}\n… (${t('inspector.run.truncated', 'truncated')})`
+                  : e.result}
+              </pre>
+            </details>
           )}
           {e.error && (
             <pre className="app-scrollbar mt-1 max-h-40 overflow-auto rounded bg-destructive/10 p-2 text-code text-destructive whitespace-pre-wrap break-words">

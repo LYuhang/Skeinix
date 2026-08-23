@@ -7,13 +7,13 @@ describe('slashCommandsFromCatalog', () => {
       'task',
       'deployment',
       'knowledge',
-      'build',
+      'workflow',
       'task',
     ])).toEqual([
       { trigger: '/task', descKey: 'composer.cmd.task' },
       { trigger: '/deployment', descKey: 'composer.cmd.deployment' },
       { trigger: '/knowledge', descKey: 'composer.cmd.knowledge' },
-      { trigger: '/build', descKey: 'composer.cmd.build' },
+      { trigger: '/workflow', descKey: 'composer.cmd.workflow' },
     ]);
   });
 });

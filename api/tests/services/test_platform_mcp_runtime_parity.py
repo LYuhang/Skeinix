@@ -18,6 +18,9 @@ from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeModelOption,
     RuntimeType,
 )
+from vibecanvas_api.services.agent_runtime.model_capability import (
+    verify_runtime_model_capability,
+)
 from vibecanvas_api.services.platform_mcp.authorization import (
     prepare_platform_tool,
 )
@@ -115,11 +118,11 @@ async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
     monkeypatch,
 ) -> None:
     from vibecanvas_api.routes import chats as chats_route
-    from vibecanvas_api.services.platform_mcp import server as platform_server
+    from vibecanvas_api.services.platform_mcp import invocation as platform_invocation
 
     store = _RelationshipStore()
     client._transport.app.state.openfga_client = store
-    monkeypatch.setattr(platform_server, "_OPENFGA_CLIENT", store)
+    monkeypatch.setattr(platform_invocation, "_OPENFGA_CLIENT", store)
 
     dispatched = []
 
@@ -193,7 +196,7 @@ async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
         sent = await client.post(
             f"/api/v1/chat-scopes/{carrier_scope_id}/chats/{chat_id}/messages",
             headers=owner_headers,
-            json={"role": "user", "content": "/build inspect access"},
+            json={"role": "user", "content": "/workflow inspect access"},
         )
         assert sent.status_code == 200, sent.text
 
@@ -205,13 +208,11 @@ async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
     for request in dispatched:
         descriptor = next(
             item
-            for item in request.mcp_servers
+            for item in request.mcp_host_servers
             if item.source == "platform" and item.name == "build"
         )
         capability = verify_platform_mcp_capability(
-            descriptor.connection["headers"]["Authorization"].removeprefix(
-                "Bearer "
-            ),
+            descriptor.connection["capability"],
             secret=config.signing_secret,
             server="build",
         )
@@ -245,7 +246,7 @@ async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
 
     results: list[tuple[bool, bool]] = []
     for capability in capabilities:
-        context = await platform_server._context_for(capability)
+        context = await platform_invocation._context_for(capability)
         await prepare_platform_tool(
             context,
             server="build",
@@ -266,3 +267,96 @@ async def test_langchain_and_codex_platform_mcp_share_allow_deny_boundary(
         results.append((True, denied))
 
     assert results == [(True, True), (True, True)]
+
+
+@pytest.mark.asyncio
+async def test_codex_personal_api_uses_the_host_model_broker(
+    client,
+    monkeypatch,
+) -> None:
+    """A catalogued personal API must not fall into Codex's no-source guard."""
+    from vibecanvas_api.routes import chats as chats_route
+
+    dispatched = []
+
+    class FakeRuntimeOrchestrator:
+        async def stream_turn(self, **kwargs):
+            dispatched.append(kwargs["turn_request"])
+            yield ("NO_OP", {})
+
+    headers, me = await _register(client, "codex_personal_api")
+    credential = await client.post(
+        "/api/v1/llm-credentials",
+        headers=headers,
+        json={
+            "name": "Codex personal API",
+            "description": "route regression",
+            "provider": "openai",
+            "model_name": "gpt-codex-personal-test",
+            "model_context_tokens": 128000,
+            "api_url": "https://provider.example/v1",
+            "api_key": "personal-provider-secret",
+        },
+    )
+    assert credential.status_code == 201, credential.text
+    credential_id = credential.json()["id"]
+    public_model_id = f"codex:credential:{credential_id}"
+
+    async def fake_codex_capabilities(_credential_rows, **_kwargs):
+        model = RuntimeModelOption(
+            id=public_model_id,
+            label="Codex personal API",
+            provider="openai",
+            is_default=True,
+        )
+        return RuntimeCapabilities(
+            runtime_type=RuntimeType.CODEX,
+            runtime_available=True,
+            authenticated=True,
+            source="test",
+            models=[model],
+            default_model_id=model.id,
+        )
+
+    monkeypatch.setattr(
+        chats_route,
+        "AgentRuntimeOrchestrator",
+        FakeRuntimeOrchestrator,
+    )
+    monkeypatch.setattr(
+        chats_route,
+        "codex_capabilities",
+        fake_codex_capabilities,
+    )
+    settings = await client.put(
+        "/api/v1/agent-runtime/settings",
+        headers=headers,
+        json={"default_runtime_type": "codex"},
+    )
+    assert settings.status_code == 200, settings.text
+    scope_id = (
+        await client.get("/api/v1/chats/bootstrap", headers=headers)
+    ).json()["carrier_scope_id"]
+
+    sent = await client.post(
+        f"/api/v1/chat-scopes/{scope_id}/chats/codex-personal/messages",
+        headers=headers,
+        json={
+            "role": "user",
+            "content": "hello",
+            "agent_settings": {"model_id": public_model_id},
+        },
+    )
+    assert sent.status_code == 200, sent.text
+    assert len(dispatched) == 1
+    model = dispatched[0].model
+    assert model["id"] == "gpt-codex-personal-test"
+    assert model["base_url"].endswith("/api/internal/runtime-model/v1")
+    assert "personal-provider-secret" not in repr(model)
+    capability = verify_runtime_model_capability(
+        model["api_key"],
+        secret=config.signing_secret,
+    )
+    assert capability is not None
+    assert capability.organization_id == me["tenant_id"]
+    assert capability.credential_id == credential_id

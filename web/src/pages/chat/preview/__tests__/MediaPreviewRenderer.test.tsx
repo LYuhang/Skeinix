@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import i18n from '@/lib/i18n';
 import type { PreviewDescriptorV1 } from '@/lib/preview/protocol';
@@ -73,5 +73,26 @@ describe('MediaPreviewRenderer', () => {
 
     expect(screen.queryByText('100%', { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByRole('toolbar', { name: 'Image zoom controls' })).not.toBeInTheDocument();
+  });
+
+  it('refreshes an expired media URL once before showing a renderer error', () => {
+    const onReload = vi.fn();
+    render(
+      <MediaPreviewRenderer
+        descriptor={imageDescriptor}
+        loadAllowed
+        onDirtyChange={() => undefined}
+        onReload={onReload}
+      />,
+    );
+
+    const image = screen.getByRole('img', { name: 'chart.png' });
+    fireEvent.error(image);
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Preview unavailable')).not.toBeInTheDocument();
+
+    fireEvent.error(image);
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Preview unavailable')).toBeInTheDocument();
   });
 });

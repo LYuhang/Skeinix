@@ -565,13 +565,6 @@
   "organization.identity.clientAuthDescription": "Change the standard token endpoint authentication method or rotate the client secret. Existing secrets are never displayed.",
   "organization.identity.replacementClientSecret": "Replacement client secret",
   "organization.identity.keepClientSecret": "Leave blank to keep the current secret.",
-  "auth_mfa_back": "Back to password",
-  "auth_mfa_code": "Authenticator code",
-  "auth_mfa_code_or_recovery": "Authenticator or recovery code",
-  "auth_mfa_description": "Your password was accepted. Use an enrolled factor to finish signing in.",
-  "auth_mfa_or": "or",
-  "auth_mfa_title": "Complete two-step verification",
-  "auth_mfa_verify": "Verify and sign in",
   "auth_logout": "Sign out",
   "auth_new_password_label": "New password",
   "settings_title": "Settings",
@@ -613,7 +606,7 @@
   "embed.tab.settings": "Settings",
   "embed.tab.aria": "Side panel sections",
   "settings_tab_account": "Account",
-  "account_subtitle": "Manage irreversible account actions.",
+  "account_subtitle": "Manage passkeys and the account lifecycle.",
   "account_delete_title": "Delete account",
   "account_delete_desc_immediate": "Your account and personal services are locked immediately, then permanent deletion begins. This cannot be cancelled.",
   "account_delete_desc_delayed": "Your account and personal services are locked immediately. Permanent deletion starts after {{days}} days unless you cancel from the sign-in page.",
@@ -723,6 +716,7 @@
   "common_create": "Create",
   "common_cancel": "Cancel",
   "common.cancel": "Cancel",
+  "common.saving": "Saving…",
   "common.previous": "Previous",
   "common.next": "Next",
   "refresh": "Refresh",
@@ -804,6 +798,8 @@
   "tasks.status.paused": "Paused",
   "tasks.type.batch_exec": "Batch run",
   "tasks.type.scheduled_run": "Scheduled run",
+  "tasks.type.batch_exec.description": "Run one workflow across a table of records and collect row-level results.",
+  "tasks.type.scheduled_run.description": "Run a workflow automatically on a recurring schedule.",
   "tasks.col.status": "Status",
   "tasks.col.sandbox": "Sandbox",
   "tasks.col.task": "Task",
@@ -850,11 +846,13 @@
   "tasks.summaryHint.finished": "Batch jobs completed successfully.",
   "tasks.scheduled.name": "Name",
   "tasks.scheduled.timing": "Cadence",
+  "tasks.scheduled.everySeconds": "Every {{count}} seconds",
   "tasks.scheduled.hourly": "Hourly",
   "tasks.scheduled.daily": "Daily",
   "tasks.scheduled.weekly": "Weekly",
   "tasks.scheduled.enabled": "Enable after creation",
   "tasks.scheduled.timezone": "Timezone",
+  "tasks.scheduled.fixedInputs": "Fixed inputs",
   "tasks.scheduled.mountUserStorage": "Mount user storage",
   "tasks.scheduled.mountUserStorageHint": "Allow each run to access files under /mount.",
   "tasks.scheduled.inputPreset": "Workflow input preset",
@@ -872,7 +870,34 @@
   "tasks.scheduled.resume": "Resume schedule",
   "tasks.scheduled.paused": "Schedule paused",
   "tasks.scheduled.resumed": "Schedule resumed",
+  "tasks.scheduled.configuration": "Schedule configuration",
+  "tasks.scheduled.operationalSummary": "Schedule summary",
+  "tasks.scheduled.executionsRecorded": "Recorded executions",
+  "tasks.scheduled.configurationDescription": "Timing and workflow settings used for each scheduled execution.",
+  "tasks.scheduled.nextRun": "Next run",
+  "tasks.scheduled.lastStatus": "Last status",
+  "tasks.scheduled.runHistory": "Run history",
+  "tasks.scheduled.runHistoryDescription": "Select an execution to focus its timing, result, and event context.",
+  "tasks.scheduled.noRuns": "No executions yet.",
+  "tasks.scheduled.selectedRun": "Selected run",
+  "tasks.scheduled.notification": "Notification",
+  "tasks.executionStatus.queued": "Queued",
+  "tasks.executionStatus.running": "Running",
+  "tasks.executionStatus.succeeded": "Succeeded",
+  "tasks.executionStatus.failed": "Failed",
+  "tasks.executionStatus.cancelled": "Cancelled",
+  "tasks.executionStatus.skipped": "Skipped",
+  "tasks.trigger.scheduled": "Scheduled",
+  "tasks.trigger.manual": "Manual",
+  "tasks.notificationStatus.queued": "Queued",
+  "tasks.notificationStatus.skipped": "Not sent",
   "tasks.searchPlaceholder": "Search task or workflow ID",
+  "tasks.filters.status": "Filter by status",
+  "tasks.filters.statusLabel": "Status",
+  "tasks.filters.clear": "Clear status filters",
+  "tasks.filters.selected": "Selected status filters",
+  "tasks.filters.removeStatus": "Remove {{status}} filter",
+  "tasks.action.openMenu": "Open task actions",
   "tasks.action.share": "Share task",
   "deployments.action.share": "Share deployment",
   "tasks.sandbox.pending": "Pending",
@@ -887,6 +912,27 @@
   "tasks.cancelConfirmDesc": "The backend will stop scheduling new work, release the sandbox, and close the task when cleanup is complete.",
   "tasks.runningCount": "{{count}} running",
   "taskDetail.title": "Task",
+  "taskDetail.tabsLabel": "Task detail sections",
+  "taskDetail.tab.overview": "Execution overview",
+  "taskDetail.tab.logs": "Execution logs",
+  "logs.timeRange": "Time range",
+  "logs.range.1h": "Last hour",
+  "logs.range.24h": "Last 24 hours",
+  "logs.range.7d": "Last 7 days",
+  "logs.range.30d": "Last 30 days",
+  "logs.range.all": "All time",
+  "logs.range.custom": "Custom range",
+  "logs.from": "From",
+  "logs.to": "To",
+  "logs.sort": "Sort",
+  "logs.sort.desc": "Newest first",
+  "logs.sort.asc": "Oldest first",
+  "logs.loadedVisible": "{{visible}} visible · {{loaded}} loaded",
+  "logs.loadOlder": "Load older records",
+  "logs.loadNewer": "Load newer records",
+  "logs.loadingMore": "Loading…",
+  "logs.loadError": "Failed to load logs.",
+  "logs.loadErrorHint": "Check the connection and try again.",
   "taskDetail.backToList": "Back to tasks",
   "taskDetail.invalidId": "Missing task id in URL",
   "taskDetail.loadError": "Failed to load this task. It may have been deleted or you may not have access.",
@@ -894,16 +940,46 @@
   "taskDetail.startedAt": "Started",
   "taskDetail.finishedAt": "Finished",
   "taskDetail.summary": "Summary",
+  "taskDetail.summaryDescription": "Outcome of the completed batch and access to its result files.",
   "taskDetail.rowsTotal": "Rows total",
   "taskDetail.rowsOk": "Rows ok",
   "taskDetail.rowsFailed": "Rows failed",
   "taskDetail.rowsProgress": "{{done}} of {{total}} rows done",
+  "taskDetail.setup": "Task setup",
+  "taskDetail.setupDescription": "Input and processing settings captured when this batch was submitted.",
+  "taskDetail.inputRows": "Input rows",
+  "taskDetail.mappedFields": "Mapped fields",
+  "taskDetail.parallelRows": "Parallel rows",
+  "taskDetail.output": "Output",
+  "taskDetail.outputManaged": "Managed by Skeinix",
   "taskDetail.error": "Error",
+  "taskDetail.errorHint": "The task could not finish. Review the input and workflow configuration, then run it again.",
   "taskDetail.events": "Events",
+  "taskDetail.eventsDescription": "Live execution updates. Expand an event only when technical details are needed.",
+  "taskDetail.progressDescription": "Live completion and execution timing for this task.",
+  "taskDetail.severity": "Severity",
+  "taskDetail.eventType": "Event type",
+  "taskDetail.visibleEvents": "Visible events: {{count}}",
+  "taskDetail.noMatchingEvents": "No events match these filters.",
+  "taskDetail.level.all": "All severities",
+  "taskDetail.level.info": "Information",
+  "taskDetail.level.warning": "Warning",
+  "taskDetail.level.error": "Error",
+  "taskDetail.level.debug": "Debug",
+  "taskDetail.eventType.all": "All event types",
+  "taskDetail.eventType.state": "State",
+  "taskDetail.eventType.progress": "Progress",
+  "taskDetail.eventType.log": "Log",
+  "taskDetail.eventType.result": "Result",
+  "taskDetail.eventType.terminal": "Completion",
   "taskDetail.streamLive": "Live",
   "taskDetail.streamClosed": "Stream closed",
   "taskDetail.noEvents": "No events yet.",
   "taskDetail.downloadCsv": "Download CSV",
+  "taskDetail.download": "Download",
+  "taskDetail.viewInStorage": "View in Storage",
+  "taskDetail.storageHint": "Result files are stored under this task in Storage. Open Storage to preview individual artifacts or download them here.",
+  "technicalDetails": "Technical details",
   "taskDetail.resume": "Resume",
   "taskDetail.resumeRequested": "Resume requested",
   "taskDetail.resumeFailed": "Resume failed",
@@ -997,11 +1073,11 @@
   "canvas.warn.danglingRefField": "An input references an output field that doesn't exist.",
   "nav.deployments": "Deployment",
   "deployments.title": "Deployment",
-  "deployments.subtitle": "Publish workflows as API endpoints or webhooks.",
+  "deployments.subtitle": "Publish workflows as APIs or webhooks.",
   "deployments.new": "New deployment",
   "deployments.empty": "No deployments yet.",
   "deployments.emptyFiltered": "No deployments match the current filters.",
-  "deployments.emptyHint": "Create an API, webhook, or scheduled deployment from a workflow.",
+  "deployments.emptyHint": "Create an API or webhook deployment from a workflow.",
   "deployments.load_error": "Failed to load deployments.",
   "deployments.deleted": "Deployment deleted",
   "deployments.filter.all": "All",
@@ -1010,17 +1086,18 @@
   "deployments.search": "Search deployments, workflows, or endpoints",
   "deployments.type.api": "API",
   "deployments.type.webhook": "Webhook",
-  "deployments.type.cron": "Cron",
   "deployments.status.active": "Active",
   "deployments.status.disabled": "Disabled",
   "deployments.summary.active": "Active",
   "deployments.summary.disabled": "Disabled",
   "deployments.summary.invokes": "Total calls",
   "deployments.summary.lastInvoked": "Last invoked",
+  "deployments.summary.lastActivity": "Last activity",
   "deployments.summaryHint.active": "Deployments accepting requests.",
   "deployments.summaryHint.disabled": "Deployments kept but not serving traffic.",
-  "deployments.summaryHint.invokes": "Recorded API, webhook, and test invocations.",
+  "deployments.summaryHint.invokes": "Recorded API, webhook, and test requests.",
   "deployments.summaryHint.lastInvoked": "Most recent request across deployments.",
+  "deployments.summaryHint.lastActivity": "Most recent API, webhook, or test request.",
   "deployments.col.name": "Name",
   "deployments.col.type": "Type",
   "deployments.col.status": "Status",
@@ -1028,6 +1105,7 @@
   "deployments.col.enabled": "Enabled",
   "deployments.col.invokes": "Invokes",
   "deployments.col.lastInvoked": "Last invoked",
+  "deployments.col.lastActivity": "Last activity",
   "deployments.col.actions": "Actions",
   "deployments.actions.detail": "Detail",
   "deployments.actions.delete": "Delete",
@@ -1046,14 +1124,13 @@
   "deployments.delete.desc": "This soft-deletes the deployment. The slug becomes reusable. This action cannot be undone.",
   "deployments.delete.cancel": "Cancel",
   "deployments.delete.confirm": "Delete",
-  "deployments.detail.tabs.config": "Config",
-  "deployments.detail.tabs.code": "Code examples",
   "deployments.detail.tabs.overview": "Overview",
-  "deployments.detail.tabs.runs": "Runs / Logs",
-  "deployments.detail.tabs.monitoring": "Monitoring",
-  "deployments.detail.tabs.security": "Security",
-  "deployments.detail.tabs.history": "History",
-  "deployments.detail.tabs.test": "Test",
+  "deployments.detail.tabs.usage": "Usage",
+  "deployments.detail.tabs.activity": "Activity",
+  "deployments.detail.tabs.settings": "Settings",
+  "deployments.detail.testAction": "Test",
+  "deployments.detail.recentRuns": "Recent runs",
+  "deployments.detail.runHistoryRegion": "Deployment run history",
   "deployments.code.title": "Call this deployment",
   "deployments.code.placeholderHint": "Examples use environment-variable placeholders and never include your secret value.",
   "deployments.code.copy": "Copy code example",
@@ -1074,24 +1151,27 @@
   "deployments.detail.noMetrics": "No invocations in this window.",
   "deployments.detail.status": "Status",
   "deployments.detail.statusHint": "Whether this deployment is currently serving requests.",
-  "deployments.detail.totalCalls": "Total recorded API, webhook, and test invocations.",
+  "deployments.detail.totalCalls": "Total recorded API, webhook, and test requests.",
   "deployments.detail.errorRate": "Error rate",
   "deployments.detail.errorRateHint": "Errors divided by calls in the latest metrics bucket.",
   "deployments.detail.p95Hint": "95th percentile latency in the latest metrics bucket.",
   "deployments.detail.endpoint": "Endpoint",
   "deployments.detail.versionPolicy": "Version",
   "deployments.detail.lastInvoked": "Last invoked",
-  "deployments.detail.basic": "Basic",
-  "deployments.detail.runtime": "Runtime limits",
-  "deployments.detail.capacityNote": "Capacity controls such as instances, workers, memory, and autoscaling are reserved for the runtime backend work. This page only exposes limits already supported by the API.",
+  "deployments.detail.basic": "Basic information",
+  "deployments.detail.basicDescription": "Identity and workflow routing for this deployment.",
+  "deployments.detail.editBasic": "Edit",
+  "deployments.detail.operationalSummary": "Deployment health summary",
+  "deployments.detail.lastInvokedHint": "Most recent request handled by this deployment.",
+  "deployments.detail.saveBasic": "Save basic information",
+  "deployments.detail.trafficControl": "Traffic and runtime controls",
+  "deployments.detail.trafficControlHelp": "Control whether this deployment accepts traffic and how many requests per second it allows. Requests above the limit receive HTTP 429.",
+  "deployments.detail.endpointHelp": "Use this address from your application or the examples below.",
   "deployments.detail.requestId": "Request ID",
   "deployments.detail.source": "Source",
   "deployments.detail.latency": "Latency",
   "deployments.detail.noHistoryHint": "Successful and failed invocations will appear here.",
-  "deployments.detail.qpsChart": "QPS trend",
-  "deployments.detail.rateLimitPolicy": "Rate limit policy",
-  "deployments.detail.rateLimitHint": "Requests above the QPS limit are rejected to protect sandbox capacity.",
-  "deployments.detail.securityModel": "Security model",
+  "deployments.detail.securityModel": "Access control",
   "deployments.detail.apiKeyHint": "API deployments authenticate with a Bearer API key. The key is only shown at creation or rotation time.",
   "deployments.detail.webhookHint": "Webhook deployments verify request bodies with HMAC signatures.",
   "deployments.detail.bucket": "Bucket",
@@ -1101,13 +1181,38 @@
   "deployments.detail.noHistory": "No invocations yet.",
   "deployments.detail.finished": "Finished",
   "deployments.detail.errorCol": "Error",
-  "deployments.detail.loadMore": "Load more",
   "deployments.detail.testInputs": "Inputs (JSON)",
-  "deployments.detail.testOutput": "Output",
+  "common.all": "All",
+  "deployments.detail.callsUnit": "calls",
+  "deployments.detail.errorsUnit": "errors",
+  "deployments.detail.historyErrorHint": "Check the connection and load the latest requests again.",
+  "deployments.detail.metricsChart": "Requests, errors, and latency",
+  "deployments.detail.metricsErrorHint": "Check the connection and reload the last 24 hours of metrics.",
+  "deployments.detail.noMatchingRuns": "No runs match these filters.",
+  "deployments.detail.noMetricsHint": "Metrics appear after an API, webhook, or test request. Run a test to verify the deployment and generate its first data point.",
+  "deployments.detail.noTestResponse": "No response yet",
+  "deployments.detail.p95Latency": "P95 latency",
+  "deployments.detail.requests": "Requests",
+  "deployments.detail.rotateConfirmDescription": "The current API key will stop working immediately. Update every client with the new key after rotation.",
+  "deployments.detail.rotateConfirmTitle": "Rotate API key?",
+  "deployments.detail.rotatingKey": "Rotating…",
+  "deployments.detail.runTest": "Run a test",
+  "deployments.detail.searchRuns": "Search runs",
+  "deployments.detail.searchRunsPlaceholder": "Request ID, source, or error",
+  "deployments.detail.secretSavedConfirmation": "I saved the new API key in a secure place.",
+  "deployments.detail.testRequest": "Request",
+  "deployments.detail.testRequestHelp": "Edit the example generated from the workflow Start node, then send it to this deployment.",
+  "deployments.detail.testResponse": "Response",
+  "deployments.detail.testResponseError": "The request failed. Review the message below, update the request or deployment, and try again.",
+  "deployments.detail.testResponsePending": "Run the request to see the HTTP result and workflow output here.",
+  "deployments.detail.testResponseSuccess": "The deployment accepted the request successfully.",
+  "deployments.source.test": "Test",
+  "deployments.source.sync_api": "Synchronous API",
+  "deployments.source.webhook": "Webhook",
   "deployments.detail.testInvalidJson": "Inputs are not valid JSON.",
   "deployments.testInvoke.run": "Run",
   "deployments.create.title": "New deployment",
-  "deployments.create.desc": "Bind a workflow to a trigger (HTTP API, webhook, or cron).",
+  "deployments.create.desc": "Publish a workflow through an HTTP API or webhook.",
   "deployments.create.createdHeader": "Deployment created",
   "deployments.create.oneTimeSecret": "This secret is shown only once. Copy it now — you cannot retrieve it later.",
   "deployments.create.id": "Deployment ID",
@@ -1120,6 +1225,10 @@
   "deployments.create.close": "Close",
   "deployments.create.cancel": "Cancel",
   "deployments.create.submit": "Create",
+  "deployments.create.creating": "Creating…",
+  "tasks.scheduled.schedulePreview": "Schedule preview: {{schedule}}",
+  "deployments.create.triggerHelp.api": "Call from an application",
+  "deployments.create.triggerHelp.webhook": "Receive signed events",
   "deployments.create.slugError": "Slug must match ^[a-z0-9][a-z0-9-]{0,62}$",
   "deployments.create.fields.name": "Name",
   "deployments.create.fields.slug": "Slug",
@@ -1127,8 +1236,6 @@
   "deployments.create.fields.workflow": "Workflow",
   "deployments.create.fields.triggerType": "Trigger type",
   "deployments.create.fields.versionPin": "Version pin",
-  "deployments.create.fields.cronExpr": "Cron expression",
-  "deployments.create.fields.cronTz": "Timezone",
   "deployments.create.fields.rateLimitQps": "Rate limit (QPS)",
   "deployments.create.currentWorkflow": "Current workflow",
   "deployments.create.selectWorkflow": "Select a workflow",
@@ -1426,13 +1533,13 @@
   "contextMenu.toast.copiedNode": "Copied node {{id}}",
   "execute": "Execute",
   "check": "Check",
-  "nav.credentials": "API Key",
-  "credentials.title": "API Key",
+  "nav.credentials": "API credentials",
+  "credentials.title": "API credentials",
   "credentials.subtitle": "Store the LLM API keys this workspace uses. Keys are encrypted and cannot be read back after saving.",
   "credentials.add": "Add key",
   "credentials.loading": "Loading…",
   "credentials.load_error": "Failed to load credentials.",
-  "credentials.empty": "No API keys yet. Click \"Add key\" to store one.",
+  "credentials.empty": "No API keys yet",
   "credentials.emptyHint": "Saved models become available to Chat and workflow nodes.",
   "credentials.col.name": "Name",
   "credentials.col.provider": "Provider",
@@ -1476,6 +1583,22 @@
   "credentials.delete_title": "Delete this credential?",
   "credentials.delete_confirm": "This removes the stored API key. Workflows using it will stop working. This cannot be undone.",
   "credentials.deleted": "Credential deleted",
+  "credentials.load_error_hint": "Check the connection and load the key list again.",
+  "credentials.section.identity": "Identity",
+  "credentials.section.identityHelp": "Give this saved connection a name your workspace can recognize.",
+  "credentials.section.model": "Provider and model",
+  "credentials.section.modelHelp": "Choose the API provider and the exact model identifier it accepts.",
+  "credentials.section.connection": "Connection",
+  "credentials.section.connectionHelp": "Optional overrides for custom endpoints or network routes.",
+  "credentials.section.secret": "Secret",
+  "credentials.section.secretHelp": "The key is encrypted after saving and is never displayed again.",
+  "credentials.testConnection": "Test connection",
+  "credentials.connected": "Connected",
+  "credentials.test.credentials_rejected": "Credential rejected",
+  "credentials.test.endpoint_rejected": "Endpoint rejected",
+  "credentials.test.unreachable": "Unable to reach provider",
+  "credentials.createdNextStep": "Credential saved. Select this model when you start a new Chat.",
+  "credentials.updatedNextStep": "Credential updated. Select this model when you start a new Chat.",
   "prompt_node.model_label": "model_name",
   "prompt_node.select_model": "Select a model",
   "prompt_node.saved_api": "Saved APIs",
@@ -1528,7 +1651,8 @@
   "settings_runtime_saved": "Default runtime updated",
   "settings_runtime_codex_unavailable": "Codex — adapter not installed",
   "settings_codex_connection": "Codex account",
-  "settings_codex_connection_desc": "Connect the OpenAI account used by Codex. API keys are managed separately, and models are selected when you start a chat.",
+  "settings_codex_connection_desc": "Connect the OpenAI account used by Codex. Provider API keys are available in the API keys section of Settings, and models are selected when you start a chat.",
+  "settings_tab_api_keys": "API credentials",
   "settings_codex_account_disabled": "OpenAI account sign-in is disabled for this deployment. You can still use Codex API models configured under API Keys.",
   "settings_codex_account_tab": "OpenAI account",
   "settings_codex_api_tab": "OpenAI API",
@@ -1589,6 +1713,33 @@
   "settings_codex_usage_credits_available": "Credits available",
   "settings_codex_usage_no_credits": "No extra credits",
   "settings_codex_usage_updated": "Last updated {{time}} · refreshes every minute",
+  "security.loadingPasskeys": "Loading passkeys…",
+  "security.passkeys": "Passkeys and security keys",
+  "security.passkeysDescription": "Required for sharing, credentials, organization administration, and other high-risk changes.",
+  "security.addPasskey": "Add passkey",
+  "security.passkeyAdded": "Passkey added",
+  "security.passkeyRemoved": "Passkey removed",
+  "security.syncedPasskey": "Synced passkey",
+  "security.devicePasskey": "Device-bound credential",
+  "security.removePasskey": "Remove passkey",
+  "security.noPasskeys": "No passkeys registered. A passkey is required before a high-risk action can continue.",
+  "security.addPasskeyDescription": "Confirm your password, then follow the secure browser prompt.",
+  "security.passkeyName": "Passkey name",
+  "security.defaultPasskeyName": "Passkey",
+  "security.currentPassword": "Current password",
+  "security.addingPasskey": "Adding…",
+  "security.removePasskeyDescription": "Verify with a registered passkey and confirm your password. Other sessions are not elevated by this action.",
+  "security.remove": "Remove",
+  "security.stepUpTitle": "Confirm this security-sensitive action",
+  "security.stepUpDescription": "Use a passkey or security key. Verification is bound to this site and remains valid for 10 minutes.",
+  "security.checkingPasskeys": "Checking registered passkeys…",
+  "security.passkeyPrompt": "Your browser will ask for the device PIN, biometric check, or security key associated with this account.",
+  "security.passkeyRequired": "No passkey is registered yet. Confirm your password to add one before continuing.",
+  "security.verifying": "Verifying…",
+  "security.usePasskey": "Use passkey",
+  "security.addPasskeyContinue": "Add passkey and continue",
+  "security.passkeyCancelled": "Passkey creation was cancelled or timed out.",
+  "security.passkeyVerificationCancelled": "Passkey verification was cancelled or timed out.",
   "agent_settings.default_api": "Default (platform)",
   "agent_settings.unavailable": "unavailable",
   "agent_settings.api_hint": "Manage credentials in API Management. The key never leaves the server.",
@@ -1629,50 +1780,6 @@
   "nav.storage": "Storage",
   "mcp.title": "MCP Servers",
   "mcp.subtitle": "Discover and manage external tools that agents can load when needed.",
-  "mcp.platform.heading": "Platform",
-  "mcp.platform.hint": "Built-in, read-only services are scoped to the active Chat and Agent Turn.",
-  "mcp.platform.builtin": "Built-in Platform MCP",
-  "mcp.platform.activation": "Loaded only when the command is active",
-  "mcp.platform.always_available": "Always available",
-  "mcp.platform.loading": "Loading platform capabilities…",
-  "mcp.platform.load_error": "Could not load platform MCP capabilities.",
-  "mcp.platform.no_match": "No platform capabilities match this filter.",
-  "mcp.platform.config.name": "Configuration",
-  "mcp.platform.config.description": "Read safe platform, model, current Chat, and workflow configuration.",
-  "mcp.platform.interactive.name": "Interactive",
-  "mcp.platform.interactive.description": "Render durable rich content and optionally pause for an explicit Continue action.",
-  "mcp.platform.workflow.name": "Workflow",
-  "mcp.platform.workflow.description": "List and inspect workflows that the current user is authorized to access.",
-  "mcp.platform.task.name": "Task",
-  "mcp.platform.task.description": "Inspect and manage Task Center work, scheduled runs, cancellation, and resume.",
-  "mcp.platform.deployment.name": "Deployment",
-  "mcp.platform.deployment.description": "List, inspect, create, update, and remove authorized workflow deployments.",
-  "mcp.platform.knowledge.name": "Knowledge",
-  "mcp.platform.knowledge.description": "Discover and semantically search knowledge bases available to the current user.",
-  "mcp.platform.build.name": "Build & Run",
-  "mcp.platform.build.description": "Create, validate, version, update, and execute workflows in the current Chat.",
-  "mcp.platform.browser.name": "Browser",
-  "mcp.platform.browser.description": "Control the user's connected browser, tabs, pages, and authenticated resources from the side panel.",
-  "mcp.platform.plan.name": "Execution Plan",
-  "mcp.platform.plan.description": "Validate and submit a durable dynamic execution plan for LangChain subagents.",
-  "mcp.platform.not_found": "Platform MCP not found",
-  "mcp.platform.not_found_hint": "This built-in capability is not registered by the current platform version.",
-  "mcp.platform.detail.activation": "Activation",
-  "mcp.platform.detail.base_hint": "The Runtime receives this capability on every eligible Turn.",
-  "mcp.platform.detail.command_hint": "The Runtime receives this capability after the command is activated for the Chat.",
-  "mcp.platform.detail.runtimes": "Runtimes",
-  "mcp.platform.detail.runtime_hint": "The same MCP protocol and tool schemas are used across the listed Runtimes.",
-  "mcp.platform.detail.security": "Security boundary",
-  "mcp.platform.detail.security_hint": "Calls use short-lived, Turn-bound capabilities and are re-authorized against the active user and Chat. Internal endpoints and tokens are never shown here.",
-  "mcp.platform.detail.tools": "Registered tools",
-  "mcp.platform.detail.tools_hint": "Read-only registry view generated from the backend tool definitions.",
-  "mcp.platform.detail.search_tools": "Search tools",
-  "mcp.platform.detail.read_only": "Read only",
-  "mcp.platform.detail.mutates": "Changes data",
-  "mcp.platform.detail.external": "External access",
-  "mcp.platform.detail.parameters": "Parameters: {{names}}",
-  "mcp.platform.detail.no_parameters": "No user parameters",
-  "mcp.platform.detail.no_tool_match": "No tools match your search.",
   "mcp.tools_count": "{{count}} Tools",
   "mcp.no_description": "No description provided.",
   "mcp.custom.heading": "Custom",
@@ -1745,7 +1852,6 @@
   "skills.subtitle": "Discover and manage reusable instruction packages agents can load on demand.",
   "skills.search_ph": "Search Installed Skills",
   "skills.open_menu": "Open actions for {{name}}",
-  "skills.share": "Share Skill",
   "skills.delete": "Uninstall",
   "skills.deleted": "Skill Uninstalled",
   "skills.loading": "Loading…",
@@ -1770,13 +1876,22 @@
   "tool.output": "Output",
   "tool.no_result": "(no result captured)",
   "tool.cancelled_by_user": "Tool call cancelled by user.",
-  "composer.cmd.build": "Build / modify the workflow on the canvas",
+  "composer.cmd.workflow": "Create, modify, validate, or run a workflow",
   "composer.cmd.browser": "Take over the browser to do a task",
   "composer.cmd.task": "Inspect or manage durable Task Center work",
   "composer.cmd.deployment": "Inspect or manage workflow deployments",
   "composer.cmd.knowledge": "Search authorized knowledge bases",
-  "composer.cmd.plan": "Create and preview a durable execution plan",
   "composer.cmd.diagram": "Create and review a semantic infinite-canvas diagram",
+  "composer.cmd.document": "Create and review a professional office document",
+  "preview.inline.lightweightDescription": "Open to load the full preview",
+  "preview.inline.openFile": "Open {{name}} in Preview",
+  "preview.action.edit": "Edit",
+  "preview.action.save": "Save",
+  "preview.action.exitEditing": "Exit editing",
+  "preview.exitEditing.title": "Discard unsaved changes?",
+  "preview.exitEditing.description": "Your edits have not been saved. Discard them and leave editing mode?",
+  "preview.exitEditing.keepEditing": "Keep editing",
+  "preview.exitEditing.discard": "Discard and exit",
   "composer.remove_attachment": "Remove attachment",
   "composer.add_attachment": "Add attachment",
   "composer.attach_file": "File",
@@ -1840,6 +1955,11 @@
   "tool.interactive.resource_failed": "Resource could not be loaded.",
   "tool.interactive.offloaded": "Full artifact stored at {{path}}",
   "tool.interactive.open_preview": "Open in preview",
+  "tool.interactive.open_preview_tab": "Open in a new Preview tab",
+  "preview.standalone.title": "Preview",
+  "preview.standalone.close": "Close Preview tab",
+  "preview.standalone.invalidTitle": "Unable to open Preview",
+  "preview.standalone.invalidDescription": "This Preview link is incomplete or invalid. Open the file again from its conversation.",
   "tool.interactive.no_file_path": "No file path provided.",
   "error.generic": "The tool failed.",
   "error.category.timeout": "This took too long and timed out.",
@@ -1906,6 +2026,58 @@
   "chat.title": "Chat",
   "chat.chatIdLabel": "ID",
   "chat.empty.title": "Explore with Agent",
+  "chat.examples.label": "Start with an example",
+  "chat.examples.use": "Use this example",
+  "chat.examples.tab.office": "Office",
+  "chat.examples.tab.diagram": "Diagram",
+  "chat.examples.tab.workflow": "Workflow",
+  "chat.examples.tab.operations": "Tasks and deployments",
+  "chat.examples.tab.knowledge": "Knowledge",
+  "chat.examples.office.presentation.title": "Create a presentation",
+  "chat.examples.office.presentation.description": "Research a topic and turn it into a polished slide deck.",
+  "chat.examples.office.presentation.prompt": "/document Research the latest Agent frameworks and create a polished presentation covering the background, representative frameworks, their strengths and limitations, a comparison, and key conclusions.",
+  "chat.examples.office.report.title": "Write a business report",
+  "chat.examples.office.report.description": "Structure evidence and recommendations into a professional report.",
+  "chat.examples.office.report.prompt": "/document Create a professional market analysis report for enterprise AI assistants. Include an executive summary, market landscape, user needs, competitive comparison, risks, recommendations, and cited sources.",
+  "chat.examples.office.spreadsheet.title": "Build an analysis workbook",
+  "chat.examples.office.spreadsheet.description": "Create a clear spreadsheet with formulas, summaries, and charts.",
+  "chat.examples.office.spreadsheet.prompt": "/document Create an editable quarterly sales analysis workbook with sample regional data, validated formulas, a summary sheet, conditional formatting, and charts for revenue, growth, and target attainment.",
+  "chat.examples.diagram.architecture.title": "Visualize a system architecture",
+  "chat.examples.diagram.architecture.description": "Show system boundaries, components, and data flows clearly.",
+  "chat.examples.diagram.architecture.prompt": "/diagram Create a professional architecture diagram for an AI customer-support platform. Show the web app, API gateway, Agent service, model providers, knowledge retrieval, job queue, database, object storage, and observability services, including their main data flows and trust boundaries.",
+  "chat.examples.diagram.process.title": "Map a business process",
+  "chat.examples.diagram.process.description": "Turn roles, decisions, and exceptions into an easy-to-follow flow.",
+  "chat.examples.diagram.process.prompt": "/diagram Create a professional business process diagram for an employee expense claim. Cover submission, manager approval, finance review, policy exceptions, rejection and resubmission, payment, and employee notification, with responsibilities clearly separated by role.",
+  "chat.examples.diagram.sequence.title": "Explain an interaction sequence",
+  "chat.examples.diagram.sequence.description": "Clarify how participants exchange requests, responses, and failures.",
+  "chat.examples.diagram.sequence.prompt": "/diagram Create a professional sequence diagram for an e-commerce checkout. Include the customer, storefront, order service, inventory service, payment provider, and notification service, showing the successful path plus payment failure and inventory shortage branches.",
+  "chat.examples.workflow.feedback.title": "Triage customer feedback",
+  "chat.examples.workflow.feedback.description": "Classify feedback, identify urgency, and route follow-up work.",
+  "chat.examples.workflow.feedback.prompt": "/workflow Build a workflow that accepts customer feedback, detects language and sentiment, classifies the topic and urgency, drafts a response, and routes critical issues for human review.",
+  "chat.examples.workflow.research.title": "Produce a research digest",
+  "chat.examples.workflow.research.description": "Collect sources, extract findings, and publish a concise digest.",
+  "chat.examples.workflow.research.prompt": "/workflow Build a reusable research workflow that takes a topic, searches trustworthy sources, removes duplicates, extracts key findings with citations, and produces a concise Markdown digest.",
+  "chat.examples.workflow.invoices.title": "Process incoming invoices",
+  "chat.examples.workflow.invoices.description": "Extract fields, validate totals, and flag exceptions for review.",
+  "chat.examples.workflow.invoices.prompt": "/workflow Build an invoice-processing workflow that reads uploaded invoices, extracts supplier and line-item data, validates totals and required fields, and sends exceptions to a human reviewer.",
+  "chat.examples.operations.batch.title": "Run a batch task",
+  "chat.examples.operations.batch.description": "Apply a workflow to many records and collect structured results.",
+  "chat.examples.operations.batch.prompt": "/task Create a batch task that applies my customer-feedback workflow to a CSV file, preserves row-level errors, and exports successful and failed results separately.",
+  "chat.examples.operations.schedule.title": "Schedule recurring work",
+  "chat.examples.operations.schedule.description": "Run a workflow on a schedule and retain its execution history.",
+  "chat.examples.operations.schedule.prompt": "/task Schedule my research-digest workflow to run every weekday at 09:00 in my current timezone, and keep each run result available for review.",
+  "chat.examples.operations.deploy.title": "Publish a workflow API",
+  "chat.examples.operations.deploy.description": "Expose a workflow through a controlled deployment endpoint.",
+  "chat.examples.operations.deploy.prompt": "/deployment Deploy my customer-feedback workflow as an authenticated API endpoint, use the latest workflow version, and configure a conservative request rate limit.",
+  "chat.examples.knowledge.create.title": "Create a knowledge package",
+  "chat.examples.knowledge.create.description": "Organize reusable research into a documented file collection.",
+  "chat.examples.knowledge.create.prompt": "/knowledge Research practical evaluation methods for Agent systems, organize the findings into a new knowledge package with a clear README and source files, and publish it to my Knowledge library.",
+  "chat.examples.knowledge.explore.title": "Explore existing knowledge",
+  "chat.examples.knowledge.explore.description": "Find the right package and progressively inspect relevant files.",
+  "chat.examples.knowledge.explore.prompt": "/knowledge Find my knowledge about Agent evaluation, read its README first, then summarize the recommended evaluation process and cite the relevant local files.",
+  "chat.examples.knowledge.update.title": "Update a knowledge package",
+  "chat.examples.knowledge.update.description": "Add new evidence while preserving the package structure.",
+  "chat.examples.knowledge.update.prompt": "/knowledge Open my Agent evaluation knowledge package, add recent findings and sources, update its README and directory descriptions, validate the package, and publish a new version.",
   "chat.empty.desc": "Explore first. Build when ready.",
   "chat.composer.placeholder": "Message Skeinix...",
   "chat.explorer": "Explorer",
@@ -2093,6 +2265,13 @@
   "mcp.detail.never_probed": "Never probed",
   "mcp.detail.tools.name": "Name",
   "mcp.detail.tools.description": "Description",
+  "mcp.detail.tools.search": "Search tools",
+  "mcp.detail.tools.no_match": "No tools match your search.",
+  "mcp.detail.tools.read_only": "Read only",
+  "mcp.detail.tools.mutates": "Changes data",
+  "mcp.detail.tools.idempotent": "Idempotent",
+  "mcp.detail.tools.external": "External access",
+  "mcp.detail.tools.no_parameters": "No user parameters",
   "mcp.detail.security.title": "Review external access before use",
   "mcp.detail.security.body": "MCP servers can expose tools that read, write, or call external services. This page shows the latest probed tools; audit logs should record install, probe, load, and tool-call events.",
   "skills.tab.installed": "Installed",
@@ -2267,7 +2446,10 @@
   ,"preview.error.permission_denied": "You do not have permission to view this file."
   ,"preview.error.render_failed": "The file renderer could not display this file."
   ,"preview.action.download": "Download"
+  ,"preview.action.openInNewPage": "Open in new page"
   ,"preview.action.refresh": "Refresh preview"
+  ,"preview.drawio.continueEditing": "Continue editing in draw.io"
+  ,"preview.drawio.openFailed": "Unable to open draw.io"
   ,"preview.media.zoomControls": "Image zoom controls"
   ,"preview.media.zoomOut": "Zoom out"
   ,"preview.media.zoomIn": "Zoom in"
@@ -2280,12 +2462,10 @@
   ,"preview.openError.title": "Unable to open this file"
   ,"preview.openError.action": "Try again"
   ,"preview.renderer.loading": "Loading renderer…"
-  ,"preview.leave.title": "Discard unsaved changes?"
-  ,"preview.leave.description": "This file has unsaved edits. Save them first, or discard them before leaving the tab."
-  ,"preview.leave.keepEditing": "Keep editing"
-  ,"preview.leave.discard": "Discard"
   ,"preview.table.loading": "Loading table…"
   ,"preview.table.readOnly": "Read only"
+  ,"preview.spreadsheet.formattedView": "Formatted view"
+  ,"preview.spreadsheet.dataView": "Data view"
   ,"preview.table.save": "Save"
   ,"preview.table.conflict.description": "The source file changed. Reload or explicitly overwrite the latest revision."
   ,"preview.table.conflict.reload": "Reload"
@@ -2412,18 +2592,31 @@
   ,"organization.noServiceAccounts": "No service accounts yet. They are created automatically for scheduled tasks and deployments."
   ,"share.title": "Share workflow"
   ,"share.resourceTitle": "Share resource"
-  ,"share.description": "Manage direct access to “{{name}}”."
+  ,"share.description": "Manage access to “{{name}}”."
   ,"share.effectiveAccess": "Your effective access"
   ,"share.customAccess": "Custom access"
-  ,"share.inheritedHint": "Inherited access is read-only here; change it in the source group or organization."
-  ,"share.addDirect": "Add direct access"
-  ,"share.everyone": "Everyone in this workspace"
+  ,"share.computed": "Computed"
+  ,"share.privacyHint": "Enter an exact email address or department/team path, then search explicitly. No account directory is shown."
+  ,"share.inheritedHint": "Inherited access is managed through its department, team, or organization."
+  ,"share.addDirect": "Add access"
   ,"share.user": "User"
-  ,"share.group": "Group"
-  ,"share.workspace": "Workspace"
-  ,"share.chooseTarget": "Choose…"
-  ,"share.search": "Filter users or groups…"
-  ,"share.grant": "Grant access"
+  ,"share.departmentTeam": "Department/Team"
+  ,"share.entireOrganization": "Entire organization"
+  ,"share.serviceAccount": "Service account"
+  ,"share.targetType": "Target type"
+  ,"share.emailAddress": "Complete email address"
+  ,"share.emailPlaceholder": "name@example.com"
+  ,"share.departmentPath": "Exact department/team path"
+  ,"share.groupPlaceholder": "Product / Platform"
+  ,"share.currentOrganization": "Current organization"
+  ,"share.businessTargetHint": "Search a company member by full email, a department/team by its exact path, or choose the entire organization."
+  ,"share.personalTargetHint": "Search another account by its complete email address."
+  ,"share.searchAction": "Search"
+  ,"share.searching": "Searching…"
+  ,"share.searchFailed": "Could not search for that access target."
+  ,"share.targetNotFound": "No eligible account or department/team matched that exact value."
+  ,"share.confirmAdd": "Add"
+  ,"share.adding": "Adding…"
   ,"share.granted": "Access granted"
   ,"share.revoked": "Access revoked"
   ,"share.changeFailed": "Access change failed"
@@ -2435,6 +2628,25 @@
   ,"share.role.editor": "Editor"
   ,"share.role.operator": "Operator"
   ,"share.role.manager": "Manager"
+  ,"resourceScope.label": "Resource scope"
+  ,"resourceScope.mine": "My resources"
+  ,"resourceScope.organization": "Organization"
+  ,"resourceScope.shared": "Shared with me"
+  ,"resourceScope.loading": "Loading shared resources"
+  ,"resourceScope.loadFailed": "Could not load shared resources"
+  ,"resourceScope.loadFailedHint": "Check the connection and try again."
+  ,"resourceScope.empty": "Nothing has been shared with you yet"
+  ,"resourceScope.emptyHint": "Resources shared directly with your account will appear here."
+  ,"resourceScope.noMatch": "No shared resources match this search"
+  ,"resourceScope.noMatchHint": "Try a different name or owner."
+  ,"resourceScope.sharedBy": "Shared by {{owner}}"
+  ,"resourceScope.updatedAt": "Updated {{time}}"
+  ,"resourceScope.loadMore": "Load more"
+  ,"resourceScope.loadingMore": "Loading…"
+  ,"workspace.searchShared": "Search shared workflows…"
+  ,"tasks.searchShared": "Search shared tasks"
+  ,"deployments.searchShared": "Search shared deployments"
+  ,"knowledge.searchShared": "Search shared knowledge"
   ,"inspector.executeUnavailable": "You can view this workflow, but running it is not included in your access."
   ,"privilegedSupport.title": "Privileged support mode"
   ,"privilegedSupport.organizationScope": "organization metadata"
@@ -2499,11 +2711,11 @@
   ,"skills.version_load_error_hint": "Choose another version or try loading this version again."
   ,"skills.catalog.load_error_hint": "Check the catalog connection, then load this skill again."
   ,"mcp.load_error_hint": "Check the connection, then load this server again."
-  ,"mcp.platform.load_error_hint": "Check the platform service, then reload its capabilities."
   ,"mcp.catalog.source": "Select MCP catalog"
+  ,"mcp.catalog.detail_source": "Catalog"
+  ,"skills.detail.file_count": "Files"
   ,"mcp.catalog.load_error_hint": "Check the selected registry and try loading the catalog again."
   ,"mcp.catalog.detail_error_hint": "Check the selected registry and try loading this server again."
-  ,"mcp.platform.detail.load_error_hint": "Check the platform service and try loading its tool directory again."
   ,"embed.binding_timeout": "The browser connection is taking longer than expected"
   ,"embed.binding_timeout_hint": "Make sure the browser side panel is open, then try connecting again."
   ,"embed.open_main_app": "Open main app"
@@ -2540,27 +2752,35 @@
   ,"preview.diagram.incoming": "Incoming"
   ,"preview.diagram.outgoing": "Outgoing"
   ,"preview.diagram.noProblems": "No structural or visual issues."
+  ,"preview.leave.title": "Discard unsaved changes?"
+  ,"preview.leave.description": "This file has unsaved edits. Save them first, or discard them before leaving the tab."
+  ,"preview.leave.keepEditing": "Keep editing"
+  ,"preview.leave.discard": "Discard"
+  ,"preview.mode.source": "Source"
+  ,"preview.mode.preview": "Preview"
+  ,"preview.mode.split": "Split"
+  ,"preview.conflict.description": "This file changed after editing began. Reload it or explicitly overwrite the latest revision."
+  ,"preview.conflict.reload": "Reload latest"
+  ,"preview.conflict.overwrite": "Overwrite"
+  ,"preview.conflict.overwriteTitle": "Overwrite latest version?"
+  ,"preview.conflict.overwriteDescription": "Overwrite the latest file version with your current edits?"
+  ,"preview.url.address": "Web address"
+  ,"preview.url.go": "Go"
+  ,"preview.url.reload": "Reload page"
+  ,"preview.url.openNewTab": "Open page in a new tab"
+  ,"preview.url.invalid": "Enter an absolute HTTP(S) address."
+  ,"preview.url.loading": "Loading {{host}}…"
+  ,"preview.url.timeout": "This page did not finish loading or may block embedding. Reload it, or open it in a new tab."
+  ,"preview.url.isolation": "This page is isolated from Skeinix. If the site blocks embedding,"
   ,"knowledge.tabs.overview": "Overview"
-  ,"knowledge.tabs.sources": "Sources"
-  ,"knowledge.tabs.retrieval": "Retrieval"
-  ,"knowledge.howItWorks": "How this knowledge base is used"
-  ,"knowledge.howItWorks.sourceTitle": "1. Add sources"
-  ,"knowledge.howItWorks.sourceBody": "Upload documents that contain the facts you want the Agent or a workflow to retrieve."
-  ,"knowledge.howItWorks.indexTitle": "2. Build the index"
-  ,"knowledge.howItWorks.indexBody": "The service parses each file, splits it into searchable chunks, and creates embeddings in the background."
-  ,"knowledge.howItWorks.retrieveTitle": "3. Retrieve evidence"
-  ,"knowledge.howItWorks.retrieveBody": "Test file search here, or use /knowledge in Chat to browse, grep, and read sources progressively."
-  ,"knowledge.agenticFiles": "Agentic files"
-  ,"knowledge.matchKind.exact_phrase": "Exact phrase"
-  ,"knowledge.matchKind.all_terms": "All terms"
-  ,"knowledge.matchKind.partial_terms": "Partial terms"
+  ,"knowledge.tabs.sources": "Files"
   ,"knowledge.filterHealth": "Filter by status"
   ,"knowledge.filter.all": "All statuses"
   ,"knowledge.filter.ready": "Ready"
   ,"knowledge.filter.indexing": "Indexing"
   ,"knowledge.filter.attention": "Needs attention"
   ,"knowledge.filter.empty": "Empty"
-  ,"knowledge.sort": "Sort knowledge bases"
+  ,"knowledge.sort": "Sort knowledge packages"
   ,"knowledge.sort.updated": "Recently updated"
   ,"knowledge.sort.created": "Newest created"
   ,"knowledge.sort.name": "Name"
@@ -2574,9 +2794,550 @@
   ,"knowledge.fileStatus.indexing": "indexing"
   ,"knowledge.fileStatus.indexed": "indexed"
   ,"knowledge.fileStatus.failed": "failed"
+  ,"knowledge.fileStatus.stored": "stored"
+  ,"knowledge.description": "Keep reusable notes, documents, and media in file-based packages the Agent can progressively explore."
+  ,"knowledge.emptyHint": "Create a note package, describe it in README.md, then add any supporting files."
+  ,"knowledge.sourceFiles": "Files"
+  ,"knowledge.sourceFilesHint": "README.md explains the package. Supporting folders may contain documents, source, images, audio, video, or any other useful files."
+  ,"knowledge.version": "Version {{version}}"
+  ,"knowledge.updated": "Knowledge details updated"
+  ,"knowledge.editTitle": "Edit Knowledge details"
+  ,"knowledge.editHint": "Keep the title and description concise so people and Agents can recognize the package."
+  ,"knowledge.preview.loading": "Loading preview…"
+  ,"knowledge.preview.failed": "This file could not be previewed."
+  ,"knowledge.preview.unsupported": "Preview is not available for this file type"
   ,"knowledge.noSourceSearchHint": "Try another file name or clear the search."
   ,"knowledge.delete": "Delete"
-  ,"knowledge.deleted": "Knowledge base deleted"
-  ,"knowledge.deleteTitle": "Delete this knowledge base?"
-  ,"knowledge.deleteDescription": "{{name}} and all of its source files will be removed from active retrieval."
+  ,"knowledge.deleted": "Knowledge package deleted"
+  ,"knowledge.deleteTitle": "Delete this knowledge package?"
+  ,"knowledge.deleteDescription": "{{name}} and all files in the package will be deleted."
+  ,"provenance.scope.personal": "Personal"
+  ,"provenance.scope.organization": "Organization"
+  ,"provenance.scope.platform": "Platform"
+  ,"provenance.origin.created": "Created"
+  ,"provenance.origin.uploaded": "Uploaded"
+  ,"provenance.origin.imported": "Imported"
+  ,"provenance.origin.catalogInstall": "Catalog install"
+  ,"provenance.origin.derived": "Generated"
+  ,"provenance.origin.system": "Built in"
+  ,"provenance.by": "by {{name}}"
+  ,"credentials.openrouter.connect": "Connect OpenRouter"
+  ,"credentials.openrouter.reconnect": "Reconnect OpenRouter"
+  ,"credentials.openrouter.connected": "Connected"
+  ,"credentials.openrouter.connectedToast": "OpenRouter connected"
+  ,"credentials.openrouter.description": "Connect your OpenRouter account to use the models allowed by your provider preferences and privacy settings. This does not sign you in to Skeinix."
+  ,"credentials.openrouter.catalogReady": "{{count}} models available in Chat"
+  ,"credentials.openrouter.catalogSummary": "{{freeCount}} free models. Choose the model and thinking level from the Chat composer when starting a conversation."
+  ,"credentials.openrouter.refresh": "Refresh models"
+  ,"credentials.openrouter.disconnect": "Disconnect"
+  ,"credentials.openrouter.confirmDisconnect": "Confirm disconnect"
+  ,"credentials.openrouter.disconnected": "OpenRouter disconnected"
+  ,"credentials.openrouter.unavailable": "Unavailable"
+  ,"credentials.openrouter.context": "context"
+  ,"credentials.openrouter.contextUnknown": "Context not reported"
+  ,"credentials.openrouter.tools": "Tool calling"
+  ,"credentials.openrouter.pricing": "OpenRouter pricing (input / output)"
+  ,"credentials.openrouter.emptyModels": "No compatible text and tool-capable models are currently available. Refresh after updating your OpenRouter preferences."
+  ,"credentials.openrouter.rejected": "OpenRouter rejected this key. Reconnect the account to continue."
+  ,"credentials.openrouter.refreshError": "The model catalog could not be refreshed. The previous catalog has been kept."
+  ,"credentials.openrouter.boundary": "Models and prices come from OpenRouter and may change. Skeinix does not control billing or availability. Compatible models are available to the Runtime selected in Settings, including Codex through OpenRouter Responses API."
+  ,"agent_settings.source_platform": "Platform models"
+  ,"agent_settings.source_openai_account": "OpenAI account"
+  ,"agent_settings.source_manual": "My API connections"
+  ,"agent_settings.source_other": "Other sources"
+  ,"agent_settings.choose_source": "Choose a model source"
+  ,"agent_settings.choose_source_hint": "Sources are filtered by the Runtime selected in Settings."
+  ,"agent_settings.source_model_count": "{{count}} models"
+  ,"agent_settings.source_free_count": "{{count}} free"
+  ,"agent_settings.search_models": "Search models, providers, or free…"
+  ,"agent_settings.no_matching_models": "No matching models"
+  ,"agent_settings.free_model": "Free"
+  ,"agent_settings.model_context": "{{value}} context"
+  ,"agent_settings.model_price_compact": "{{input}} / {{output}}"
+  ,"agent_settings.tool_capable": "Tools"
+  ,"credentials.openrouter.callbackFailed": "OpenRouter did not complete the connection. Start again."
+  ,"credentials.openrouter.callbackUnreachable": "Skeinix could not reach OpenRouter. Check the deployment network or proxy, then start again."
+  ,"credentials.openrouter.callbackRejected": "OpenRouter rejected or expired this authorization. Start again."
+  ,"credentials.openrouter.callbackExpired": "This connection request has expired or was already used. Start again."
+  ,"credentials.openrouter.startFailed": "Could not start the OpenRouter connection."
+  ,"tasks.scheduleProgress.paused": "Paused"
+  ,"tasks.scheduleProgress.running": "Running"
+  ,"tasks.scheduleProgress.runningWithLast": "Running · last {{status}}"
+  ,"tasks.scheduleProgress.next": "Next: {{time}}"
+  ,"tasks.scheduleProgress.none": "No next run"
+  ,"all": "All"
+  ,"edit": "Edit"
+  ,"delete": "Delete"
+  ,"deleting": "Deleting…"
+  ,"share.share": "Share"
+  ,"knowledge.title": "Knowledge"
+  ,"knowledge.back": "Knowledge"
+  ,"knowledge.create": "New knowledge base"
+  ,"knowledge.createHint": "Name the collection by the questions it should answer."
+  ,"knowledge.created": "Knowledge base created"
+  ,"knowledge.loading": "Loading knowledge bases…"
+  ,"knowledge.loadingDetail": "Loading knowledge base…"
+  ,"knowledge.loadingFiles": "Loading files…"
+  ,"knowledge.loadFailed": "Could not load knowledge bases"
+  ,"knowledge.loadFailedHint": "Check the connection and try loading the list again."
+  ,"knowledge.detailFailed": "Could not load this knowledge base"
+  ,"knowledge.forbidden": "You do not have access to Knowledge"
+  ,"knowledge.forbiddenDetail": "You do not have access to this knowledge base"
+  ,"knowledge.filesForbidden": "You do not have access to these files"
+  ,"knowledge.filesFailed": "Could not load files"
+  ,"knowledge.empty": "No knowledge bases yet"
+  ,"knowledge.emptyIndex": "Empty index"
+  ,"knowledge.noMatch": "No matching knowledge bases"
+  ,"knowledge.noMatchHint": "Try a different name or clear the search."
+  ,"knowledge.noDescription": "No description"
+  ,"knowledge.noFiles": "No files"
+  ,"knowledge.noFilesHint": "Upload a file to add it to this knowledge folder."
+  ,"knowledge.noFilesForFilter": "No sources match this filter"
+  ,"knowledge.searchList": "Search knowledge bases"
+  ,"knowledge.files": "files"
+  ,"knowledge.upload": "Upload file"
+  ,"knowledge.uploaded": "File uploaded"
+  ,"knowledge.import.action": "Upload folder"
+  ,"knowledge.import.title": "Upload a knowledge folder"
+  ,"knowledge.import.hint": "Choose a complete folder or ZIP archive. Its root README.md describes the package and its contents."
+  ,"knowledge.import.folder": "Choose folder"
+  ,"knowledge.import.folderHint": "Preserves nested directories"
+  ,"knowledge.import.zip": "Choose ZIP"
+  ,"knowledge.import.zipHint": "Imports one packaged folder"
+  ,"knowledge.import.folderSelected": "{{count}} files selected"
+  ,"knowledge.import.readmeRequired": "The selected folder must contain README.md at its root."
+  ,"knowledge.import.sourceRequired": "Choose a folder or ZIP archive."
+  ,"knowledge.import.submit": "Import knowledge"
+  ,"knowledge.import.importing": "Importing…"
+  ,"knowledge.import.created": "Knowledge folder imported"
+  ,"knowledge.fileActions": "File actions"
+  ,"knowledge.uploadFiles": "Upload files"
+  ,"knowledge.uploadFolder": "Upload folder"
+  ,"knowledge.uploadFilesHere": "Upload files here"
+  ,"knowledge.uploadFolderHere": "Upload folder here"
+  ,"knowledge.filesUploaded": "{{count}} files uploaded"
+  ,"knowledge.filesDeleted": "{{count}} files deleted"
+  ,"knowledge.deleteFolder": "Delete folder"
+  ,"knowledge.deleteFolderTitle": "Delete folder?"
+  ,"knowledge.deleteFolderDescription": "{{name}} and its {{count}} files will be permanently deleted."
+  ,"knowledge.fileDeleted": "File deleted"
+  ,"knowledge.deleteFile": "Delete {{name}}"
+  ,"knowledge.deleteFileTitle": "Delete file?"
+  ,"knowledge.deleteFileDescription": "{{name}} will be permanently deleted from this knowledge folder."
+  ,"knowledge.resizeSources": "Resize file tree"
+  ,"agentSidebar.open": "Open agent sidebar"
+  ,"agentSidebar.close": "Close agent sidebar"
+  ,"tool.diff.openFile": "Open file"
+  ,"tool.diff.copy": "Copy diff"
+  ,"tool.arguments.exactText": "Exact text details"
+  ,"tool.result.imageTooLarge": "Image output is too large to render inline."
+  ,"tool.result.unsafeLinkBlocked": "Blocked unsafe resource link"
+  ,"tool.result.copyRawJson": "Copy raw JSON"
+  ,"tool.result.openDiagram": "Open diagram"
+  ,"commandPalette.placeholder": "Type a command or search…"
+  ,"commandPalette.empty": "No results found."
+  ,"commandPalette.group.navigate": "Navigate"
+  ,"commandPalette.group.workflow": "Workflow"
+  ,"commandPalette.group.view": "View"
+  ,"commandPalette.action.gotoWorkspace": "Go to workspace"
+  ,"commandPalette.action.gotoTasks": "Go to tasks"
+  ,"commandPalette.action.gotoDeployments": "Go to deployments"
+  ,"commandPalette.action.gotoSettings": "Settings"
+  ,"commandPalette.action.saveWorkflow": "Save workflow"
+  ,"commandPalette.action.checkWorkflow": "Check workflow"
+  ,"commandPalette.action.undo": "Undo"
+  ,"commandPalette.action.redo": "Redo"
+  ,"commandPalette.action.copyNode": "Copy selected node"
+  ,"commandPalette.action.pasteNode": "Paste node"
+  ,"commandPalette.action.duplicateNode": "Duplicate selected node"
+  ,"commandPalette.action.deleteSelection": "Delete selected node / edge"
+  ,"commandPalette.action.executeWorkflow": "Execute workflow"
+  ,"commandPalette.action.cancelExecution": "Cancel execution"
+  ,"commandPalette.action.backToWorkspace": "Back to workspace"
+  ,"workflowCheck.title": "Workflow check"
+  ,"workflowCheck.description": "Server-side validation of the current draft."
+  ,"workflowCheck.copyError": "Copy error"
+  ,"workflowCheck.errorCopied": "Error copied"
+  ,"workflowCheck.valid": "Workflow valid"
+  ,"workflowCheck.whatToFix": "What to fix:"
+  ,"workflow.save.accessChanged": "Your access changed. This draft is still available locally, but it cannot be saved."
+  ,"workflow.version.majorCreated": "New major version created"
+  ,"workflow.toast.created": "Workflow created"
+  ,"workflow.toast.deleted": "Workflow deleted"
+  ,"workflow.toast.duplicated": "Workflow duplicated"
+  ,"workflow.toast.updated": "Workflow updated"
+  ,"table.empty": "No rows."
+  ,"canvas.http.headerNamePlaceholder": "Header name (for example, X-API-Key)"
+  ,"canvas.prompt.modelNameUnavailable": "Model name (no models configured)"
+  ,"chat.debug.toolCallCount_one": "{{count}} tool call"
+  ,"chat.debug.toolCallCount_other": "{{count}} tool calls"
+  ,"chat.debug.toolCall": "Tool call"
+  ,"chat.debug.raw": "Raw"
+  ,"chat.debug.preview": "Preview"
+  ,"chat.debug.abstract": "Abstract"
+  ,"chat.debug.compressed": "Compressed"
+  ,"chat.preview.loadingBackgroundTasks": "Loading background tasks…"
+  ,"preview.url.loading": "Loading web page…"
+  ,"preview.drawio.loading": "Loading draw.io preview…"
+  ,"preview.action.zoomOut": "Zoom out"
+  ,"preview.action.zoomIn": "Zoom in"
+  ,"preview.drawio.fit": "Fit diagram"
+  ,"preview.drawio.export.native": "draw.io · native source"
+  ,"preview.drawio.export.svg": "SVG · scalable vector"
+  ,"preview.drawio.export.png": "PNG · image with embedded source"
+  ,"preview.drawio.export.pdf": "PDF · document and print"
+  ,"preview.drawio.export.jpg": "JPG · compact bitmap"
+  ,"preview.pdf.previousPage": "Previous page"
+  ,"preview.pdf.nextPage": "Next page"
+  ,"preview.pdf.fitWidth": "Fit width"
+  ,"preview.pdf.loading": "Loading PDF…"
+  ,"preview.html.loading": "Loading HTML preview…"
+  ,"preview.text.loading": "Loading text…"
+  ,"preview.text.mixedNewlines": "Mixed newlines will be normalized"
+  ,"organization.identity.scimEndpoint": "SCIM endpoint"
+  ,"organization.identity.callbackUrl": "Callback URL"
+  ,"organization.identity.namePlaceholder": "Corporate identity"
+  ,"organization.serviceAccounts.generation": "credential generation"
+  ,"deployments.actions.deployWorkflow": "Deploy"
+  ,"download": "Download"
+  ,"agent": "Agent"
+  ,"agent_changed_while_dirty": "The agent changed this workflow while you had unsaved edits."
+  ,"agent_open_workflow": "Open workflow"
+  ,"agent_settings.no_model": "No model configured"
+  ,"agent.startup.acquiring_sandbox": "Connecting to sandbox"
+  ,"agent.startup.awaiting_first_output": "Waiting for response"
+  ,"agent.startup.finalizing": "Preparing response"
+  ,"agent.startup.first_turn_hint": "The first use prepares an isolated environment; later turns are usually faster."
+  ,"agent.startup.mounting_workspace": "Mounting conversation files"
+  ,"agent.startup.queueing": "Waiting for an available resource"
+  ,"agent.startup.running_named_tool": "Running {{tool}}"
+  ,"agent.startup.running_tool": "Running operation"
+  ,"auth_hide_password": "Hide password"
+  ,"auth_show_password": "Show password"
+  ,"canvas.batch.colKindStatus": "Status"
+  ,"canvas.batch.dataPathHint": "CSV / TSV / JSONL text files are supported under /data or /mount."
+  ,"canvas.batch.dataPathInvalid": "Enter a file path under /data or /mount."
+  ,"canvas.batch.inputSheetPlaceholder": "Select a sheet"
+  ,"canvas.batch.loadDataPath": "Load"
+  ,"canvas.batch.noColumnMatches": "No columns match your search."
+  ,"canvas.batch.noNodeOutputMatches": "No node outputs match your search."
+  ,"canvas.batch.noSheetMatches": "No sheets match your search."
+  ,"canvas.batch.searchColumn": "Search columns"
+  ,"canvas.batch.searchNodeOutput": "Search node outputs"
+  ,"canvas.batch.searchSheet": "Search sheets"
+  ,"canvas.runBatch.openPanel": "Open batch panel"
+  ,"chat.attention.open": "Open {{count}} items that need attention"
+  ,"chat.copyChatId": "Copy chat ID"
+  ,"chat.debug.contextDecisions": "Context decisions"
+  ,"chat.debug.contextManifest": "Context manifest"
+  ,"chat.debug.empty": "No debug snapshot has been written for this chat yet."
+  ,"chat.debug.error": "Failed to load debug snapshot."
+  ,"chat.debug.loading": "Loading debug snapshot..."
+  ,"chat.debug.memory": "Session memory"
+  ,"chat.debug.memoryConfig": "Memory configuration"
+  ,"chat.debug.no_snapshot": "No debug snapshot yet"
+  ,"chat.debug.noDecisions": "No context decisions recorded."
+  ,"chat.debug.noToolActivity": "No tool calls recorded in this snapshot."
+  ,"chat.debug.noTools": "No tool registry activity recorded."
+  ,"chat.debug.resizeFromChat": "Resize Chat and Debug panels"
+  ,"chat.debug.resizeFromView": "Resize View and Debug panels"
+  ,"chat.debug.runtimePolicy": "Runtime policy"
+  ,"chat.debug.title": "Agent Debug"
+  ,"chat.debug.toolActivity": "Tool activity"
+  ,"chat.debug.toolCallCount": "{{count}} tool call"
+  ,"chat.debug.toolsAndMcp": "Tools and MCP"
+  ,"chat.debug.views": "Debug views"
+  ,"chat.error": "Chat is unavailable."
+  ,"chat.explorer.emptyDraft": "Send a message or start the sandbox to create this chat workspace."
+  ,"chat.explorer.loadingWorkspace": "Loading workspace..."
+  ,"chat.loading": "Preparing chat workspace..."
+  ,"chat.notifications.jobCancelled": "Background task cancelled"
+  ,"chat.notifications.jobCompleted": "Background task completed"
+  ,"chat.notifications.jobFailed": "Background task needs attention"
+  ,"chat.preview.closeItem": "Close preview item"
+  ,"chat.preview.closePane": "Close preview"
+  ,"chat.preview.empty": "Open a workflow, artifact, or sandbox file to preview it here."
+  ,"chat.preview.emptyTitle": "Preview"
+  ,"chat.preview.loading": "Loading preview..."
+  ,"chat.preview.loadingFile": "Loading file..."
+  ,"chat.preview.loadingWorkflow": "Loading workflow..."
+  ,"chat.preview.noResources": "No preview resources yet"
+  ,"chat.preview.resize": "Resize Chat and View panels"
+  ,"chat.preview.resources": "Preview resources"
+  ,"chat.preview.type.backgroundJobs": "Background jobs"
+  ,"chat.preview.type.empty": "No resource"
+  ,"chat.preview.type.file": "File"
+  ,"chat.preview.type.interactive": "Interactive"
+  ,"chat.preview.type.workflow": "Workflow"
+  ,"chat.preview.workflowTitle": "Workflow: {{id}}"
+  ,"chat.sandbox.hibernated": "Sandbox hibernated"
+  ,"chat.sandbox.hibernating": "Creating snapshot"
+  ,"chat.sandbox.releasing": "Releasing sandbox"
+  ,"chat.sandbox.restoring": "Restoring sandbox"
+  ,"chat.sandbox.snapshot_failed": "Snapshot failed"
+  ,"chat.sandbox.start_hint": "Start sandbox"
+  ,"chat.sandbox.title": "Sandbox"
+  ,"chat.sandbox.ttl_paused": "TTL paused"
+  ,"chat.viewWorkflow": "View workflow"
+  ,"chat.workflowViewer.close": "Close workflow viewer"
+  ,"chat.workflowViewer.error": "Failed to load workflow."
+  ,"chat.workflowViewer.loading": "Loading workflow..."
+  ,"clear": "Clear"
+  ,"common_save": "Save"
+  ,"common.copy": "Copy"
+  ,"common.done": "Done"
+  ,"common.finish": "Finish"
+  ,"common.loading": "Loading…"
+  ,"common.no": "No"
+  ,"common.required": "Required"
+  ,"common.retry": "Retry"
+  ,"common.yes": "Yes"
+  ,"composer.active_run_discovery_failed": "Could not check active agent state. Refresh or retry in a moment."
+  ,"composer.loading_history": "Loading conversation…"
+  ,"composer.runtime_unavailable": "Connect an API or account for this runtime before sending a message."
+  ,"create": "Create"
+  ,"creating": "Creating…"
+  ,"deployments.create.fields.majorVersion": "Major version"
+  ,"deployments.create.fields.subVersion": "Sub version"
+  ,"deployments.create.noVersions": "No saved versions are available for this workflow."
+  ,"deployments.create.selectMajor": "Select major"
+  ,"deployments.create.selectSub": "Select sub"
+  ,"deployments.create.selectVersion": "Select a workflow version."
+  ,"deployments.filter.status": "Filter by deployment status"
+  ,"deployments.filter.type": "Filter by deployment type"
+  ,"deployments.summary.label": "Deployment status summary"
+  ,"description": "Description"
+  ,"done": "Done"
+  ,"embed.binding": "Connecting to the browser…"
+  ,"embed.browser.subtitle": "Works with this page"
+  ,"embed.browser.title": "Browser assistant"
+  ,"embed.establishing_extension_session": "Establishing the secure browser session…"
+  ,"embed.execution.loadFailed": "Could not load this workflow."
+  ,"embed.preparing_browser_chat": "Preparing browser chat…"
+  ,"embed.session_timeout": "The extension session could not be established"
+  ,"embed.session_timeout_hint": "Open the Skeinix side panel and retry. If the extension was updated, reload it before trying again."
+  ,"embed.standalone_hint": "This secure Chat surface is opened by the Skeinix browser extension. Open the side panel, or continue in the main app."
+  ,"execute.openRunPanel": "Open run panel"
+  ,"explorer.resize": "Resize Explorer"
+  ,"inspector.compact": "Use compact inspector height"
+  ,"inspector.config.expandEditor": "Expand editor"
+  ,"inspector.config.http.authLabel": "auth (optional)"
+  ,"inspector.config.http.authNone": "none"
+  ,"inspector.config.http.bodyNone": "none"
+  ,"inspector.config.startNone": "No config for StartNode. Define the workflow inputs in the fields above."
+  ,"inspector.expand": "Expand inspector"
+  ,"inspector.fieldValue.editValue": "Edit value"
+  ,"inspector.fieldValue.editValueDesc": "Changes are applied back to the input field when this editor closes."
+  ,"inspector.fieldValue.expand": "Expand editor"
+  ,"inspector.info.provenance": "Source"
+  ,"inspector.info.summary": "Workflow details"
+  ,"inspector.node.details": "Node details"
+  ,"inspector.resize": "Resize Inspector"
+  ,"inspector.run.inputCount": "{{count}} fields"
+  ,"inspector.run.inputs": "Inputs"
+  ,"inspector.run.nodeSummary": "{{count}} nodes, {{completed}} completed, {{failed}} failed"
+  ,"inspector.run.output": "Output"
+  ,"inspector.run.running": "Running…"
+  ,"inspector.run.starting": "Starting..."
+  ,"inspector.run.viewNodeOutput": "View node output"
+  ,"inspector.runNode.stopping": "Stopping…"
+  ,"keep_my_edits": "Keep mine"
+  ,"load_agent_version": "Load agent version (discard my edits)"
+  ,"loading": "Loading…"
+  ,"management.activeMembers": "Active"
+  ,"management.adoption": "Accounts & workspaces"
+  ,"management.available": "available"
+  ,"management.companies": "Companies"
+  ,"management.companyDetail": "Business workspaces"
+  ,"management.controlPlane": "Platform control plane"
+  ,"management.cpuCount": "{{count}} logical CPUs · current API host"
+  ,"management.disk": "Disk free"
+  ,"management.hostLoad": "Host load"
+  ,"management.identifier": "Identifier"
+  ,"management.infrastructure": "Infrastructure"
+  ,"management.members": "Members"
+  ,"management.memory": "Memory used"
+  ,"management.newUsers24h": "+{{count}} in the last 24 hours"
+  ,"management.noCompanies": "No company workspaces yet."
+  ,"management.onlineUsers": "Online now"
+  ,"management.onlineWindow": "Active web session in the last 5 minutes"
+  ,"management.openOrganization": "Open Organization settings"
+  ,"management.organizationDirectory": "Organization directory"
+  ,"management.personalDetail": "Personal workspaces"
+  ,"management.personalUsers": "Personal users"
+  ,"management.privacyBoundary": "Customer privacy boundary"
+  ,"management.privacyBoundaryDetail": "This view contains aggregate metrics and identity lifecycle metadata only. Access to a specific customer resource requires a separate, time-limited support request, independent approval, strong authentication, customer notification, and a complete audit trail."
+  ,"management.registeredUsers": "Registered users"
+  ,"management.sandboxDetail": "{{busy}} busy · this API worker"
+  ,"management.sandboxes": "Resident sandboxes"
+  ,"management.subtitle": "Operational health and identity-lifecycle metadata. Customer conversations, files, prompts, credentials, and runtime content are excluded."
+  ,"management.title": "Management"
+  ,"management.total": "total"
+  ,"management.unavailable": "Platform management is not available for this account."
+  ,"management.unavailableHint": "This area is limited to platform operators. Workspace owners can manage members, identity, and service accounts from Organization settings."
+  ,"mcp.args": "Args"
+  ,"mcp.args_invalid": "Args must be valid JSON array."
+  ,"mcp.catalog.details": "Details"
+  ,"mcp.command": "Command"
+  ,"mcp.command_ph": "npx"
+  ,"mcp.cwd": "Working directory"
+  ,"mcp.cwd_ph": "Optional"
+  ,"mcp.detail.brief.saved": "Brief description saved"
+  ,"mcp.detail.configHelp": "Use the formatted summary for review. Raw JSON is available for diagnostics or copying."
+  ,"mcp.detail.configSummary": "Effective configuration"
+  ,"mcp.detail.connectionHealth": "Connection health"
+  ,"mcp.detail.exposedTools": "Exposed tools"
+  ,"mcp.detail.rawConfig": "Raw JSON"
+  ,"mcp.detail.secretEncrypted": "Encrypted and never returned in plaintext"
+  ,"mcp.detail.secretHandling": "Secret handling"
+  ,"mcp.detail.summary": "Server summary"
+  ,"mcp.detail.tools.directory": "Tool directory"
+  ,"mcp.detail.tools.discover": "Discover tools"
+  ,"mcp.detail.tools.inputs": "Input parameters"
+  ,"mcp.detail.tools.no_parameter_description": "No parameter description provided."
+  ,"mcp.env": "Environment"
+  ,"mcp.env_invalid": "Environment must be valid JSON object."
+  ,"mcp.filter_status": "Filter by server status"
+  ,"mcp.form.authentication": "Authentication"
+  ,"mcp.form.authenticationHelp": "Credentials are encrypted after saving and are not displayed again."
+  ,"mcp.form.connection": "Connection"
+  ,"mcp.form.connectionHelp": "Choose how Skeinix reaches this server and provide its address or command."
+  ,"mcp.form.identity": "Identity"
+  ,"mcp.form.identityHelp": "Name the server and define the prefix agents use for its tools."
+  ,"mcp.form.testHelp": "Verify the endpoint and inspect how many tools it exposes before saving."
+  ,"mcp.form.testPending": "No connection test has been run for these values yet."
+  ,"mcp.transport_http_short": "HTTP"
+  ,"mcp.transport_stdio": "Stdio command"
+  ,"mcp.uninstall_confirm": "Uninstall this MCP server? Agents will no longer be able to load its tools."
+  ,"mcp.verified": "Verified"
+  ,"name": "Name"
+  ,"nav.management": "Management"
+  ,"nav.mcp": "MCP Servers"
+  ,"nav.workflow": "Workflow"
+  ,"nav.workflows": "Workflows"
+  ,"no_workflow.title": "No workflows yet"
+  ,"open": "Open"
+  ,"organization.disableServiceAccountDescription": "Tasks, deployments, or integrations using this identity will fail until it is enabled again."
+  ,"organization.disableServiceAccountTitle": "Disable this service account?"
+  ,"organization.rotateServiceAccountDescription": "Existing credentials for this service account will stop working. Tasks, deployments, or integrations using them must be updated."
+  ,"organization.rotateServiceAccountTitle": "Rotate this service account?"
+  ,"organization.rotating": "Rotating…"
+  ,"organization.saved": "Saved"
+  ,"organization.saveFailed": "Save failed"
+  ,"organization.saving": "Saving…"
+  ,"organization.switching": "Switching workspace…"
+  ,"prompt_node.custom_model_placeholder": "Model id from API configuration"
+  ,"redo": "Redo"
+  ,"rename": "Rename"
+  ,"saving": "Saving…"
+  ,"settings_interface": "Interface"
+  ,"settings_interface_desc": "Choose how Skeinix looks and formats information for you."
+  ,"share.role": "Access role"
+  ,"skills.custom.unsaved_body": "Save this Skill draft before leaving, or discard your changes."
+  ,"skills.detail.about": "About this Skill"
+  ,"skills.detail.packageDetails": "Package details"
+  ,"skills.edit": "Edit"
+  ,"skills.filter_source": "Filter by skill source"
+  ,"skills.select_catalog": "Select skill catalog"
+  ,"storage.binaryPreview": "This file cannot be previewed as text."
+  ,"storage.closePreview": "Close file preview"
+  ,"storage.continueEditing": "Continue editing"
+  ,"storage.deleteConfirm": "Delete this item and its contents?"
+  ,"storage.deleteTitle": "Delete item"
+  ,"storage.discard": "Discard changes"
+  ,"storage.newFolder": "New folder"
+  ,"storage.preview": "File preview"
+  ,"storage.rename": "Rename"
+  ,"storage.resizePreview": "Resize file preview"
+  ,"storage.saving": "Saving…"
+  ,"storage.sort.label": "Sort files"
+  ,"storage.toast.deleted": "Deleted"
+  ,"storage.toast.deleteFailed": "Delete failed"
+  ,"storage.toast.downloadFailed": "Download failed"
+  ,"storage.toast.folderCreated": "Folder created"
+  ,"storage.toast.folderCreateFailed": "Create failed"
+  ,"storage.toast.renamed": "Renamed"
+  ,"storage.toast.renameFailed": "Rename failed"
+  ,"storage.toast.saved": "Saved"
+  ,"storage.toast.saveFailed": "Save failed"
+  ,"storage.toast.uploaded": "Uploaded"
+  ,"storage.toast.uploadFailed": "Upload failed"
+  ,"storage.truncated": "truncated"
+  ,"storage.unsavedDescription": "Save or discard your changes before leaving this file."
+  ,"storage.unsavedTitle": "Unsaved file changes"
+  ,"subagent_node.task_history_subtitle": "Compare this sub-agent task template across workflow versions."
+  ,"subagent_node.task_history_title": "Task template history"
+  ,"subagent_node.task_template": "Task template"
+  ,"subagent_node.task_template_placeholder": "# Task\nRead {{file_path}} and summarize its key points.\n\n# Instructions\nUse file tools to inspect the file and extract important information.\n\n# Output\nReturn the declared output fields."
+  ,"tasks.new.noWorkflowMatches": "No workflows match your search."
+  ,"tasks.new.searchWorkflow": "Search workflow name, ID, or description"
+  ,"tasks.scheduled.calendarSchedule": "At a specific time"
+  ,"tasks.scheduled.cronExpression": "Cron expression"
+  ,"tasks.scheduled.customCron": "Custom cron"
+  ,"tasks.scheduled.dayOfMonth": "Day of month"
+  ,"tasks.scheduled.dayOfWeek": "Day of week"
+  ,"tasks.scheduled.days": "Days"
+  ,"tasks.scheduled.endAt": "End at (optional)"
+  ,"tasks.scheduled.frequency": "Frequency"
+  ,"tasks.scheduled.hours": "Hours"
+  ,"tasks.scheduled.intervalSchedule": "At a fixed interval"
+  ,"tasks.scheduled.intervalUnit": "Interval unit"
+  ,"tasks.scheduled.intervalValue": "Interval value"
+  ,"tasks.scheduled.minuteOfHour": "Minute of the hour"
+  ,"tasks.scheduled.minutes": "Minutes"
+  ,"tasks.scheduled.monthly": "Monthly"
+  ,"tasks.scheduled.overlapHint": "If the previous run is still active, the next occurrence is skipped. Automatic reruns are not created."
+  ,"tasks.scheduled.runTime": "Run time"
+  ,"tasks.scheduled.startAt": "Start at (optional)"
+  ,"tasks.scheduled.timeframe": "Start and end"
+  ,"tasks.summary.label": "Task status summary"
+  ,"theme_dark": "Dark"
+  ,"theme_light": "Light"
+  ,"theme_system": "System"
+  ,"toggle_theme": "Toggle theme"
+  ,"tool.copyOutput": "Copy output"
+  ,"tool.interactive.open_external_request": "Open requested page"
+  ,"tool.interactive.select_option": "Select an option"
+  ,"tool.retryable": "retryable"
+  ,"tool.status.done": "Completed"
+  ,"tool.status.error": "Failed"
+  ,"tool.status.running": "Running"
+  ,"undo": "Undo"
+  ,"unsaved_body": "You have unsaved edits to this workflow. Save them before leaving, or discard them?"
+  ,"unsaved_cancel": "Cancel"
+  ,"unsaved_discard": "Discard"
+  ,"unsaved_save": "Save"
+  ,"unsaved_saving": "Saving…"
+  ,"unsaved_title": "Unsaved changes"
+  ,"upload": "Upload"
+  ,"vfs.destination": "Destination"
+  ,"vfs.file": "File"
+  ,"vfs.replace": "Replace"
+  ,"vfs.resize_preview": "Resize file preview"
+  ,"vfs.resize_run_preview": "Resize run file preview"
+  ,"vfs.sandbox": "Sandbox"
+  ,"vfs.size": "Size"
+  ,"vfs.stale_file": "Stale file"
+  ,"vfs.stale_file_help": "This file was produced from an older workflow version."
+  ,"vfs.upload_replace_title": "Replace existing file?"
+  ,"vfs.uploading": "Uploading…"
+  ,"view": "View"
+  ,"workflow.backToWorkflows": "Back to workflows"
+  ,"workflow.metadataOnly": "This role can review metadata but cannot open workflow content."
+  ,"workflow.sandbox.close": "Close workflow sandbox"
+  ,"workflow.sandbox.closeAction": "Close sandbox"
+  ,"workflow.sandbox.closeDescription": "This stops any running execution and releases the active sandbox for \"{{name}}\". Stored workflow files remain available."
+  ,"workflow.sandbox.closeTitle": "Close sandbox?"
+  ,"workflow.sandbox.closing": "Closing…"
+  ,"workflow.sandbox.confirmClose": "Close workflow sandbox?"
+  ,"workflow.sandbox.hibernated": "Sandbox hibernated"
+  ,"workflow.sandbox.hibernating": "Creating snapshot"
+  ,"workflow.sandbox.open": "Open workflow sandbox"
+  ,"workflow.sandbox.releasing": "Releasing sandbox"
+  ,"workflow.sandbox.restoring": "Restoring sandbox"
+  ,"workflow.sandbox.snapshot_failed": "Snapshot failed"
+  ,"workflow.sandbox.title": "Sandbox"
+  ,"workflow.sandbox.ttl_paused": "TTL paused"
+  ,"workspace_load_error_hint": "Check the connection and load the workflow list again."
+  ,"workspace_loading": "Loading workflows..."
 }

@@ -27,7 +27,6 @@ from sqlalchemy import text
 
 from vibecanvas_api.security.content_backfill import (
     backfill_agent_run,
-    backfill_agent_plan,
     backfill_account_deletion_emails,
     backfill_audit_private_payload,
     backfill_background_job,
@@ -383,26 +382,13 @@ async def _pending_execution_ledgers(
         tables = (
             await session.execute(
                 text(
-                    "SELECT to_regclass('agent_plans') IS NOT NULL, "
-                    "to_regclass('phase_events') IS NOT NULL, "
-                    "to_regclass('workflow_run_state') IS NOT NULL, "
+                    "SELECT to_regclass('workflow_run_state') IS NOT NULL, "
                     "to_regclass('workflow_run_events') IS NOT NULL"
                 )
             )
         ).one()
         queries: list[str] = []
         if tables[0] and tables[1]:
-            # These tables exist only while an installation is crossing the
-            # legacy revision-082 encryption boundary. Revision 119 removes
-            # them after the old Agent Phase feature has been retired.
-            queries.append(
-                "SELECT 'agent_plan' AS kind, p.tenant_id, "
-                "p.plan_id AS resource_id FROM agent_plans p "
-                "WHERE p.private_key_id IS NULL OR EXISTS ("
-                "SELECT 1 FROM phase_events e WHERE e.run_id=p.run_id "
-                "AND e.payload_key_id IS NULL)"
-            )
-        if tables[2] and tables[3]:
             queries.append(
                 "SELECT 'workflow_run' AS kind, s.tenant_id, "
                 "s.wf_id AS resource_id FROM workflow_run_state s "
@@ -432,10 +418,7 @@ async def _migrate_execution_ledgers() -> tuple[int, int]:
             break
         for kind, tenant_id, resource_id in pending:
             async with session_scope(tenant_id=tenant_id) as session:
-                if kind == "agent_plan":
-                    rows += await backfill_agent_plan(session, resource_id)
-                else:
-                    rows += await backfill_workflow_run(session, resource_id)
+                rows += await backfill_workflow_run(session, resource_id)
             resources += 1
     if await _pending_execution_ledgers(limit=1):
         raise RuntimeError("execution ledger encryption migration did not converge")

@@ -583,10 +583,10 @@ async def test_external_vfs_commit_is_atomic_and_fenced_from_writeback(tmp_path)
         base_binds=[],
         expose_run=False,
     )
-    path = "/data/diagrams/system.vdiagram.json"
+    path = "/data/diagrams/system.drawio"
     assert await session.acknowledge_external_vfs_commit(path, b"presented")
     committed = (
-        tmp_path / "workspace" / "data" / "diagrams" / "system.vdiagram.json"
+        tmp_path / "workspace" / "data" / "diagrams" / "system.drawio"
     )
     assert committed.read_bytes() == b"presented"
     assert path in session._external_vfs_fenced_paths
@@ -604,7 +604,7 @@ async def test_external_vfs_path_is_fenced_before_host_commit(tmp_path):
         base_binds=[],
         expose_run=False,
     )
-    path = "/data/diagrams/system.vdiagram.json"
+    path = "/data/diagrams/system.drawio"
 
     # Platform MCP execution may already own the main session lock. The VFS
     # fence uses its dedicated lock and must remain non-reentrant-safe here.
@@ -628,7 +628,7 @@ async def test_external_vfs_commit_failure_requires_rehydrate(tmp_path):
         base_binds=[],
         expose_run=False,
     )
-    path = "/data/diagrams/system.vdiagram.json"
+    path = "/data/diagrams/system.drawio"
     assert not await session.acknowledge_external_vfs_commit(path, b"presented")
     assert path in session._external_vfs_fenced_paths
     assert session._requires_rehydrate is True

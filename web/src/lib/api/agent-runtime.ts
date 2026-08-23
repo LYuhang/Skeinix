@@ -82,7 +82,17 @@ export interface RuntimeModelOption {
   id: string;
   label: string;
   description: string;
+  api_source?: string | null;
+  api_protocol?: string | null;
   provider: string | null;
+  provider_model_id?: string | null;
+  context_length?: number | null;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supports_tools?: boolean | null;
+  input_price?: string | null;
+  output_price?: string | null;
+  available?: boolean;
   is_default: boolean;
   supported_reasoning_efforts: RuntimeReasoningEffortOption[];
   default_reasoning_effort: string | null;
@@ -97,7 +107,6 @@ export interface AgentRuntimeCapabilities {
   models: RuntimeModelOption[];
   default_model_id: string | null;
   error_code: string | null;
-  chat_configuration_locked: boolean;
   bound_agent_settings: {
     model_id: string | null;
     temperature: number | null;

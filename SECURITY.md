@@ -41,7 +41,7 @@ security or privacy boundary.
 
 Examples of security-relevant reports include:
 
-- authentication, Session, CSRF, MFA, account-recovery, or privilege-escalation
+- authentication, Session, CSRF, passkey, account-recovery, or privilege-escalation
   failures;
 - cross-user or cross-Organization authorization and data-isolation failures;
 - sandbox escapes or unintended access to host files, credentials, processes,

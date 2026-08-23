@@ -44,7 +44,7 @@ def build_tools(
         + bash)
         + kb + meta + mcp + skill
 
-    ``active_modes`` is accepted for the stable caller contract, but build and
+    ``active_modes`` is accepted for the stable caller contract, but workflow and
     browser are cross-Runtime Platform MCP capabilities and are never registered
     here. The Runtime boundary selects their MCP descriptors.
 
@@ -63,7 +63,7 @@ def build_tools(
         *BACKGROUND_TOOLS,
         *SANDBOX_TOOLS,
     ]
-    # Cross-Runtime build/browser capabilities are supplied exclusively through
+    # Cross-Runtime workflow/browser capabilities are supplied exclusively through
     # Platform MCP descriptors. ``active_modes`` affects descriptor selection,
     # never this LangChain-private tool registry.
     del modes, surface, runtime_location
@@ -80,9 +80,9 @@ def builtin_tool_names() -> set[str]:
     static = {
         getattr(t, "name", "")
         for t in [
-            *build_tools({"build", "browser"}),
-            *build_tools({"build", "browser"}, surface="chat"),
-            *build_tools({"build", "browser"}, surface="browser"),
+            *build_tools({"workflow", "browser"}),
+            *build_tools({"workflow", "browser"}, surface="chat"),
+            *build_tools({"workflow", "browser"}, surface="browser"),
         ]
     }
     return static

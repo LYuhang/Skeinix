@@ -10,10 +10,10 @@
  * View-full.
  */
 import { useTranslation } from 'react-i18next';
+import { useShiki } from '@/lib/use-shiki';
 import type { ToolEnvelopeOutput } from './parseEnvelope';
 import { CopyButton } from './CopyButton';
 import { ViewFullPanel } from './ViewFullPanel';
-import { useShiki } from './useShiki';
 
 export interface CodeBlockProps {
   output: ToolEnvelopeOutput;

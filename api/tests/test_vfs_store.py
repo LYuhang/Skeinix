@@ -551,27 +551,27 @@ async def test_upsert_artifact_bytes_same_content_keeps_revision(pg_session):
     await repo.upsert_artifact_bytes(
         wf_id=wf_id,
         tenant=tenant,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
         data=b'{"version":1}',
-        content_type="application/vnd.vibecanvas.diagram+json",
+        content_type="application/vnd.jgraph.mxfile",
     )
     first = await pg_session.get(
         VfsArtifact,
-        (wf_id, "/data/diagrams/system.vdiagram.json"),
+        (wf_id, "/data/diagrams/system.drawio"),
     )
     first_revision = vfs_row_revision(first)
 
     replaced = await repo.upsert_artifact_bytes(
         wf_id=wf_id,
         tenant=tenant,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
         data=b'{"version":1}',
-        content_type="application/vnd.vibecanvas.diagram+json",
+        content_type="application/vnd.jgraph.mxfile",
     )
     pg_session.expire_all()
     second = await pg_session.get(
         VfsArtifact,
-        (wf_id, "/data/diagrams/system.vdiagram.json"),
+        (wf_id, "/data/diagrams/system.drawio"),
     )
 
     assert replaced is True
@@ -585,10 +585,10 @@ async def test_compare_and_swap_artifact_rejects_stale_revision(pg_session):
     created = await repo.compare_and_swap_artifact_bytes(
         wf_id=wf_id,
         tenant=tenant,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
         expected_revision=None,
         data=b'{"version":1}',
-        content_type="application/vnd.vibecanvas.diagram+json",
+        content_type="application/vnd.jgraph.mxfile",
     )
     assert created.committed is True
     assert created.revision
@@ -596,35 +596,35 @@ async def test_compare_and_swap_artifact_rejects_stale_revision(pg_session):
     stale = await repo.compare_and_swap_artifact_bytes(
         wf_id=wf_id,
         tenant=tenant,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
         expected_revision=None,
         data=b'{"version":2}',
-        content_type="application/vnd.vibecanvas.diagram+json",
+        content_type="application/vnd.jgraph.mxfile",
     )
     assert stale.committed is False
     assert stale.current_revision == created.revision
     assert await repo.read_bytes(
         wf_id=wf_id,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
     ) == b'{"version":1}'
 
     replaced = await repo.compare_and_swap_artifact_bytes(
         wf_id=wf_id,
         tenant=tenant,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
         expected_revision=created.revision,
         data=b'{"version":2}',
-        content_type="application/vnd.vibecanvas.diagram+json",
+        content_type="application/vnd.jgraph.mxfile",
     )
     assert replaced.committed is True
     row = await pg_session.get(
         VfsArtifact,
-        (wf_id, "/data/diagrams/system.vdiagram.json"),
+        (wf_id, "/data/diagrams/system.drawio"),
     )
     assert replaced.revision == vfs_row_revision(row)
     assert await repo.read_bytes(
         wf_id=wf_id,
-        path="/data/diagrams/system.vdiagram.json",
+        path="/data/diagrams/system.drawio",
     ) == b'{"version":2}'
 
 

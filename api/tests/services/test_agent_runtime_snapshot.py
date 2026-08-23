@@ -5,10 +5,14 @@ from types import SimpleNamespace
 from vibecanvas_api.services.sandbox import agent_runtime_snapshot
 
 
-def test_source_fingerprint_covers_turn_local_mcp_gateway() -> None:
+def test_source_fingerprint_covers_aggregate_mcp_hub_runtime() -> None:
     hashes = agent_runtime_snapshot._source_hashes()
 
-    assert "services/agent_runtime/codex_mcp_gateway.py" in hashes
+    assert "services/agent_runtime/codex_mcp_hub_gateway.py" in hashes
+    assert "services/agent_runtime/mcp_hub.py" in hashes
+    assert "services/agent_runtime/mcp_hub_adapter.py" in hashes
+    assert "services/agent_runtime/mcp_browser_transport.py" in hashes
+    assert "services/agent_runtime/mcp_runtime_protocol.py" in hashes
 
 
 def test_fingerprint_ignores_substitutable_runtime_resource_sources(

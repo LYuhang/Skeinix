@@ -481,6 +481,11 @@ class SandboxSession:
         # Chat to restore without holding its process-global registry lock or
         # blocking lifecycle transitions for unrelated Chats.
         self._transition_lock = asyncio.Lock()
+        self._sandbox_runtime_id = f"chat-sandbox:{uuid.uuid4()}"
+        # This epoch advances whenever the main Agent Runtime process is
+        # replaced, even if sandboxd and the logical Chat session stay alive.
+        # Host Gateway calls will fence identities against this value.
+        self._runtime_process_generation = 0
         self._lifecycle_generation = 0
         # One duplex control channel per active Agent Turn. The runtime process
         # may wait for HITL for an arbitrarily long time while the frontend and
@@ -1146,6 +1151,7 @@ class SandboxSession:
                     runtime_turn_id=runtime_turn_id,
                     uses_codex_account=uses_codex_account,
                 )
+                runtime_request = self._mcp_runtime_request(request)
                 # Interactive Runtimes are Chat-scoped and remain resident across
                 # Turns.  Codex account sessions follow the same lifecycle as
                 # API-backed Codex and LangChain: explicit account disconnect,
@@ -1178,7 +1184,10 @@ class SandboxSession:
                 )
                 try:
                     await broker.send(
-                        {"type": MSG_RUNTIME_REQUEST, "request": request}
+                        {
+                            "type": MSG_RUNTIME_REQUEST,
+                            "request": runtime_request,
+                        }
                     )
                 except (ConnectionError, BrokenPipeError):
                     # The guest can finish closing Turn-local receivers just as
@@ -1198,10 +1207,14 @@ class SandboxSession:
                         runtime_turn_id=runtime_turn_id,
                         uses_codex_account=uses_codex_account,
                     )
+                    runtime_request = self._mcp_runtime_request(request)
                     async with self._runtime_broker_lock:
                         self._runtime_brokers[runtime_turn_id] = broker
                     await broker.send(
-                        {"type": MSG_RUNTIME_REQUEST, "request": request}
+                        {
+                            "type": MSG_RUNTIME_REQUEST,
+                            "request": runtime_request,
+                        }
                     )
                 first_bus_message = True
                 async for message in broker.messages():
@@ -1272,6 +1285,8 @@ class SandboxSession:
                     )
                 runtime_volume = getattr(self, "runtime_volume", None)
                 if runtime_volume is not None:
+                    if uses_codex_account:
+                        self._persist_codex_account_auth()
                     phase_started = time.perf_counter()
                     await asyncio.to_thread(
                         get_chat_runtime_volume_provider().sync,
@@ -1309,6 +1324,37 @@ class SandboxSession:
             if invalidate_runtime:
                 async with self._lock:
                     await self._stop_agent_runtime_locked()
+                # A checkpoint can be emitted before a Turn reaches its
+                # terminal result (for example before a later egress failure or
+                # user cancellation). Persist the stopped Runtime's native
+                # files here as well, otherwise the durable checkpoint may
+                # reference a rollout that disappears with this plaintext
+                # materialization and cannot be resumed after sandboxd restarts.
+                runtime_volume = getattr(self, "runtime_volume", None)
+                if runtime_volume is not None:
+                    try:
+                        await asyncio.to_thread(
+                            get_chat_runtime_volume_provider().sync,
+                            runtime_volume,
+                        )
+                        logger.info(
+                            "agent_runtime_transport_timing",
+                            phase="runtime_volume_failure_sync",
+                            runtime_type=runtime_type,
+                            wf_id=self.wf_id,
+                            turn_id=runtime_turn_id,
+                        )
+                    except Exception:
+                        # Preserve the original Runtime error. The exact
+                        # missing-rollout recovery in the Codex adapter handles
+                        # a previously incomplete snapshot on the next Turn.
+                        logger.warning(
+                            "agent_runtime_failure_volume_sync_failed",
+                            runtime_type=runtime_type,
+                            wf_id=self.wf_id,
+                            turn_id=runtime_turn_id,
+                            exc_info=True,
+                        )
             self._end_activity()
             logger.info(
                 "agent_runtime_transport_timing",
@@ -1423,6 +1469,7 @@ class SandboxSession:
                 timeout=30.0,
                 restored_from_baseline=baseline is not None,
             )
+            self._runtime_process_generation += 1
             self._bound_runtime_type = runtime_type
             self._bound_runtime_uses_codex_account = uses_codex_account
             logger.info(
@@ -1453,6 +1500,65 @@ class SandboxSession:
             )
             await self._stop_agent_runtime_locked()
             raise
+
+    def _mcp_runtime_request(self, request: dict) -> dict:
+        """Attach secret-free Hub contracts after the sandbox epoch is known.
+
+        Host authority descriptors are consumed here and never serialized into
+        the sandbox. The Runtime receives only sandbox-owned lifecycle contracts.
+        """
+        from vibecanvas_api.services.agent_runtime.mcp_desired_state import (
+            build_mcp_lifecycle_contracts,
+        )
+        from vibecanvas_api.services.agent_runtime.mcp_execution_capability import (
+            mint_mcp_execution_capability,
+        )
+        from vibecanvas_api.services.agent_runtime.model_capability import (
+            authorization_model_generation,
+        )
+        from vibecanvas_api.services.agent_runtime.protocol import (
+            RuntimeTurnRequest,
+        )
+
+        parsed = RuntimeTurnRequest.model_validate(request)
+        authorization_generation = authorization_model_generation(
+            model_id=config.openfga_authorization_model_id,
+        )
+        execution_capability = mint_mcp_execution_capability(
+            organization_id=parsed.tenant_id,
+            user_id=parsed.user_id,
+            chat_id=parsed.chat_id,
+            runtime_session_id=parsed.runtime_session_id,
+            turn_id=parsed.turn_id,
+            sandbox_id=self._sandbox_runtime_id,
+            sandbox_generation=self._runtime_process_generation,
+            selected_mcp_revision=parsed.mcp_config_revision,
+            active_platform_capabilities=list(parsed.active_platform_mcps),
+            authorization_generation=authorization_generation,
+            secret=config.signing_secret,
+            ttl_s=config.mcp.platform_capability_ttl_s,
+        )
+        desired, execution = build_mcp_lifecycle_contracts(
+            parsed,
+            sandbox_id=self._sandbox_runtime_id,
+            sandbox_generation=self._runtime_process_generation,
+            authorization_generation=authorization_generation,
+            execution_capability=execution_capability,
+            lifetime_s=config.mcp.platform_capability_ttl_s,
+        )
+        projected = parsed.model_copy(update={
+            "mcp_runtime_stage": "sandbox",
+            "mcp_desired_state": desired,
+            "mcp_execution_context": execution,
+            "mcp_host_servers": [],
+        })
+        payload = projected.model_dump(mode="json")
+        # SecretStr intentionally masks generic serialization. This capability
+        # is nevertheless the private Runtime bus credential by design, so put
+        # it only into its typed wire field after every Host authority has been
+        # removed. It never enters logs, VFS, model context, or browser events.
+        payload["mcp_execution_context"]["capability"] = execution_capability
+        return payload
 
     @staticmethod
     async def _wait_for_agent_runtime_connection(
@@ -1531,28 +1637,31 @@ class SandboxSession:
         package_root = codex_cli_readonly_root(executable)
         if package_root not in ro_binds:
             ro_binds.append(package_root)
-        # ``/usr/local/bin/skeinix-playwright-mcp`` is a deliberately small
-        # launcher symlink whose real package (launcher + node_modules) lives
-        # under ``/opt/playwright-mcp`` in the release image.  The generic
-        # system mounts expose the symlink but not its target, which otherwise
-        # produces a misleading ENOENT when the browser MCP is started inside
-        # gVisor.  Mount the resolved package root read-only alongside Codex;
-        # no browser credential or user data is contained in this image asset.
-        playwright_command = str(
-            os.environ.get("PLAYWRIGHT_MCP_COMMAND")
-            or "skeinix-playwright-mcp"
-        ).strip()
-        playwright_executable = (
-            playwright_command
-            if os.path.isabs(playwright_command)
-            else shutil.which(playwright_command)
-        )
-        if playwright_executable:
-            resolved_playwright = os.path.realpath(playwright_executable)
-            if os.path.isfile(resolved_playwright):
-                playwright_root = os.path.dirname(resolved_playwright)
-                if playwright_root not in ro_binds:
-                    ro_binds.append(playwright_root)
+        # Built-in MCP launchers and their official rendering dependency are
+        # symlinks under /usr while their immutable packages live under /opt.
+        # The generic system mounts expose each symlink but not its target.
+        # Bind every resolved package root read-only so the command is
+        # executable inside gVisor; none contains credentials or platform
+        # state.
+        for env_name, default_command in (
+            ("PLAYWRIGHT_MCP_COMMAND", "skeinix-playwright-mcp"),
+            ("DIAGRAM_MCP_COMMAND", "skeinix-diagram-mcp"),
+            ("DRAWIO_CLI_COMMAND", "drawio"),
+        ):
+            command = str(
+                os.environ.get(env_name) or default_command
+            ).strip()
+            executable_path = (
+                command if os.path.isabs(command) else shutil.which(command)
+            )
+            if not executable_path:
+                continue
+            resolved_executable = os.path.realpath(executable_path)
+            if not os.path.isfile(resolved_executable):
+                continue
+            package_root = os.path.dirname(resolved_executable)
+            if package_root not in ro_binds:
+                ro_binds.append(package_root)
         node_runtime = codex_cli_node_runtime(executable)
         if executable.endswith(".js") and node_runtime is None:
             raise RuntimeError("codex_node_runtime_unavailable")
@@ -1572,62 +1681,109 @@ class SandboxSession:
             if value:
                 env_overrides[key] = value
 
-        # Keep the destination set identical for account and API modes so one
-        # credential-free Codex image can restore into either. The baseline and
-        # API modes bind the Chat Runtime Volume's empty placeholder; account
-        # mode substitutes the user's validated account cache file.
-        account_auth_file = self.account_auth_file
-        if uses_codex_account:
-            if (
-                not account_auth_file
-                or not os.path.isfile(account_auth_file)
-                or os.path.islink(account_auth_file)
-            ):
-                raise RuntimeError("codex_account_not_connected")
-            auth_source = account_auth_file
-        else:
-            if not self.runtime_dir:
-                # Lightweight embedded/test sessions may intentionally omit a
-                # Runtime Volume. They cold-boot and therefore do not need the
-                # fixed auth destination required by the Codex baseline.
-                return rw_binds, ro_binds, env_overrides
-            # The Runtime Volume may be an object-store materialization on the
-            # container overlay filesystem, while account auth is held on the
-            # private AGENT_RUNTIME_ROOT volume. runsc snapshots validate bind
-            # filesystem options, so API mode needs an equally private,
-            # persistent empty file at the same destination. Scope it per Chat:
-            # a Runtime may write this file, and no later Chat may inherit it.
-            placeholder_scope = hashlib.sha256(
-                f"{self.tenant_id}\0{self.wf_id}".encode()
-            ).hexdigest()
-            placeholder_root = (
-                os.path.dirname(self.skills_dir)
-                if self.skills_dir
-                else os.path.join(config.agent_runtime_root, ".codex-api-auth-v1")
-            )
-            auth_source = os.path.join(
-                placeholder_root,
-                ".codex-api-auth-v1",
-                placeholder_scope,
-                "auth.json",
-            )
-            os.makedirs(os.path.dirname(auth_source), mode=0o700, exist_ok=True)
-            if not os.path.exists(auth_source):
-                descriptor = os.open(
-                    auth_source,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                    0o600,
-                )
-                os.close(descriptor)
-            if not os.path.isfile(auth_source) or os.path.islink(auth_source):
-                raise RuntimeError("codex_runtime_auth_placeholder_unavailable")
-        rw_binds.append(("/runtime/.codex/auth.json", auth_source))
+        # ``/runtime`` is already a private Chat-owned writable mount. Stage
+        # account auth into that directory instead of mounting auth.json over
+        # it: Codex refreshes credentials with an atomic rename, and replacing
+        # a bind-mount point fails with EBUSY. The staged file is excluded from
+        # Runtime Volume persistence and is reconciled to the user-scoped cache
+        # at the quiescent Turn boundary.
+        self._stage_codex_runtime_auth(uses_codex_account=uses_codex_account)
         return rw_binds, ro_binds, env_overrides
+
+    @staticmethod
+    def _read_regular_private_file(path: str, *, limit: int = 4 * 1024 * 1024) -> bytes:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+                raise RuntimeError("codex_account_auth_invalid")
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                return handle.read(limit + 1)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _replace_private_file(path: str, data: bytes, *, owner: tuple[int, int] | None = None) -> None:
+        parent = os.path.dirname(path)
+        os.makedirs(parent, mode=0o700, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=".auth-", dir=parent)
+        try:
+            os.fchmod(descriptor, 0o600)
+            if owner is not None:
+                os.fchown(descriptor, owner[0], owner[1])
+            with os.fdopen(descriptor, "wb", closefd=False) as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.close(descriptor)
+            descriptor = -1
+            os.replace(temporary, path)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def _stage_codex_runtime_auth(self, *, uses_codex_account: bool) -> None:
+        if not self.runtime_dir:
+            if uses_codex_account:
+                raise RuntimeError("codex_runtime_volume_unavailable")
+            return
+        target = os.path.join(self.runtime_dir, ".codex", "auth.json")
+        if uses_codex_account:
+            source = self.account_auth_file
+            if not source or not os.path.isfile(source) or os.path.islink(source):
+                raise RuntimeError("codex_account_not_connected")
+            data = self._read_regular_private_file(source)
+            try:
+                parsed = json.loads(data)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("codex_account_auth_invalid") from exc
+            if not isinstance(parsed, dict):
+                raise RuntimeError("codex_account_auth_invalid")
+        else:
+            data = b""
+        self._replace_private_file(target, data)
+
+    def _persist_codex_account_auth(self) -> None:
+        if not self.runtime_dir:
+            return
+        source = os.path.join(self.runtime_dir, ".codex", "auth.json")
+        target = self.account_auth_file
+        if (
+            not target
+            or not os.path.isfile(target)
+            or os.path.islink(target)
+            or not os.path.isfile(source)
+            or os.path.islink(source)
+        ):
+            return
+        data = self._read_regular_private_file(source)
+        try:
+            parsed = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            logger.warning("codex_runtime_auth_refresh_invalid", wf_id=self.wf_id)
+            return
+        if not isinstance(parsed, dict):
+            logger.warning("codex_runtime_auth_refresh_invalid", wf_id=self.wf_id)
+            return
+        metadata = os.stat(target, follow_symlinks=False)
+        self._replace_private_file(
+            target,
+            data,
+            owner=(metadata.st_uid, metadata.st_gid),
+        )
 
     async def _stop_agent_runtime_locked(self) -> None:
         """Stop the warm main Runtime. Caller must hold ``self._lock``."""
         handle = getattr(self, "_runtime_handle", None)
         broker = getattr(self, "_runtime_broker", None)
+        persist_account_auth = self._runtime_uses_codex_account
         self._runtime_handle = None
         self._runtime_broker = None
         self._runtime_type = None
@@ -1640,6 +1796,8 @@ class SandboxSession:
             # still escalates to a forced container kill if it does not exit
             # within the bounded grace period.
             await asyncio.to_thread(self.provider.stop_run, handle, kill=False)
+        if persist_account_auth:
+            self._persist_codex_account_auth()
 
     async def send_agent_runtime_control(self, turn_id: str, response: dict) -> None:
         """Send a durable platform decision to the active sandbox Runtime.
@@ -1866,7 +2024,6 @@ class SandboxSession:
                         run_id=run_id,
                         tenant=tenant,
                         run_subpath=sub,
-                        run_dir=host_run_dir,
                         timeout=timeout,
                     ):
                         yield msg
@@ -1877,14 +2034,26 @@ class SandboxSession:
         finally:
             self._end_activity()
 
-    async def clear_workflow_run(self) -> None:
-        """Clear the fixed /run projection in the owning sandboxd process."""
-        if not self.workflow_run_id:
+    async def clear_workflow_run(self, workflow_run_id: str | None = None) -> None:
+        """Clear one stable Workflow ``/run`` projection in sandboxd.
+
+        A Chat workspace id and its selected Workflow id are independent.  The
+        caller therefore supplies the logical Workflow run id instead of
+        implicitly clearing the Chat workspace directory.
+        """
+        target = (workflow_run_id or self.workflow_run_id or "").strip("/")
+        if not target:
             return
+        if (
+            "\\" in target
+            or "\x00" in target
+            or any(part in {"", ".", ".."} for part in target.split("/"))
+        ):
+            raise ValueError("invalid workflow run id")
         self._begin_activity()
         try:
             from vibecanvas_api.services.vfs_run_context import clear_run_contents
-            await clear_run_contents(self.workflow_run_id, self.tenant_id)
+            await clear_run_contents(target, self.tenant_id)
         finally:
             self._end_activity()
 

@@ -96,7 +96,9 @@ from vibecanvas_api.services.mcp_oauth import (
     resolve_oauth_auth_config,
     state_hash,
 )
-from vibecanvas_api.services.platform_mcp.server import platform_mcp_catalog
+from vibecanvas_api.services.resource_provenance import (
+    ResourceProvenanceBuilder,
+)
 from vibecanvas_api.services.tenant_db import session_scope_admin
 from vibecanvas_api.storage.repo_mcp_servers import McpOAuthRepo, McpServersRepo
 from vibecanvas_api.agents.tools import builtin_tool_names as _agent_builtin_tool_names
@@ -398,13 +400,22 @@ def _scrub(row: dict) -> dict:
     return out
 
 
-def _scrub_with_access(
+async def _scrub_with_access(
     row: dict,
+    provenance: ResourceProvenanceBuilder,
     decision: Decision | None = None,
 ) -> dict:
     out = _scrub(row)
     if decision is not None:
         out["access"] = access_from_decision(decision).model_dump(mode="json")
+    out["provenance"] = (
+        await provenance.build(
+            creator_user_id=row.get("user_id"),
+            origin_type=(
+                "catalog_install" if row.get("source") else "created"
+            ),
+        )
+    ).model_dump(mode="json")
     return out
 
 
@@ -795,7 +806,11 @@ async def create_mcp_server(
         operation="create",
     )
     row = await repo.get(sid)
-    return _scrub_with_access(row, decision)
+    return await _scrub_with_access(
+        row,
+        ResourceProvenanceBuilder(session),
+        decision,
+    )
 
 
 # ----------------------------------------------- patch / list / get schemas
@@ -886,10 +901,11 @@ async def discover_mcp_servers(
     """Search a fixed public MCP catalog and return a normalized result list."""
     try:
         return await search_catalog(source=source, search=search, limit=limit)
-    except (httpx.HTTPError, ValueError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
+        reason = str(exc).strip() or type(exc).__name__
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"MCP catalog is unavailable: {exc}",
+            detail=f"MCP catalog is unavailable: {reason}",
         ) from exc
 
 
@@ -904,10 +920,11 @@ async def resolve_mcp_server_candidate(
         return await resolve_catalog_item(source=source, source_id=source_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except (httpx.HTTPError, ValueError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
+        reason = str(exc).strip() or type(exc).__name__
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"MCP catalog is unavailable: {exc}",
+            detail=f"MCP catalog is unavailable: {reason}",
         ) from exc
 
 
@@ -934,7 +951,7 @@ async def install_catalog_mcp_server(
         item = await resolve_catalog_item(source=body.source, source_id=body.source_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except (httpx.HTTPError, ValueError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"MCP catalog item could not be resolved: {exc}",
@@ -1018,7 +1035,11 @@ async def install_catalog_mcp_server(
         server_id=server_id,
         operation="catalog-install",
     )
-    return _scrub_with_access(await repo.get(server_id), decision)
+    return await _scrub_with_access(
+        await repo.get(server_id),
+        ResourceProvenanceBuilder(session),
+        decision,
+    )
 
 
 def _oauth_callback_page(*, origin: str, server_id: str, ok: bool, message: str) -> HTMLResponse:
@@ -1197,19 +1218,6 @@ async def mcp_oauth_callback(
             )
 
 
-@router.get("/platform")
-async def list_platform_mcp_services(
-    _ctx: AuthContext = Depends(current_user),
-) -> dict:
-    """Return the built-in MCP catalog generated from the live registry.
-
-    Built-in services are immutable platform capabilities, not tenant-owned
-    MCP rows. The response excludes internal URLs and signed Turn capabilities
-    while exposing tool schemas for the read-only detail UI.
-    """
-    return {"items": platform_mcp_catalog()}
-
-
 @router.get("")
 async def list_mcp_servers(
     request: Request,
@@ -1235,9 +1243,14 @@ async def list_mcp_servers(
         resources=resources,
         context=context,
     )
+    provenance = ResourceProvenanceBuilder(session)
     return {
         "items": [
-            _scrub_with_access(row, decisions[resource])
+            await _scrub_with_access(
+                row,
+                provenance,
+                decisions[resource],
+            )
             for row, resource in zip(rows, resources, strict=True)
         ]
     }
@@ -1266,7 +1279,11 @@ async def get_mcp_server(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="mcp server not found",
         )
-    return _scrub_with_access(row, authorized.decision)
+    return await _scrub_with_access(
+        row,
+        ResourceProvenanceBuilder(session),
+        authorized.decision,
+    )
 
 
 @router.post("/{server_id}/oauth/start")
@@ -1596,7 +1613,11 @@ async def patch_mcp_server(
         )
 
     row = await repo.get(server_id)
-    return _scrub_with_access(row, authorized.decision)
+    return await _scrub_with_access(
+        row,
+        ResourceProvenanceBuilder(session),
+        authorized.decision,
+    )
 
 
 # ----------------------------------------------------------------------- delete
@@ -1739,7 +1760,11 @@ async def refresh_mcp_server(
     auth_config = await resolve_oauth_auth_config(session, existing)
     if existing.get("auth_mode") == "oauth" and auth_config is None:
         row = await repo.get(server_id)
-        return _scrub_with_access(row, authorized.decision)
+        return await _scrub_with_access(
+            row,
+            ResourceProvenanceBuilder(session),
+            authorized.decision,
+        )
     result = await handshake_one(
         prefix=existing["tool_prefix"],
         transport=existing["transport"],
@@ -1766,4 +1791,8 @@ async def refresh_mcp_server(
         last_tool_names=result.get("tool_names"),
     )
     row = await repo.get(server_id)
-    return _scrub_with_access(row, authorized.decision)
+    return await _scrub_with_access(
+        row,
+        ResourceProvenanceBuilder(session),
+        authorized.decision,
+    )

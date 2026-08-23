@@ -2,9 +2,8 @@
  * `CreateDeploymentModal` — single-form create flow (Deployments T14).
  *
  * Spec §10.2 sketches a wizard (workflow → trigger → runtime/security →
- * review). This component keeps the existing dialog surface but limits
- * Deployment creation to the currently supported online-serving types:
- * API endpoint and webhook.
+ * review). This component keeps the existing dialog surface while supporting
+ * API endpoints and webhooks.
  *
  * Two-phase modal:
  *   1. **Form phase** — collect user-facing fields, derive the backend slug
@@ -24,6 +23,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { Code2, Webhook } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -53,6 +53,7 @@ import {
 import { useWorkspaceList } from '@/lib/api/queries/workflows';
 import { useWorkflowVersions } from '@/lib/api/queries/workflow';
 import { OneTimeSecretField } from '@/pages/deployments/OneTimeSecretField';
+import { cn } from '@/lib/utils';
 
 interface WorkflowVersionOption {
   major: number;
@@ -66,6 +67,11 @@ interface CreateDeploymentModalProps {
   initialWorkflowId?: string;
   initialName?: string;
 }
+
+const TRIGGER_TYPES = [
+  { type: 'api', icon: Code2, tone: 'text-state-info', label: 'API', help: 'Call from an application' },
+  { type: 'webhook', icon: Webhook, tone: 'text-focus', label: 'Webhook', help: 'Receive signed events' },
+] as const;
 
 function defaultBody(initialWorkflowId = '', initialName = ''): CreateDeploymentBody {
   return {
@@ -231,12 +237,14 @@ export function CreateDeploymentModal({
 
     return (
       <div className="flex flex-col gap-4">
-        <div className="rounded-md border border-state-warning/40 bg-state-warning/10 p-3 text-sm text-state-warning">
-          {t(
-            'deployments.create.oneTimeSecret',
-            'This secret is shown only once. Copy it now — you cannot retrieve it later.',
-          )}
-        </div>
+        {secretLabel ? (
+          <div className="rounded-md border border-state-warning/40 bg-state-warning/10 p-3 text-sm text-state-warning">
+            {t(
+              'deployments.create.oneTimeSecret',
+              'This secret is shown only once. Copy it now — you cannot retrieve it later.',
+            )}
+          </div>
+        ) : null}
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground">
             {t('deployments.create.id', 'Deployment ID')}
@@ -273,7 +281,7 @@ export function CreateDeploymentModal({
             <DialogDescription>
               {t(
                 'deployments.create.desc',
-                'Publish a workflow as an API endpoint or webhook.',
+                'Choose how this workflow should receive requests.',
               )}
             </DialogDescription>
           )}
@@ -296,6 +304,8 @@ export function CreateDeploymentModal({
               </Label>
               <Input
                 id="dep-name"
+                name="deployment-name"
+                autoComplete="off"
                 required
                 value={body.name}
                 onChange={(e) =>
@@ -343,19 +353,31 @@ export function CreateDeploymentModal({
                   'Trigger type',
                 )}
               </legend>
-              <div className="flex items-center gap-4 text-sm">
-                {(['api', 'webhook'] as const).map((tt) => (
-                  <label key={tt} className="flex items-center gap-2">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {TRIGGER_TYPES.map(({ type, icon: Icon, tone, label, help }) => (
+                  <label
+                    key={type}
+                    className={cn(
+                      'group relative flex cursor-pointer flex-col gap-2 rounded-lg border border-edge-subtle bg-surface-work p-3 transition-[border-color,background-color,box-shadow]',
+                      'hover:border-edge-strong hover:bg-surface-sunken/50 focus-within:ring-2 focus-within:ring-focus/40',
+                      body.trigger_type === type && 'border-focus bg-focus/5 shadow-sm',
+                    )}
+                  >
                     <input
                       type="radio"
                       name="trigger_type"
-                      value={tt}
-                      checked={body.trigger_type === tt}
+                      value={type}
+                      checked={body.trigger_type === type}
+                      className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                       onChange={() =>
-                        setBody((b) => ({ ...b, trigger_type: tt }))
+                        setBody((current) => ({ ...current, trigger_type: type }))
                       }
                     />
-                    {t(`deployments.type.${tt}`, tt)}
+                    <Icon className={cn('h-5 w-5', tone)} aria-hidden="true" />
+                    <span className="text-sm font-medium">{t(`deployments.type.${type}`, label)}</span>
+                    <span className="text-xs leading-4 text-muted-foreground">
+                      {t(`deployments.create.triggerHelp.${type}`, help)}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -448,6 +470,7 @@ export function CreateDeploymentModal({
               </Label>
               <Input
                 id="dep-qps"
+                name="rate-limit-qps"
                 type="number"
                 min={0}
                 value={body.rate_limit_qps ?? 10}
@@ -470,7 +493,9 @@ export function CreateDeploymentModal({
                 {t('deployments.create.cancel', 'Cancel')}
               </Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {t('deployments.create.submit', 'Create')}
+                {createMutation.isPending
+                  ? t('deployments.create.creating', 'Creating…')
+                  : t('deployments.create.submit', 'Create')}
               </Button>
             </DialogFooter>
           </form>

@@ -8,7 +8,6 @@ const workflowName = `Command acceptance ${unique}`;
 const taskName = `Scheduled acceptance ${unique}`;
 const deploymentName = `Deployment acceptance ${unique}`;
 const deploymentSlug = `acceptance-${unique.toLowerCase().replace(/_/g, '-')}`;
-const planTitle = `Plan acceptance ${unique}`;
 
 test.setTimeout(1_200_000);
 
@@ -48,13 +47,13 @@ async function sendAndWait(page: Page, prompt: string, marker: string, timeout =
   await expect(page.locator('[data-action="agent-composer-send"]')).toBeVisible({ timeout: 60_000 });
 }
 
-test('real /build create+execute, Workflow Sandbox, /task, /deployment, and /plan', async ({ page }) => {
+test('real /workflow create+execute, Workflow Sandbox, /task, and /deployment', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   await openNewChat(page);
   await sendAndWait(page, [
-    '/build Create a new workflow named', `"${workflowName}".`,
+    '/workflow Create a new workflow named', `"${workflowName}".`,
     'Build the smallest valid executable workflow with a StartNode connected to an EndNode.',
     'Use /data/workflow.json as the source file, validate it, import it to the canvas,',
     'then call run_workflow with an empty input object and wait for the execution result.',
@@ -108,27 +107,5 @@ test('real /build create+execute, Workflow Sandbox, /task, /deployment, and /pla
   await expect(deploymentsPage.getByText(deploymentName, { exact: true })).toBeVisible({ timeout: 60_000 });
   await deploymentsPage.close();
 
-  // Continue in the same Chat: slash commands are independent Turns, while
-  // the current workflow binding remains available throughout the journey.
-  await resumeActiveChat(page);
-  await sendAndWait(page, [
-    '/plan Create and submit a static execution plan titled', `"${planTitle}".`,
-    'Write valid JSON to /data/plans/acceptance.plan.json with exactly three nodes:',
-    'start -> one subagent -> end. The subagent task must write the single line PLAN_NODE_OK',
-    'to /data/plan-work/acceptance.txt and return that path. Use max_wall_time_seconds=300.',
-    'Call create_execution_plan exactly once after writing the file.',
-    'After the tool succeeds, reply exactly PLAN_CREATE_OK.',
-  ].join(' '), 'PLAN_CREATE_OK', 480_000);
-  await expect(page.getByText(/create_execution_plan/).last()).toBeVisible();
-  const planCard = page.locator('[data-role="execution-plan-card"]').last();
-  await expect(planCard).toBeVisible({ timeout: 60_000 });
-  await expect(planCard).toHaveAttribute('data-plan-status', 'completed', { timeout: 360_000 });
-
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect(page.locator('[data-role="execution-plan-card"]').last()).toHaveAttribute(
-    'data-plan-status',
-    'completed',
-    { timeout: 60_000 },
-  );
   expect(pageErrors).toEqual([]);
 });

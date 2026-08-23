@@ -18,16 +18,16 @@ def _request(*, state_ref: str | None, activated: bool) -> RuntimeTurnRequest:
         runtime_state_ref=state_ref,
         message={"role": "user", "content": "build it"},
         command_context={
-            "active_modes": ["build"],
-            "activated_this_turn": ["build"] if activated else [],
+            "active_modes": ["workflow"],
+            "activated_this_turn": ["workflow"] if activated else [],
         },
         instructions=[{
-            "instruction_id": "command:build:v1",
+            "instruction_id": "command:workflow:v1",
             "kind": "command_context",
             "scope": "chat",
-            "name": "build",
+            "name": "workflow",
             "version": 1,
-            "content": "BACKEND-RESOLVED BUILD CONTEXT",
+            "content": "BACKEND-RESOLVED WORKFLOW CONTEXT",
             "activated_this_turn": activated,
         }],
     )
@@ -37,13 +37,13 @@ def test_langchain_projects_backend_instruction_without_command_registry() -> No
     contexts, activated = _command_instruction_projection(
         _request(state_ref="checkpoint-thread", activated=True)
     )
-    assert contexts == {"build": "BACKEND-RESOLVED BUILD CONTEXT"}
-    assert activated == {"build"}
+    assert contexts == {"workflow": "BACKEND-RESOLVED WORKFLOW CONTEXT"}
+    assert activated == {"workflow"}
 
 
 def test_langchain_seeds_sticky_instructions_when_native_state_is_missing() -> None:
     contexts, activated = _command_instruction_projection(
         _request(state_ref=None, activated=False)
     )
-    assert contexts == {"build": "BACKEND-RESOLVED BUILD CONTEXT"}
-    assert activated == {"build"}
+    assert contexts == {"workflow": "BACKEND-RESOLVED WORKFLOW CONTEXT"}
+    assert activated == {"workflow"}

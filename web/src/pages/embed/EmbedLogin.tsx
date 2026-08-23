@@ -21,12 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { AuthLayout } from '@/pages/auth/AuthLayout';
-import { LoginMfaForm } from '@/components/auth/LoginMfaForm';
-import {
-  AuthApiError,
-  type LoginMfaRequired,
-  useAuthStore,
-} from '@/stores/auth';
+import { AuthApiError, useAuthStore } from '@/stores/auth';
 
 const schema = z.object({
   email: z.string().email(),
@@ -39,7 +34,6 @@ export function EmbedLogin() {
   const { t } = useTranslation();
   const login = useAuthStore((s) => s.login);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [pendingMfa, setPendingMfa] = useState<LoginMfaRequired | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -52,8 +46,7 @@ export function EmbedLogin() {
       // On success the auth store sets `token`; EmbedChatPage advances to the
       // embedded chat. No navigation inside the embed (would mount the full
       // app shell in the iframe).
-      const pending = await login(values.email, values.password);
-      if (pending) setPendingMfa(pending);
+      await login(values.email, values.password);
     } catch (err) {
       if (err instanceof AuthApiError) {
         setSubmitError(err.detail);
@@ -68,16 +61,6 @@ export function EmbedLogin() {
       title={t('auth_login_title', 'Sign in')}
       subtitle={t('auth_login_subtitle', 'Sign in to your workspace.')}
     >
-      {pendingMfa ? (
-        <LoginMfaForm
-          pending={pendingMfa}
-          onAuthenticated={() => setPendingMfa(null)}
-          onBack={() => {
-            setPendingMfa(null);
-            form.setValue('password', '');
-          }}
-        />
-      ) : (
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <Label htmlFor="embed-login-email">
@@ -130,7 +113,6 @@ export function EmbedLogin() {
             : t('auth_login_submit', 'Sign in')}
         </Button>
       </form>
-      )}
     </AuthLayout>
   );
 }

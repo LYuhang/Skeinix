@@ -52,7 +52,7 @@ from vibecanvas_api.storage.models import (
 )
 
 
-router = APIRouter(prefix="/api/v1/auth/mfa/webauthn", tags=["auth"])
+router = APIRouter(prefix="/api/v1/auth/passkeys", tags=["auth"])
 _CHALLENGE_TTL = timedelta(minutes=5)
 _STEP_UP_TTL = timedelta(minutes=10)
 _CEREMONY_TIMEOUT_MS = 120_000
@@ -334,7 +334,7 @@ async def verify_registration(
     assert elevation is not None
     session_payload = elevation.publish(response)
     await record_auth_audit(
-        action=actions.AUTH_MFA_ENROLL,
+        action=actions.AUTH_PASSKEY_REGISTER,
         actor_user_id=uuid.UUID(ctx.user_id),
         actor_email=ctx.email,
         tenant_id=uuid.UUID(ctx.tenant_id),
@@ -417,7 +417,7 @@ async def verify_authentication(
     except WebAuthnException:
         await attempt.failure()
         await record_auth_audit(
-            action=actions.AUTH_MFA_CHALLENGE,
+            action=actions.AUTH_PASSKEY_VERIFY,
             actor_user_id=uuid.UUID(ctx.user_id),
             actor_email=ctx.email,
             tenant_id=uuid.UUID(ctx.tenant_id),
@@ -457,7 +457,7 @@ async def verify_authentication(
     assert elevation is not None
     session_payload = elevation.publish(response)
     await record_auth_audit(
-        action=actions.AUTH_MFA_CHALLENGE,
+        action=actions.AUTH_PASSKEY_VERIFY,
         actor_user_id=uuid.UUID(ctx.user_id),
         actor_email=ctx.email,
         tenant_id=uuid.UUID(ctx.tenant_id),
@@ -499,7 +499,7 @@ async def delete_credential(
     assert elevation is not None
     elevation.publish(response)
     await record_auth_audit(
-        action=actions.AUTH_MFA_DISABLE,
+        action=actions.AUTH_PASSKEY_REMOVE,
         actor_user_id=uuid.UUID(ctx.user_id),
         actor_email=ctx.email,
         tenant_id=uuid.UUID(ctx.tenant_id),

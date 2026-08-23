@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -46,11 +47,87 @@ class DirectBindingIn(BaseModel):
 
 class DirectBindingOut(DirectBindingIn):
     source: Literal["direct"] = "direct"
+    display_name: str = ""
+    detail: str = ""
 
 
 class DirectBindingListOut(BaseModel):
     items: list[DirectBindingOut] = Field(default_factory=list)
     continuation_token: str = ""
+
+
+class ShareTargetLookupIn(BaseModel):
+    target_type: Literal["user", "group", "organization"]
+    identifier: str = Field(default="", max_length=320)
+
+
+class ResolvedShareTargetOut(BaseModel):
+    target_type: Literal["user", "group", "organization"]
+    display_name: str
+    detail: str = ""
+    resolution_token: str
+    allowed_relations: list[
+        Literal["viewer", "editor", "operator", "manager"]
+    ]
+
+
+class ShareTargetLookupOut(BaseModel):
+    target: ResolvedShareTargetOut | None = None
+
+
+class DirectBindingGrantIn(BaseModel):
+    relation: Literal["viewer", "editor", "operator", "manager"]
+    resolution_token: str = Field(min_length=32, max_length=4096)
+
+
+OwnershipScope: TypeAlias = Literal["personal", "organization", "platform"]
+ResourceOrigin: TypeAlias = Literal[
+    "created",
+    "uploaded",
+    "imported",
+    "catalog_install",
+    "derived",
+    "system",
+]
+
+
+class ResourcePartyOut(BaseModel):
+    type: Literal["user", "organization", "platform"]
+    display_name: str
+
+
+class ResourceProvenanceOut(BaseModel):
+    ownership_scope: OwnershipScope
+    origin_type: ResourceOrigin
+    owner: ResourcePartyOut
+    created_by: ResourcePartyOut | None = None
+
+
+class SharedResourceOut(BaseModel):
+    """Recipient-safe card projection for one explicitly shared root.
+
+    The owning tenant is deliberately absent. The backend uses it only to
+    locate and re-authorize the resource; exposing it would leak an internal
+    tenancy identifier without helping the recipient navigate the product.
+    """
+
+    resource_type: Literal[
+        "workflow",
+        "task",
+        "deployment",
+        "knowledge_base",
+    ]
+    resource_id: str
+    name: str
+    description: str = ""
+    updated_at: datetime
+    access: ResourceAccessOut
+    provenance: ResourceProvenanceOut
+
+
+class SharedResourceListOut(BaseModel):
+    items: list[SharedResourceOut] = Field(default_factory=list)
+    next_offset: int | None = None
 
 
 def access_from_decision(

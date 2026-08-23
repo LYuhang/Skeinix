@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 import shutil
 import uuid
 from collections import defaultdict, deque
@@ -24,8 +25,8 @@ from vibecanvas_api.services.agent_runtime.codex_app_server import (
 from vibecanvas_api.services.agent_runtime.codex_debug_snapshot import (
     capture_codex_debug_snapshot,
 )
-from vibecanvas_api.services.agent_runtime.codex_mcp_gateway import (
-    CodexPlatformMcpGateway,
+from vibecanvas_api.services.agent_runtime.codex_mcp_hub_gateway import (
+    CodexMcpHubGateway,
 )
 from vibecanvas_api.services.agent_runtime.control import RuntimeControlRouter
 from vibecanvas_api.services.agent_runtime.protocol import (
@@ -45,6 +46,10 @@ _BROKER_PROVIDER_ID = "vibecanvas_runtime_model"
 _BROKER_CAPABILITY_DIR = "/tmp/vibecanvas-runtime"
 _BROKER_CAPABILITY_PATH = f"{_BROKER_CAPABILITY_DIR}/model-capability"
 _MAX_BROKER_CAPABILITY_BYTES = 16 * 1024
+_MISSING_ROLLOUT_MESSAGE = re.compile(
+    r"no rollout found for thread id \S+",
+    flags=re.IGNORECASE,
+)
 
 # Codex-native items that are user-observable work.  They are projected through
 # the same portable message/tool lifecycle as every other Runtime while keeping
@@ -370,67 +375,6 @@ def _approval_policy(mode: str) -> str:
     }[mode]
 
 
-def _mcp_config(
-    request: RuntimeTurnRequest,
-    *,
-    connection_overrides: dict[str, dict[str, Any]] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    """Translate portable MCP descriptors into Codex-native configuration.
-
-    Codex supports STDIO and Streamable HTTP, while the platform's portable
-    protocol also accepts legacy SSE for LangChain runtimes. Custom MCP
-    integrations are optional, so an unsupported custom transport must be
-    isolated exactly like a failed optional MCP handshake; it must not prevent
-    an otherwise unrelated Chat turn from starting. Platform MCPs are explicit
-    command capabilities and remain fail-closed.
-    """
-    servers: dict[str, Any] = {}
-    skipped: list[dict[str, str]] = []
-    overrides = connection_overrides or {}
-    for descriptor in request.mcp_servers:
-        connection = dict(overrides.get(descriptor.name) or descriptor.connection)
-        transport = connection.get("transport")
-        if transport == "stdio":
-            server = {
-                "command": connection["command"],
-                "args": list(connection.get("args") or []),
-                "required": descriptor.required,
-            }
-            if isinstance(connection.get("env"), dict):
-                server["env"] = dict(connection["env"])
-            if isinstance(connection.get("cwd"), str):
-                server["cwd"] = connection["cwd"]
-        elif transport == "streamable_http":
-            server = {
-                "url": connection["url"],
-                "required": descriptor.required,
-            }
-            if isinstance(connection.get("headers"), dict):
-                server["http_headers"] = dict(connection["headers"])
-            if descriptor.name in overrides:
-                # The loopback MCP gateway is the authoritative product gate.
-                # Codex's annotation-only MCP reviewer cannot inspect our
-                # require_user_auth semantics and must not create a second,
-                # Runtime-private approval prompt for the same operation.
-                server["default_tools_approval_mode"] = "approve"
-                server["tool_timeout_sec"] = _platform_mcp_tool_timeout_s()
-        elif descriptor.source == "custom" and not descriptor.required:
-            skipped.append(
-                {
-                    "name": descriptor.name,
-                    "transport": str(transport or ""),
-                    "reason": "unsupported_transport",
-                }
-            )
-            continue
-        else:
-            raise RuntimeError(
-                f"Codex Runtime does not support MCP transport {transport!r}"
-            )
-        servers[descriptor.name] = server
-    return ({"mcp_servers": servers} if servers else {}, skipped)
-
-
 def _platform_mcp_tool_timeout_s() -> float:
     raw = os.environ.get("CODEX_PLATFORM_MCP_TOOL_TIMEOUT_S", "").strip()
     if not raw:
@@ -543,14 +487,32 @@ class _McpItemCorrelator:
         self._items.clear()
 
 
-def _turn_input(request: RuntimeTurnRequest) -> list[dict[str, Any]]:
+def _missing_rollout_error(exc: CodexAppServerError) -> bool:
+    """Match only Codex's explicit stale native-thread response.
+
+    A broad resume fallback would hide authentication, protocol, storage, and
+    permission defects. This one response means the platform checkpoint points
+    at a rollout that is not present in the Chat Runtime volume, so starting a
+    replacement native thread is the only recoverable action.
+    """
+
+    return (
+        exc.code == "codex_app_server_request_failed"
+        and _MISSING_ROLLOUT_MESSAGE.fullmatch(str(exc).strip()) is not None
+    )
+
+
+def _turn_input(
+    request: RuntimeTurnRequest,
+    *, recovered_missing_rollout: bool = False,
+) -> list[dict[str, Any]]:
     content = str(request.message.get("content") or "")
     instructions = [
         item
         for item in request.instructions
         if item.kind == "command_context" and item.activated_this_turn
     ]
-    if request.runtime_state_ref is None:
+    if request.runtime_state_ref is None or recovered_missing_rollout:
         # A prior attempt may have persisted sticky capability activation but
         # failed before Codex created its first thread. Seed the new native
         # history with every active command in that case.
@@ -560,6 +522,14 @@ def _turn_input(request: RuntimeTurnRequest) -> list[dict[str, Any]]:
             if item.kind == "command_context"
         ]
     contexts = [item.content for item in instructions]
+    if recovered_missing_rollout:
+        contexts.insert(
+            0,
+            "The previous native Codex thread was unavailable after Runtime "
+            "recovery. Continue from the current request and treat durable "
+            "files under /data, /memory, and /logs as the source of truth. "
+            "Do not invent results from the unavailable native transcript.",
+        )
     if contexts:
         content = (
             "<system-reminder>\n"
@@ -1224,7 +1194,9 @@ async def run_codex_turn(
     *,
     client: CodexAppServer | None = None,
     close_client: bool = True,
-    gateway_registry: dict[str, CodexPlatformMcpGateway] | None = None,
+    mcp_hub: Any | None = None,
+    mcp_adapter: Any | None = None,
+    hub_gateway_registry: dict[str, Any] | None = None,
     resident_threads: dict[str, str] | None = None,
 ) -> None:
     setup_started = perf_counter()
@@ -1253,17 +1225,21 @@ async def run_codex_turn(
     seq = 1
     tool_invocations: dict[str, tuple[dict[str, Any], float]] = {}
 
+    runtime_mcp_catalog: list[dict[str, Any]] = []
+
     def invocation_catalog(item: dict[str, Any], name: str) -> list[dict[str, Any]]:
         server_hint = str(item.get("server") or item.get("serverName") or "")
         return [
-            {
-                "name": server.name,
-                "source": server.source,
-                "server_id": server.server_id,
-                "tools": [{"name": name}],
-            }
-            for server in request.mcp_servers
-            if server.name == server_hint or name.startswith(f"{server.name}__")
+            entry
+            for entry in runtime_mcp_catalog
+            if (
+                entry.get("name") == server_hint
+                or any(
+                    tool.get("name") == name
+                    for tool in entry.get("tools") or []
+                    if isinstance(tool, dict)
+                )
+            )
         ]
 
     def event(event_type: str, payload: dict[str, Any]) -> RuntimeEvent:
@@ -1298,7 +1274,7 @@ async def run_codex_turn(
     control_router = _RuntimeControlRouter()
     mcp_item_correlator = _McpItemCorrelator()
     stop_event = asyncio.Event()
-    gateways: list[CodexPlatformMcpGateway] = []
+    active_hub_gateway: CodexMcpHubGateway | None = None
     debug_snapshot_task: asyncio.Task[str | None] | None = None
 
     async def finish_debug_snapshot() -> None:
@@ -1417,6 +1393,57 @@ async def run_codex_turn(
                 waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
 
+    async def request_mcp_gateway(
+        operation: str,
+        server: Any,
+        tool_name: str | None,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        request_id = f"mcpgw_{uuid.uuid4().hex}"
+        correlation = {
+            "source": "mcp_hub",
+            "runtime_request_id": request_id,
+            "runtime_method": operation,
+            "runtime_thread_id": current["thread_id"],
+            "runtime_turn_id": request.turn_id,
+            "runtime_item_id": tool_name,
+        }
+        waiter = asyncio.create_task(
+            control_router.wait("mcp_hub", request_id)
+        )
+        try:
+            await emit("mcp.gateway.requested", {
+                "request_id": request_id,
+                "operation": operation,
+                "server": server.name,
+                "tool_name": tool_name,
+                "arguments": dict(arguments),
+                "execution_capability": (
+                    request.mcp_execution_context.capability.get_secret_value()
+                    if request.mcp_execution_context is not None
+                    else ""
+                ),
+                "runtime_correlation": correlation,
+            })
+            response = await waiter
+            if response.get("action") != "accepted":
+                raise RuntimeError(
+                    str(
+                        response.get("error")
+                        or "Host MCP Gateway rejected the request"
+                    )
+                )
+            payload = response.get("payload")
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    "Host MCP Gateway returned an invalid payload"
+                )
+            return payload
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
     phase_started = perf_counter()
     await client.start()
     app_server_start_ms = int((perf_counter() - phase_started) * 1000)
@@ -1489,135 +1516,53 @@ async def run_codex_turn(
 
     result_ready = False
     try:
-        connection_overrides: dict[str, dict[str, Any]] = {}
         phase_started = perf_counter()
-        platform_descriptors = [
-            descriptor
-            for descriptor in request.mcp_servers
-            if descriptor.source == "platform"
-        ]
-        for descriptor in platform_descriptors:
-            gateway = (
-                gateway_registry.get(descriptor.name)
-                if gateway_registry is not None
-                else None
-            )
-            approval_predicate = (
-                lambda tool_name, arguments: requires_user_approval(
+        if (
+            request.mcp_desired_state is None
+            or request.mcp_execution_context is None
+            or mcp_hub is None
+            or mcp_adapter is None
+        ):
+            raise RuntimeError("Codex MCP Hub contracts are incomplete")
+        mcp_adapter.set_gateway(request_mcp_gateway)
+        await mcp_hub.reconcile(request.mcp_desired_state)
+        await mcp_hub.activate(request.mcp_execution_context)
+        active_hub_gateway = (
+            hub_gateway_registry.get("aggregate")
+            if hub_gateway_registry is not None
+            else None
+        )
+        if active_hub_gateway is None:
+            active_hub_gateway = CodexMcpHubGateway(mcp_hub, mcp_adapter)
+            if hub_gateway_registry is not None:
+                hub_gateway_registry["aggregate"] = active_hub_gateway
+        runtime_mcp_catalog = await active_hub_gateway.activate(
+            desired_servers=list(request.mcp_desired_state.servers),
+            request_approval=request_platform_approval,
+            requires_approval=lambda tool_name, arguments: (
+                requires_user_approval(
                     tool_name,
                     arguments,
                     request.approval_mode,
                 )
-            )
-            if gateway is None:
-                gateway = CodexPlatformMcpGateway(
-                    descriptor=descriptor,
-                    request_approval=request_platform_approval,
-                    requires_approval=approval_predicate,
-                )
-                if gateway_registry is not None:
-                    gateway_registry[descriptor.name] = gateway
-            else:
-                gateway.activate(
-                    descriptor=descriptor,
-                    request_approval=request_platform_approval,
-                    requires_approval=approval_predicate,
-                )
-            gateways.append(gateway)
-        # Every gateway is independent and upstream tool discovery is network
-        # bound. Start them concurrently so the stable config/interactive/
-        # workflow baseline costs one handshake window rather than three.
-        # HTTP gateways remain stateless and can discover tools concurrently.
-        # A stdio gateway owns a resident child process whose async context must
-        # be entered and exited by this Turn task, so start it directly rather
-        # than inside a temporary asyncio.gather task.
-        gateway_results: list[object | None] = [None] * len(gateways)
-        http_indexes = [
-            index
-            for index, gateway in enumerate(gateways)
-            if gateway.descriptor.connection.get("transport") != "stdio"
-        ]
-        http_results = await asyncio.gather(
-            *(gateways[index].start() for index in http_indexes),
-            return_exceptions=True,
+            ),
         )
-        for index, result in zip(http_indexes, http_results, strict=True):
-            gateway_results[index] = result
-        for index, gateway in enumerate(gateways):
-            if gateway.descriptor.connection.get("transport") != "stdio":
-                continue
-            try:
-                await gateway.start()
-            except BaseException as exc:  # handled uniformly below
-                gateway_results[index] = exc
-        for gateway, result in zip(gateways, gateway_results, strict=True):
-            if isinstance(result, BaseException):
-                detail = str(result)
-                connection = dict(gateway.descriptor.connection)
-                secret_values: list[str] = []
-                for mapping_name in ("headers", "env"):
-                    mapping = connection.get(mapping_name)
-                    if not isinstance(mapping, dict):
-                        continue
-                    for key, value in mapping.items():
-                        normalized_key = str(key).lower()
-                        if any(
-                            marker in normalized_key
-                            for marker in (
-                                "authorization",
-                                "bearer",
-                                "token",
-                                "secret",
-                                "password",
-                                "api_key",
-                            )
-                        ):
-                            secret_values.append(str(value))
-                for secret in secret_values:
-                    if secret:
-                        detail = detail.replace(secret, "[redacted]")
-                detail = detail[:500]
-                raise RuntimeError(
-                    f"Codex Platform MCP gateway {gateway.descriptor.name} "
-                    f"failed to start: {type(result).__name__}: {detail}"
-                ) from result
-            if gateway.url is None:
-                raise RuntimeError(
-                    f"Codex Platform MCP gateway {gateway.descriptor.name} "
-                    "did not expose a URL"
-                )
-            connection_overrides[gateway.descriptor.name] = {
-                "transport": "streamable_http",
-                "url": gateway.url,
+        if active_hub_gateway.url is None:
+            raise RuntimeError("Codex MCP Hub exposed no loopback URL")
+        mcp_config = {
+            "mcp_servers": {
+                "skeinix": {
+                    "url": active_hub_gateway.url,
+                    "required": True,
+                    "default_tools_approval_mode": "approve",
+                    "tool_timeout_sec": _platform_mcp_tool_timeout_s(),
+                }
             }
+        }
         mcp_gateway_start_ms = int((perf_counter() - phase_started) * 1000)
         phase_started = perf_counter()
-        mcp_config, skipped_mcp_servers = _mcp_config(
-            request,
-            connection_overrides=connection_overrides,
-        )
         mcp_config.update(broker_model_config)
         mcp_config_ms = int((perf_counter() - phase_started) * 1000)
-        for skipped in skipped_mcp_servers:
-            await emit(
-                "projection",
-                {
-                    "event_type": "NOTICE",
-                    "payload": {
-                        "level": "warning",
-                        "code": "runtime_mcp_transport_unsupported",
-                        "message": (
-                            f"MCP server '{skipped['name']}' was not loaded because "
-                            f"the Codex runtime does not support transport "
-                            f"'{skipped['transport']}'."
-                        ),
-                        "runtime_type": "codex",
-                        "mcp_server": skipped["name"],
-                        "transport": skipped["transport"],
-                        "turn_disposition": "continue",
-                    },
-                },
-            )
         selected_model = request.model.get("id")
         common = {
             "cwd": "/data" if os.path.isdir("/data") else "/mount",
@@ -1635,6 +1580,9 @@ async def run_codex_turn(
                 "cwd": common["cwd"],
                 "config": common["config"],
                 "modelProvider": common.get("modelProvider"),
+                "mcpHubRevision": (
+                    request.mcp_desired_state.revision_key
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -1650,6 +1598,7 @@ async def run_codex_turn(
             request.runtime_state_ref
             and resident_state_config == resident_config
         )
+        recovered_missing_rollout = False
         if (
             request.runtime_state_ref
             and resident_state_config == resident_config
@@ -1662,7 +1611,7 @@ async def run_codex_turn(
         elif request.runtime_state_ref and resident_state_config is not None:
             # A running app-server thread keeps the MCP clients it was opened
             # with. ``thread/resume`` rejoins that live thread, so newly
-            # activated slash-command MCPs (for example /build after an
+            # activated slash-command MCPs (for example /workflow after an
             # ordinary Turn) would not become model-visible. Forking copies the
             # completed conversation history into a new native thread while
             # applying the current Turn's exact, least-privilege MCP config.
@@ -1675,16 +1624,27 @@ async def run_codex_turn(
             thread_id = str(thread.get("id") if isinstance(thread, dict) else "")
             if thread_id and resident_threads is not None:
                 resident_threads.pop(request.runtime_state_ref, None)
-        elif request.runtime_state_ref:
-            opened = await client.request(
-                "thread/resume",
-                {"threadId": request.runtime_state_ref, **common},
-                timeout_s=45.0,
-            )
-            thread = opened.get("thread")
-            thread_id = str(thread.get("id") if isinstance(thread, dict) else "")
         else:
-            opened = await client.request("thread/start", common, timeout_s=45.0)
+            if request.runtime_state_ref:
+                try:
+                    opened = await client.request(
+                        "thread/resume",
+                        {"threadId": request.runtime_state_ref, **common},
+                        timeout_s=45.0,
+                    )
+                except CodexAppServerError as exc:
+                    if not _missing_rollout_error(exc):
+                        raise
+                    recovered_missing_rollout = True
+                    opened = await client.request(
+                        "thread/start",
+                        common,
+                        timeout_s=45.0,
+                    )
+            else:
+                opened = await client.request(
+                    "thread/start", common, timeout_s=45.0
+                )
             thread = opened.get("thread")
             thread_id = str(thread.get("id") if isinstance(thread, dict) else "")
         if not thread_id:
@@ -1694,7 +1654,10 @@ async def run_codex_turn(
         current["thread_id"] = thread_id
         thread_open_ms = int((perf_counter() - phase_started) * 1000)
 
-        current_input = _turn_input(request)
+        current_input = _turn_input(
+            request,
+            recovered_missing_rollout=recovered_missing_rollout,
+        )
         if os.environ.get("AGENT_DEBUG_VIEW_ENABLED") == "1":
             # Build/write concurrently with app-server turn startup so the
             # Inspector adds no model TTFT. The task is drained before the
@@ -1737,7 +1700,9 @@ async def run_codex_turn(
                 # Turn.  The backend-owned command snapshot is therefore the
                 # authoritative product first/subsequent-Turn classification.
                 "first_turn": bool(request.command_context.is_first),
-                "mcp_server_count": len(request.mcp_servers),
+                "mcp_server_count": (
+                    len(request.mcp_desired_state.servers)
+                ),
                 "timings_ms": {
                     "skills_prepare_ms": skills_prepare_ms,
                     "app_server_start_ms": app_server_start_ms,
@@ -2445,14 +2410,12 @@ async def run_codex_turn(
         mcp_item_correlator.cancel()
         control_task.cancel()
         await asyncio.gather(control_task, return_exceptions=True)
+        if active_hub_gateway is not None:
+            active_hub_gateway.deactivate()
+        if mcp_hub is not None:
+            await mcp_hub.deactivate()
         if close_client:
             await client.close()
-        for gateway in reversed(gateways):
-            if gateway_registry is None:
-                await gateway.close()
-            else:
-                gateway.deactivate()
-                await gateway.disconnect_upstream()
     if result_ready:
         # Do not advertise a reusable Turn boundary while the old control
         # receiver or MCP upstream is still being dismantled.  The outer

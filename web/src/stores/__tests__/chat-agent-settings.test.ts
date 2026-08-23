@@ -34,9 +34,9 @@ describe('chat agent settings', () => {
     });
   });
 
-  it('hydrates a historical Chat from the server and refuses local mutation', () => {
+  it('hydrates a historical Chat and allows the next Turn to change model', () => {
     const store = useChatAgentSettingsStore.getState();
-    store.hydrateLocked('chat-a', {
+    store.hydrateBound('chat-a', {
       modelId: 'codex:account:gpt-5',
       temperature: null,
       maxTokens: null,
@@ -49,9 +49,8 @@ describe('chat agent settings', () => {
     });
 
     expect(getChatAgentSettings('chat-a')).toMatchObject({
-      modelId: 'codex:account:gpt-5',
-      reasoningEffort: 'high',
+      modelId: 'codex:credential:other',
+      reasoningEffort: 'low',
     });
-    expect(useChatAgentSettingsStore.getState().entries['chat-a']?.locked).toBe(true);
   });
 });

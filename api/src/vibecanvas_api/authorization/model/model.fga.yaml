@@ -103,15 +103,12 @@ tuples:
     relation: consumer
     object: llm_credential:team-model
 
-  # Minimal fixtures ensure every collaborative resource type is queryable.
+  # Minimal fixtures ensure every resource type is queryable.
   - user: organization:acme
     relation: organization
     object: template:template-1
   - user: user:alice
     relation: manager
-    object: template:template-1
-  - user: user:eve
-    relation: viewer
     object: template:template-1
   - user: organization:acme
     relation: organization
@@ -136,9 +133,6 @@ tuples:
     object: storage_root:mount-1
   - user: user:alice
     relation: manager
-    object: storage_root:mount-1
-  - user: user:eve
-    relation: viewer
     object: storage_root:mount-1
   - user: organization:acme
     relation: organization
@@ -154,9 +148,6 @@ tuples:
     object: skill_installation:skill-1
   - user: user:alice
     relation: manager
-    object: skill_installation:skill-1
-  - user: user:eve
-    relation: viewer
     object: skill_installation:skill-1
 
 tests:
@@ -282,15 +273,14 @@ tests:
           can_view_metadata: true
           can_view: false
 
-  - name: guest auditor and admin matrix for every collaborative resource
+  - name: guest auditor and admin matrix for content resources
     check:
       - user: user:eve
         object: template:template-1
         assertions:
-          can_view_metadata: true
-          can_view: true
+          can_view_metadata: false
+          can_view: false
           can_update: false
-          can_manage_access: false
           can_delete: false
           can_publish: false
       - user: user:audrey
@@ -299,14 +289,12 @@ tests:
           can_view_metadata: true
           can_view: false
           can_update: false
-          can_manage_access: false
           can_delete: false
       - user: user:olivia
         object: template:template-1
         assertions:
           can_view_metadata: true
           can_view: false
-          can_manage_access: true
           can_delete: true
 
       - user: user:eve
@@ -364,11 +352,10 @@ tests:
       - user: user:eve
         object: storage_root:mount-1
         assertions:
-          can_view_metadata: true
-          can_view: true
+          can_view_metadata: false
+          can_view: false
           can_update: false
           can_mount: false
-          can_manage_access: false
       - user: user:audrey
         object: storage_root:mount-1
         assertions:
@@ -382,7 +369,6 @@ tests:
           can_view_metadata: true
           can_view: false
           can_mount: false
-          can_manage_access: true
           can_delete: true
 
       - user: user:eve
@@ -412,8 +398,8 @@ tests:
       - user: user:eve
         object: skill_installation:skill-1
         assertions:
-          can_view_metadata: true
-          can_view: true
+          can_view_metadata: false
+          can_view: false
           can_update: false
           can_use: false
           can_publish: false
@@ -430,7 +416,6 @@ tests:
           can_view_metadata: true
           can_view: false
           can_use: false
-          can_manage_access: true
           can_delete: true
 
   - name: guest auditor and admin private-resource boundaries
@@ -575,7 +560,7 @@ tests:
           can_manage_access: false
           can_delete: false
 
-  - name: every collaborative root exposes its intended manager capabilities
+  - name: every resource root exposes its intended owner capabilities
     check:
       - user: user:alice
         object: template:template-1
@@ -584,7 +569,6 @@ tests:
           can_update: true
           can_use: true
           can_publish: true
-          can_manage_access: true
       - user: user:alice
         object: task:task-1
         assertions:
@@ -607,7 +591,6 @@ tests:
           can_view: true
           can_update: true
           can_mount: true
-          can_manage_access: true
       - user: user:alice
         object: knowledge_base:kb-1
         assertions:
@@ -622,7 +605,6 @@ tests:
           can_update: true
           can_use: true
           can_publish: true
-          can_manage_access: true
 
     list_objects:
       - user: user:dave

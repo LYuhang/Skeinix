@@ -52,7 +52,6 @@ import {
   readInteractiveArtifact,
 } from '@/components/agent-sidebar/tool-render/interactive-artifact-contract';
 import {
-  diagramDraftPreviewFromStandardResult,
   diagramPreviewPathFromStandardResult,
   parseStandardToolResult,
 } from '@/components/agent-sidebar/tool-render/parseStandardToolResult';
@@ -62,6 +61,7 @@ import { ChatComposer } from '@/components/agent-sidebar/ChatComposer';
 import { SSEStatusBanner } from '@/components/agent-sidebar/SSEStatusBanner';
 import { VfsFilesSection } from '@/pages/canvas/explorer/VfsFilesSection';
 import { ChatTodoDock } from './ChatTodoDock';
+import { EmptyChatExamples } from './EmptyChatExamples';
 import {
   CHAT_PANE_MIN_WIDTH,
   DEBUG_PANE_MIN_WIDTH,
@@ -109,8 +109,6 @@ import {
   type SandboxLifecycleStatus,
   type SandboxResourceStatus,
 } from '@/lib/sandbox-status';
-import { useExecutionPlans } from '@/lib/api/queries/execution-plans';
-import { ExecutionPlanChatCard } from './ExecutionPlanChatCard';
 import { mergeHistoryWindow, type ChatHistoryWindow } from './history-window';
 
 const ChatPreviewPane = lazy(() =>
@@ -192,18 +190,6 @@ function previewItemFromToolCall(
 ): ChatPreviewItem | null {
   if (call.status === 'done') {
     const result = parseStandardToolResult(call.result);
-    const draft = diagramDraftPreviewFromStandardResult(result);
-    if (draft) {
-      return {
-        id: `diagram_draft:${draft.draftId}`,
-        title: draft.title,
-        resource: {
-          schemaVersion: 1,
-          kind: 'diagram_draft',
-          ...draft,
-        },
-      };
-    }
     const path = diagramPreviewPathFromStandardResult(result);
     const fileRef = path ? fileRefFromAgentPath(path, { chatId }) : null;
     if (path && fileRef) return filePreviewItem(fileRef, fileNameFromPath(path));
@@ -456,7 +442,7 @@ function DebugMessageCard({
           )}
           {toolCalls.length > 0 && (
             <div className="mt-1 truncate text-xs text-muted-foreground">
-              {toolCalls.length} tool call{toolCalls.length > 1 ? 's' : ''}: {' '}
+              {t('chat.debug.toolCallCount', '{{count}} tool call', { count: toolCalls.length })}: {' '}
               {toolCalls.map(debugToolCallName).join(', ')}
             </div>
           )}
@@ -488,7 +474,7 @@ function DebugMessageCard({
               <div key={id || index} className="rounded border bg-background">
                 <div className="flex items-center gap-2 border-b px-2 py-1.5">
                   <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs uppercase text-muted-foreground">
-                    tool call
+                    {t('chat.debug.toolCall', 'Tool call')}
                   </span>
                   <span className="font-mono text-xs font-medium">
                     {debugToolCallName(call)}
@@ -514,8 +500,9 @@ function DebugMessageCard({
       )}
       <div className="flex items-center justify-between border-t px-3 py-1.5">
         <div className="truncate text-xs text-muted-foreground">
-          raw {formatTokens(slots.raw)} · preview {formatTokens(slots.preview)} · abstract{' '}
-          {formatTokens(slots.abstract)} · compressed {formatTokens(slots.compressed)}
+          {t('chat.debug.raw', 'Raw')} {formatTokens(slots.raw)} · {t('chat.debug.preview', 'Preview')}{' '}
+          {formatTokens(slots.preview)} · {t('chat.debug.abstract', 'Abstract')} {formatTokens(slots.abstract)} ·{' '}
+          {t('chat.debug.compressed', 'Compressed')} {formatTokens(slots.compressed)}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {long && (
@@ -1211,6 +1198,27 @@ export function ChatPage() {
     maxWidth: 560,
   });
   const carrierScopeId = boot.data?.carrier_scope_id ?? '';
+  const [composerHasDraft, setComposerHasDraft] = useState(false);
+  const composerStateKey = activeChatId
+    ? chatClientStateKey({
+        account,
+        scopeId: carrierScopeId,
+        surface: 'chat',
+        chatId: activeChatId,
+      })
+    : null;
+  const setComposerInput = useChatStreamStore((state) => state.setComposerInput);
+  const fillComposerExample = useCallback((prompt: string) => {
+    if (!composerStateKey) return;
+    setComposerInput(composerStateKey, prompt);
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLTextAreaElement>(
+        `[data-role="agent-composer-input"][data-chat-id="${CSS.escape(activeChatId ?? '')}"]`,
+      );
+      input?.focus();
+      input?.setSelectionRange(prompt.length, prompt.length);
+    });
+  }, [activeChatId, composerStateKey, setComposerInput]);
   const openPreviewItem = useCallback((item: ChatPreviewItem) => {
     setPreviewItems((prev) => {
       const next = prev.filter((existing) => existing.id !== item.id);
@@ -1605,25 +1613,18 @@ export function ChatPage() {
   const activeHistoryKey = carrierScopeId && activeChatId
     ? `${carrierScopeId}:${activeChatId}`
     : '';
-  useEffect(() => {
-    if (!activeHistoryKey || !activeHistory.data) return;
-    let active = true;
-    const historyPage = activeHistory.data;
-    queueMicrotask(() => {
-      if (!active) return;
-      setHistoryWindows((current) =>
-        retainHistoryWindow(
-          current,
-          activeHistoryKey,
-          mergeHistoryWindow(current[activeHistoryKey], historyPage),
-        ),
-      );
-    });
-    return () => {
-      active = false;
-    };
-  }, [activeHistory.data, activeHistoryKey]);
-  const activeHistoryWindow = activeHistoryKey ? historyWindows[activeHistoryKey] : undefined;
+  // Derive the current tail directly from the query result so the pagination
+  // affordance is present in the same render as the first transcript page.
+  // Local state retains only pages explicitly loaded before that tail. This
+  // avoids a transient state where messages are visible but offset/hasOlder
+  // still belong to the previous render and the user must refresh the page.
+  const activeHistoryWindow = useMemo(() => {
+    if (!activeHistoryKey) return undefined;
+    const retained = historyWindows[activeHistoryKey];
+    return activeHistory.data
+      ? mergeHistoryWindow(retained, activeHistory.data)
+      : retained;
+  }, [activeHistory.data, activeHistoryKey, historyWindows]);
   const olderHistoryLoadingRef = useRef(false);
   const [olderHistoryLoading, setOlderHistoryLoading] = useState(false);
   const hasOlderHistory = !!activeHistoryWindow && activeHistoryWindow.offset > 0;
@@ -1661,7 +1662,6 @@ export function ChatPage() {
     secondaryChatResourcesReady ? activeChatId : null,
     secondaryChatResourcesReady,
   );
-  const executionPlans = useExecutionPlans(secondaryChatResourcesReady ? activeChatId : null);
   const streamTodoItems = useChatStreamStore((s) =>
     activeChatId
       ? (s.runtimes[activeChatId]?.todoItems ??
@@ -1676,13 +1676,10 @@ export function ChatPage() {
     () => chatState.data?.background_jobs ?? [],
     [chatState.data?.background_jobs],
   );
-  const attentionPlans = (executionPlans.data ?? []).filter((plan) =>
-    ['awaiting_approval', 'failed', 'cancel_requested'].includes(plan.status),
-  );
   const attentionJobs = backgroundJobs.filter((job) =>
     ['failed', 'cancelling'].includes(job.status),
   );
-  const attentionCount = attentionPlans.length + attentionJobs.length;
+  const attentionCount = attentionJobs.length;
   const activeStreamState = useChatStreamStore((state) => {
     if (!activeChatId) return 'idle';
     return state.runtimes[activeChatId]?.state
@@ -1710,7 +1707,6 @@ export function ChatPage() {
     if (!activeChatId) return;
     const current = new Map<string, string>();
     for (const job of backgroundJobs) current.set(`job:${job.job_id}`, job.status);
-    for (const plan of executionPlans.data ?? []) current.set(`plan:${plan.plan_run_id}`, plan.status);
     if (completionBaselineRef.current !== activeChatId) {
       completionBaselineRef.current = activeChatId;
       terminalStatusRef.current = current;
@@ -1720,21 +1716,15 @@ export function ChatPage() {
       const previous = terminalStatusRef.current.get(key);
       if (!previous || previous === status) continue;
       if (status === 'completed') {
-        toast.success(key.startsWith('plan:')
-          ? t('chat.notifications.planCompleted', 'Execution plan completed')
-          : t('chat.notifications.jobCompleted', 'Background task completed'));
+        toast.success(t('chat.notifications.jobCompleted', 'Background task completed'));
       } else if (status === 'failed') {
-        toast.error(key.startsWith('plan:')
-          ? t('chat.notifications.planFailed', 'Execution plan needs attention')
-          : t('chat.notifications.jobFailed', 'Background task needs attention'));
+        toast.error(t('chat.notifications.jobFailed', 'Background task needs attention'));
       } else if (status === 'cancelled') {
-        toast.info(key.startsWith('plan:')
-          ? t('chat.notifications.planCancelled', 'Execution plan cancelled')
-          : t('chat.notifications.jobCancelled', 'Background task cancelled'));
+        toast.info(t('chat.notifications.jobCancelled', 'Background task cancelled'));
       }
     }
     terminalStatusRef.current = current;
-  }, [activeChatId, backgroundJobs, executionPlans.data, t]);
+  }, [activeChatId, backgroundJobs, t]);
   const backgroundViewAvailable = (
     activeChatSession?.runtime_type !== 'codex'
     || backgroundJobs.length > 0
@@ -1848,19 +1838,6 @@ export function ChatPage() {
         },
       });
     }
-    for (const plan of executionPlans.data ?? []) {
-      add({
-        id: `execution_plan:${plan.plan_id}:${plan.plan_run_id}`,
-        title: plan.title,
-        resource: {
-          schemaVersion: 1,
-          kind: 'execution_plan',
-          planId: plan.plan_id,
-          runId: plan.plan_run_id,
-          revision: plan.revision,
-        },
-      });
-    }
     for (const item of previewItems) add(item);
     for (const message of mergeChunks([...(activeHistoryWindow?.items ?? []), ...livePreviewChunks])) {
       for (const call of message.tool_calls) {
@@ -1876,9 +1853,8 @@ export function ChatPage() {
       }
     }
     return [...byId.values()];
-  }, [activeChatId, activeChatIsPersisted, activeHistoryWindow?.items, backgroundViewAvailable, currentWorkflowId, executionPlans.data, livePreviewChunks, previewItems, t]);
-  const previewDiscoveryReady =
-    !activeHistory.isLoading && !workspace.isLoading && !executionPlans.isLoading;
+  }, [activeChatId, activeChatIsPersisted, activeHistoryWindow?.items, backgroundViewAvailable, currentWorkflowId, livePreviewChunks, previewItems, t]);
+  const previewDiscoveryReady = !activeHistory.isLoading && !workspace.isLoading;
   useEffect(() => {
     if (!previewOpen || previewItems.length > 0 || !previewDiscoveryReady) return;
     const restored =
@@ -2076,21 +2052,6 @@ export function ChatPage() {
             }
             size="sm"
             onClick={() => {
-              const plan = attentionPlans[0];
-              if (plan) {
-                openPreviewItem({
-                  id: `execution_plan:${plan.plan_id}:${plan.plan_run_id}`,
-                  title: plan.title,
-                  resource: {
-                    schemaVersion: 1,
-                    kind: 'execution_plan',
-                    planId: plan.plan_id,
-                    runId: plan.plan_run_id,
-                    revision: plan.revision,
-                  },
-                });
-                return;
-              }
               if (!activeChatIsPersisted || !activeChatId) return;
               openPreviewItem({
                 id: `background_jobs:${activeChatId}`,
@@ -2206,17 +2167,6 @@ export function ChatPage() {
                       title: t('chat.preview.workflowTitle', 'Workflow: {{id}}', { id: workflowId.slice(0, 8) }),
                       resource: { schemaVersion: 1, kind: 'workflow', workflowId },
                     })}
-                    onOpenExecutionPlanPreview={({ planId, runId, revision }) => openPreviewItem({
-                      id: `execution_plan:${planId}:${runId}`,
-                      title: t('chat.preview.executionPlanTitle', 'Execution plan'),
-                      resource: {
-                        schemaVersion: 1,
-                        kind: 'execution_plan',
-                        planId,
-                        runId,
-                        revision,
-                      },
-                    })}
                     historyItems={activeHistoryWindow?.items ?? (activeHistory.data?.items as RawChunk[] | undefined)}
                     historyLoading={activeHistory.isLoading}
                     historyFetching={activeHistory.isFetching}
@@ -2255,7 +2205,7 @@ export function ChatPage() {
                     }}
                   />
                 ) : (
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-20">
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-start overflow-y-auto px-6 pb-20 pt-6 sm:justify-center sm:pt-0">
                     <div
                       className="mb-6 flex max-w-md flex-col items-center text-center"
                       role="log"
@@ -2288,8 +2238,13 @@ export function ChatPage() {
                             markChatStarted(activeChatId);
                             if (activeChatId) setSandboxMaterializedChatId(activeChatId);
                           }}
+                          onDraftPresenceChange={setComposerHasDraft}
                         />
                       </div>
+                      <EmptyChatExamples
+                        visible={!showConversation && !composerHasDraft}
+                        onSelect={fillComposerExample}
+                      />
                     </div>
                   </div>
                 )}
@@ -2297,22 +2252,6 @@ export function ChatPage() {
                   {showConversation && (
                     <div className="relative shrink-0 bg-surface-work px-4 pb-3 pt-2 before:pointer-events-none before:absolute before:-top-6 before:inset-x-0 before:h-6 before:bg-gradient-to-t before:from-surface-work before:to-transparent">
                       <div className="chat-composer-width sm:px-5">
-                        {executionPlans.data?.[0] ? (
-                          <ExecutionPlanChatCard
-                            plan={executionPlans.data[0]}
-                            onOpen={() => openPreviewItem({
-                              id: `execution_plan:${executionPlans.data![0].plan_id}:${executionPlans.data![0].plan_run_id}`,
-                              title: executionPlans.data![0].title,
-                              resource: {
-                                schemaVersion: 1,
-                                kind: 'execution_plan',
-                                planId: executionPlans.data![0].plan_id,
-                                runId: executionPlans.data![0].plan_run_id,
-                                revision: executionPlans.data![0].revision,
-                              },
-                            })}
-                          />
-                        ) : null}
                         <ChatTodoDock
                           items={todoItems}
                           collapsed={todoCollapsed}

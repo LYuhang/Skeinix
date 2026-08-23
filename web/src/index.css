@@ -2,9 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Transcript Diagram cards are deliberately read-only. Their one actionable
-   affordance is the card-level "Open in preview" button, so do not render the
-   full canvas toolbar or interactive minimap inside the compact snapshot. */
+/* Transcript Diagram cards are deliberately read-only. Fit and Open Preview
+   live in the card header, so the full canvas toolbar and minimap would only
+   duplicate controls and consume the aspect-aware overview viewport. */
 .diagram-inline-preview [role='toolbar'],
 .diagram-inline-preview .react-flow__minimap {
   display: none;
@@ -379,6 +379,261 @@
   }
 
   .chat-markdown tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* Full Markdown files are reading surfaces, not chat messages. Keep the
+     mature react-markdown/remark-gfm parser while giving complete documents a
+     GitHub-style hierarchy, a comfortable measure, and native product colors. */
+  .markdown-document {
+    min-height: 100%;
+    background: oklch(var(--surface-view));
+    color: oklch(var(--text-primary));
+  }
+
+  .markdown-document-content {
+    width: min(100%, 58rem);
+    margin-inline: auto;
+    padding: clamp(1.5rem, 4vw, 3.75rem) clamp(1.25rem, 4.5vw, 4rem) 5rem;
+    font-size: 15.5px;
+    line-height: 1.76;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
+  }
+
+  .markdown-document-content > :first-child {
+    margin-top: 0;
+  }
+
+  .markdown-document-content > :last-child {
+    margin-bottom: 0;
+  }
+
+  .markdown-document h1,
+  .markdown-document h2,
+  .markdown-document h3,
+  .markdown-document h4,
+  .markdown-document h5,
+  .markdown-document h6 {
+    color: oklch(var(--text-primary));
+    font-weight: 680;
+    letter-spacing: -0.018em;
+    line-height: 1.28;
+    scroll-margin-top: 1.5rem;
+    text-wrap: balance;
+  }
+
+  .markdown-document h1 {
+    margin-block: 0 1.45rem;
+    padding-bottom: 0.65rem;
+    border-bottom: 1px solid oklch(var(--edge-structural));
+    font-size: clamp(1.85rem, 3vw, 2.25rem);
+    letter-spacing: -0.03em;
+  }
+
+  .markdown-document h2 {
+    margin-block: 2.25rem 0.85rem;
+    padding-bottom: 0.38rem;
+    border-bottom: 1px solid oklch(var(--edge-subtle));
+    font-size: 1.48rem;
+  }
+
+  .markdown-document h3 {
+    margin-block: 1.75rem 0.65rem;
+    font-size: 1.18rem;
+  }
+
+  .markdown-document h4,
+  .markdown-document h5,
+  .markdown-document h6 {
+    margin-block: 1.4rem 0.5rem;
+    font-size: 1rem;
+  }
+
+  .markdown-document p {
+    margin-block: 0.78rem;
+  }
+
+  .markdown-document strong {
+    font-weight: 680;
+  }
+
+  .markdown-document a {
+    color: oklch(var(--focus));
+    font-weight: 530;
+    text-decoration-line: underline;
+    text-decoration-color: oklch(var(--focus) / 0.38);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  .markdown-document a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  .markdown-document ul,
+  .markdown-document ol {
+    margin-block: 0.85rem;
+    padding-inline-start: 1.65rem;
+  }
+
+  .markdown-document ul {
+    list-style-type: disc;
+  }
+
+  .markdown-document ol {
+    list-style-type: decimal;
+  }
+
+  .markdown-document li {
+    padding-inline-start: 0.2rem;
+  }
+
+  .markdown-document li + li {
+    margin-top: 0.28rem;
+  }
+
+  .markdown-document li::marker {
+    color: oklch(var(--text-tertiary));
+  }
+
+  .markdown-document .contains-task-list {
+    padding-inline-start: 0;
+    list-style: none;
+  }
+
+  .markdown-document .task-list-item > input {
+    margin-inline-end: 0.55rem;
+    accent-color: oklch(var(--focus));
+  }
+
+  .markdown-document blockquote {
+    margin-block: 1.15rem;
+    border-inline-start: 4px solid oklch(var(--focus) / 0.55);
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
+    background: oklch(var(--surface-sunken) / 0.72);
+    color: oklch(var(--text-secondary));
+    padding: 0.75rem 1rem;
+  }
+
+  .markdown-document blockquote > :first-child {
+    margin-top: 0;
+  }
+
+  .markdown-document blockquote > :last-child {
+    margin-bottom: 0;
+  }
+
+  .markdown-document hr {
+    margin-block: 2rem;
+    border: 0;
+    border-top: 1px solid oklch(var(--edge-structural));
+  }
+
+  .markdown-document img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1.4rem auto;
+    border-radius: var(--radius-card);
+    box-shadow: 0 0 0 1px oklch(var(--edge-subtle));
+  }
+
+  .markdown-document-code-inline {
+    border: 1px solid oklch(var(--edge-subtle));
+    border-radius: 5px;
+    background: oklch(var(--surface-sunken) / 0.82);
+    padding: 0.08em 0.34em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.88em;
+  }
+
+  .markdown-document-code-panel {
+    margin-block: 1.15rem;
+    overflow: hidden;
+    border: 1px solid oklch(var(--edge-structural));
+    border-radius: 10px;
+    background: oklch(var(--surface-sunken) / 0.68);
+  }
+
+  .markdown-document-code-header {
+    display: flex;
+    min-height: 2.25rem;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid oklch(var(--edge-subtle));
+    padding-inline: 0.75rem 0.35rem;
+    color: oklch(var(--text-tertiary));
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.72rem;
+    text-transform: lowercase;
+  }
+
+  .markdown-document-code-header > :last-child {
+    margin-inline-start: auto;
+  }
+
+  .markdown-document-code-panel pre,
+  .markdown-document-code-highlight pre {
+    margin: 0;
+    overflow: auto;
+    background: transparent !important;
+    padding: 1rem 1.1rem;
+    font-size: 0.84rem;
+    line-height: 1.65;
+    tab-size: 2;
+  }
+
+  .markdown-document-code-panel code {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  .dark .markdown-document-code-highlight .shiki,
+  .dark .markdown-document-code-highlight .shiki span {
+    color: var(--shiki-dark) !important;
+    background-color: transparent !important;
+    font-style: var(--shiki-dark-font-style) !important;
+    font-weight: var(--shiki-dark-font-weight) !important;
+    text-decoration: var(--shiki-dark-text-decoration) !important;
+  }
+
+  .markdown-document-table-wrap {
+    margin-block: 1.25rem;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid oklch(var(--edge-structural));
+    border-radius: 9px;
+  }
+
+  .markdown-document table {
+    width: 100%;
+    min-width: 32rem;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  .markdown-document th,
+  .markdown-document td {
+    border-bottom: 1px solid oklch(var(--edge-subtle));
+    padding: 0.68rem 0.85rem;
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .markdown-document th {
+    background: oklch(var(--surface-sunken) / 0.84);
+    font-weight: 650;
+  }
+
+  .markdown-document tbody tr:nth-child(even) {
+    background: oklch(var(--surface-sunken) / 0.28);
+  }
+
+  .markdown-document tr:last-child td {
     border-bottom: 0;
   }
 }

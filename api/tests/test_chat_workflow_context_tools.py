@@ -17,8 +17,8 @@ def test_workflow_context_tools_are_platform_mcp_only():
         CHAT_WORKFLOW_CONTEXT_TOOLS,
     )
 
-    chat_names = _names(build_tools({"build"}, surface="chat"))
-    browser_names = _names(build_tools({"build"}, surface="browser"))
+    chat_names = _names(build_tools({"workflow"}, surface="chat"))
+    browser_names = _names(build_tools({"workflow"}, surface="browser"))
 
     assert _names(CHAT_WORKFLOW_CONTEXT_TOOLS) == [
         "set_workflow",

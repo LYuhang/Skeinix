@@ -5,4 +5,5 @@ export interface PreviewRendererProps {
   loadAllowed: boolean;
   onDirtyChange: (dirty: boolean) => void;
   onOpenFile?: (path: string) => void;
+  onReload?: () => void;
 }

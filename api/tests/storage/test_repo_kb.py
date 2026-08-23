@@ -1,4 +1,4 @@
-"""KB / RAG T1 — ``KbRepo`` CRUD + soft-delete + dedup + RLS smoke.
+"""Knowledge package repository CRUD + soft-delete + RLS smoke.
 
 Coverage (5 cases — match the spec in plan Step 1.6):
 
@@ -8,9 +8,7 @@ Coverage (5 cases — match the spec in plan Step 1.6):
   ``(tenant_id, name) WHERE deleted_at IS NULL``).
 * ``soft_delete_kb`` cascades the ``deleted_at`` UPDATE to ``kb_files``
   so ``list_files`` returns ``[]`` immediately.
-* Per-KB ``content_hash`` dedup: a second ``create_file`` with the same
-  hash on the same KB while the first is alive raises (partial UNIQUE
-  on ``(kb_id, content_hash) WHERE deleted_at IS NULL``).
+* Package paths remain distinct even when two files contain identical bytes.
 * Cross-tenant RLS: a KB created under tenant A is invisible from a
   session bound to tenant B (``get_active`` returns ``None``).
 
@@ -178,9 +176,8 @@ async def test_soft_deleted_file_chunks_are_excluded_from_count(pg_engine):
 
 
 @pytest.mark.asyncio
-async def test_content_hash_dedup(pg_engine):
-    """Partial UNIQUE on (kb_id, content_hash) WHERE deleted_at IS NULL
-    — two live files with the same hash in the same KB must error."""
+async def test_identical_content_is_allowed_at_distinct_package_paths(pg_engine):
+    """Content hashes do not collapse separate paths in a file package."""
     tenant_id = uuid.uuid4()
     user_id = uuid.uuid4()
     await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
@@ -199,16 +196,21 @@ async def test_content_hash_dedup(pg_engine):
         await s.commit()
         kb_id = kb.id
 
-    with pytest.raises(Exception):
-        async with session_scope(tenant_id=str(tenant_id)) as s:
-            repo = KbRepo(s)
-            await repo.create_file(
-                kb_id=kb_id, tenant_id=tenant_id, user_id=user_id,
-                name="a-renamed.pdf", parser_type="pdf",
-                mime_type="application/pdf",
-                file_size=100, content_hash="abc" + "0" * 61,
-            )
-            await s.commit()
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        repo = KbRepo(s)
+        await repo.create_file(
+            kb_id=kb_id, tenant_id=tenant_id, user_id=user_id,
+            name="archive/a-copy.pdf", parser_type="pdf",
+            mime_type="application/pdf",
+            file_size=100, content_hash="abc" + "0" * 61,
+        )
+        await s.commit()
+
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        repo = KbRepo(s)
+        files = await repo.list_files(kb_id)
+
+    assert {item.name for item in files} == {"a.pdf", "archive/a-copy.pdf"}
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,10 @@
  */
 import { apiClient } from '@/lib/api/client';
 import { getApiBase } from '@/lib/base-path';
-import type { ResourceAccess } from '@/lib/api/organizations';
+import type {
+  ResourceAccess,
+  ResourceProvenance,
+} from '@/lib/api/organizations';
 
 // ---------------------------------------------------------------------------
 // Contract — kept in sync with `routes/tasks.py::_task_to_out` and the
@@ -58,6 +61,7 @@ export interface Task {
   started_at: string | null;
   finished_at: string | null;
   access: ResourceAccess;
+  provenance: ResourceProvenance;
 }
 
 export type TaskSandboxStatus =
@@ -140,6 +144,9 @@ export interface TaskEventsResponse {
   limit: number;
   after_seq: number | null;
   before_seq: number | null;
+  order: 'asc' | 'desc';
+  next_cursor: number | null;
+  latest_seq: number;
 }
 
 export type CancelMode = 'soft' | 'force';
@@ -429,6 +436,9 @@ export async function getTaskEvents(
     before_seq?: number;
     event_type?: TaskEventType[];
     limit?: number;
+    from?: string;
+    to?: string;
+    order?: 'asc' | 'desc';
   } = {},
 ): Promise<TaskEventsResponse> {
   const qs = new URLSearchParams();
@@ -436,6 +446,9 @@ export async function getTaskEvents(
   if (params.before_seq !== undefined) qs.set('before_seq', String(params.before_seq));
   for (const t of params.event_type ?? []) qs.append('event_type', t);
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  if (params.order) qs.set('order', params.order);
   const query = qs.toString();
   const resp = await authedFetch(`/api/v1/tasks/${id}/events${query ? `?${query}` : ''}`);
   if (!resp.ok) {

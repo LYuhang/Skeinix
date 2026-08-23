@@ -883,23 +883,22 @@ class ChatRepo:
     async def set_active_diagram(
         self,
         chat_id: str,
-        diagram_ref: dict,
-        *,
-        family: str | None = None,
-        diagram_type: str | None = None,
+        file_ref: dict,
     ) -> None:
-        """Persist a bounded Active Diagram Context after presentation."""
-        allowed = {
-            "path", "revision", "source_hash", "bundle_hash", "scene_ref",
-            "compiler_version", "theme_version",
-        }
+        """Persist the ordinary VFS file currently presented as a Diagram.
+
+        This is editor-resume context, not Diagram storage. The source remains
+        an ordinary ``/data`` file and ``revision`` is the generic VFS content
+        revision used by every Preview.
+        """
+        allowed = {"path", "revision", "source_hash"}
         projection = {
             key: value
-            for key, value in diagram_ref.items()
+            for key, value in file_ref.items()
             if key in allowed and isinstance(value, str) and value
         }
         if set(projection) != allowed:
-            raise ValueError("active DiagramRef is incomplete")
+            raise ValueError("active Diagram file reference is incomplete")
         chat = (await self._s.execute(
             select(Chat).where(
                 Chat.chat_id == chat_id,
@@ -911,63 +910,9 @@ class ChatRepo:
             raise LookupError("Chat not found")
         await self._materialize_chat_private(chat)
         new_meta = dict(chat.meta or {})
-        new_meta["active_diagram"] = {
-            "diagram_ref": projection,
-            "family": str(family or ""),
-            "type": str(diagram_type or ""),
-            "selected_element_ids": [],
-            "viewport_bounds": None,
-        }
+        new_meta["active_diagram"] = {"file_ref": projection}
         await self._store_chat_private(chat, name=chat.name, meta=new_meta)
         await self._s.flush()
-
-    async def update_active_diagram_view(
-        self,
-        chat_id: str,
-        *,
-        expected_path: str,
-        expected_revision: str,
-        expected_source_hash: str,
-        selected_element_ids: list[str],
-        viewport_bounds: dict | None,
-    ) -> dict:
-        """Update selection/viewport only when the active revision is exact.
-
-        DiagramRef ownership remains backend-only: this method never accepts a
-        replacement ref, family, or type from Preview. The optimistic binding
-        also prevents a late move event from an old tab overwriting context for
-        a newer checked auto-saved Diagram revision.
-        """
-        chat = (await self._s.execute(
-            select(Chat).where(
-                Chat.chat_id == chat_id,
-                Chat.creator_user_id == self._user_id,
-                Chat.deleted_at.is_(None),
-            ).with_for_update()
-        )).scalar_one_or_none()
-        if chat is None:
-            raise LookupError("Chat not found")
-        await self._materialize_chat_private(chat)
-        current = chat.meta.get("active_diagram")
-        if not isinstance(current, dict):
-            raise ValueError("active_diagram_missing")
-        diagram_ref = current.get("diagram_ref")
-        if not isinstance(diagram_ref, dict) or any((
-            diagram_ref.get("path") != expected_path,
-            diagram_ref.get("revision") != expected_revision,
-            diagram_ref.get("source_hash") != expected_source_hash,
-        )):
-            raise ValueError("active_diagram_revision_conflict")
-        updated = {
-            **current,
-            "selected_element_ids": list(selected_element_ids),
-            "viewport_bounds": dict(viewport_bounds) if viewport_bounds else None,
-        }
-        new_meta = dict(chat.meta or {})
-        new_meta["active_diagram"] = updated
-        await self._store_chat_private(chat, name=chat.name, meta=new_meta)
-        await self._s.flush()
-        return updated
 
     async def deactivate_active_mode(
         self,
@@ -1081,7 +1026,7 @@ class ChatRepo:
         General Chat sessions have their own internal workspace scope for
         checkpoint/VFS/sandbox state. ``current_workflow_id`` is the optional
         user-visible workflow that build tools should inspect and mutate after
-        `/build` + set/create.
+        `/workflow` + set/create.
         """
         chat = (await self._s.execute(
             select(Chat).where(

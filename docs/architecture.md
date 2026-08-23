@@ -52,21 +52,16 @@ are defined in [`docker-compose.yml`](../docker-compose.yml).
 
 | Concept | Role | Current implementation |
 | --- | --- | --- |
-| **Organization** | Tenant boundary used to isolate users, permissions, and application resources | [Organization models](../api/src/vibecanvas_api/storage/models_org.py) |
+| **Organization** | Ownership and RLS boundary used to isolate application resources; an account may work in a personal or business organization | [Organization models](../api/src/vibecanvas_api/storage/models_org.py) |
+| **Resource access** | Object-level ownership and grants for Workflows, Tasks, Deployments, and Knowledge packages; direct sharing does not move the resource | [Resource access API](../api/src/vibecanvas_api/routes/resource_access.py) |
 | **Chat** | Persistent agent workspace containing messages, commands, runtime settings, and optional browser-control state | [Chat models](../api/src/vibecanvas_api/storage/models.py) |
 | **Agent Run** | Persisted record of one agent response, including ordered events, approval waits, cancellation, and final status | [Agent Run models](../api/src/vibecanvas_api/storage/models_agent_runs.py) |
-| **Execution Plan** | Task graph created through `/plan` to coordinate Agent and SubAgent work within a Chat | [Execution Plan models](../api/src/vibecanvas_api/storage/models_execution_plans.py) |
 | **Workflow** | Reusable automation graph composed of validated nodes and references | [Workflow model](../api/src/vibecanvas_api/storage/models.py) |
 | **Workflow Version** | Stored major/subversion snapshot used for history and version selection | [Workflow repository](../api/src/vibecanvas_api/storage/workflow_repo.py) |
 | **Workflow Run** | One execution of a workflow or node, with status and events that the UI can reload | [Execution API](../api/src/vibecanvas_api/routes/executions.py) |
 | **Task** | Persistent record for batch or scheduled work, including progress, results, and cancellation | [Task models](../api/src/vibecanvas_api/storage/models_tasks.py) |
-| **Deployment** | API, webhook, or cron interface bound to the workflow head or a specific version | [Deployment model](../api/src/vibecanvas_api/storage/models_deployments.py) |
+| **Deployment** | API or webhook interface bound to the workflow head or a specific version | [Deployment model](../api/src/vibecanvas_api/storage/models_deployments.py) |
 | **VFS** | Virtual file system that presents logical paths while storing file content in the configured object store | [VFS store](../api/src/vibecanvas_api/storage/vfs_store.py) |
-
-An Execution Plan and a Workflow solve different problems. An Execution Plan
-organizes the work required to complete a complex Chat request. A Workflow
-defines automation that can be versioned, run repeatedly, and published. They
-are stored and executed independently.
 
 ## Components and responsibilities
 
@@ -102,12 +97,30 @@ grouped under [`routes/`](../api/src/vibecanvas_api/routes/).
 ### Agent Runtime
 
 A Chat selects either the LangChain or Codex runtime when it first starts. The
-API sends both runtimes the same internal request format, and each adapter
-translates that request into the format expected by its SDK. SDK-specific state
-and event formats are therefore not exposed to the rest of the application.
-The common request contains the message, attachments, selected model, active
-commands, Model Context Protocol (MCP) connections, Skills, todo state, and
-references to interactive artifacts.
+Runtime remains fixed for that Chat, while the user may switch a compatible API
+source, model, and reasoning effort between idle turns. The API sends both
+runtimes the same internal request format, and each adapter translates that
+request into the format expected by its SDK. SDK-specific state and event
+formats are therefore not exposed to the rest of the application. The common
+request contains the message, attachments, selected model, active commands,
+Model Context Protocol (MCP) connections, Skills, todo state, and references to
+interactive artifacts.
+
+Model discovery follows one explicit compatibility chain: API source,
+provider, Runtime protocol, concrete model, and model-supported reasoning
+levels. The [compatibility registry](../api/src/vibecanvas_api/services/agent_runtime/compatibility.py)
+owns the source/Runtime mapping, while the [capability catalog](../api/src/vibecanvas_api/services/agent_runtime/capabilities.py)
+projects only compatible models to the Chat composer. Provider credentials stay
+on the Host and calls from the sandbox pass through the
+[Runtime Model Broker](../api/src/vibecanvas_api/routes/runtime_model_broker.py).
+For OpenRouter, the broker keeps Codex on the Responses API while translating
+newer Codex namespace and hosted-tool descriptors into OpenRouter's documented
+OpenResponses vocabulary. It restores function-call identities on the return
+path, so the Runtime and sandbox see the same tool contract regardless of the
+provider transport.
+The Chat row stores the latest accepted selection for Resume; each Agent Run
+stores an immutable snapshot of the Runtime, connection, provider model, source,
+protocol, and reasoning effort used by that turn.
 
 This common interface is defined in the
 [runtime protocol](../api/src/vibecanvas_api/services/agent_runtime/protocol.py).
@@ -133,8 +146,8 @@ sandbox integration.
 
 ### Workers
 
-Celery workers perform batch execution, scheduled runs, deployment invocations,
-Knowledge indexing, and maintenance work. Valkey carries Celery jobs and
+Celery workers perform batch execution, scheduled Task runs, Deployment invocations,
+derived Knowledge indexing, and maintenance work. Valkey carries Celery jobs and
 short-lived results. PostgreSQL stores the Task and event history shown after a
 page refresh or service restart.
 
@@ -216,29 +229,34 @@ and [approval repository](../api/src/vibecanvas_api/storage/hitl_repo.py).
 ### Agent tools and MCP integration
 
 Slash Commands activate a defined set of tools and instructions for a Chat.
-Every turn receives the core Platform MCP servers. Commands such as `/build`
-and `/task` add their Platform MCP capability. `/browser` instead starts the
-pinned official Playwright MCP in the Chat sandbox and gives it a scoped remote
-CDP connection to the extension. `/plan` is available only with the LangChain
-runtime, and `/browser` is available only in the extension side panel.
+Every resident Chat sandbox owns one aggregate MCP Hub. LangChain calls that
+Hub directly, while Codex connects to its single loopback Streamable HTTP
+endpoint. Base capabilities are always projected; commands such as `/workflow`
+and `/task` add authenticated Platform capabilities, while `/diagram` and
+`/document` start specialized sandbox-local servers. `/browser` is available
+only in the extension side panel.
 
-Platform MCP servers expose backend capabilities through the Model Context
-Protocol. They remain in the control plane because their tools require
-authenticated access to PostgreSQL, OpenFGA, VFS, deployments, or browser
-control. Remote custom MCP connections pass through a backend proxy so their
-credentials are not copied into the agent sandbox. A local MCP server using
-`stdio` can run inside the Chat sandbox when its configuration contains no
-stored credentials.
+The Hub owns tool discovery, local MCP processes, remote MCP client sessions,
+tool naming, and per-Turn activation. Platform tools appear as sandbox-local
+facades, but authenticated data access and side effects remain behind a
+stateless Host Capability Gateway. Remote MCP credentials similarly remain in
+the Host; the sandbox owns the MCP session while the Host applies credentials
+and egress controls to each upstream request. Credential-free `stdio` servers,
+including Diagram, Document, and the pinned Playwright MCP, run inside the Chat
+sandbox.
 
-Command-to-MCP routing and custom MCP connection handling are implemented in
-[`mcp.py`](../api/src/vibecanvas_api/services/agent_runtime/mcp.py). Platform
-servers and tool groups are assembled in
-[`server.py`](../api/src/vibecanvas_api/services/platform_mcp/server.py).
+The boundary is implemented by the [secret-free Runtime contracts](../api/src/vibecanvas_api/services/agent_runtime/mcp_runtime_protocol.py),
+[Host authority resolver](../api/src/vibecanvas_api/services/agent_runtime/mcp_host_resolution.py),
+[sandbox Hub](../api/src/vibecanvas_api/services/agent_runtime/mcp_hub.py),
+[Hub adapters](../api/src/vibecanvas_api/services/agent_runtime/mcp_hub_adapter.py),
+and [Host Gateway](../api/src/vibecanvas_api/services/agent_runtime/mcp_host_gateway.py).
+Canonical Platform tool schemas and invocation logic live in
+[`platform_mcp/invocation.py`](../api/src/vibecanvas_api/services/platform_mcp/invocation.py).
 
 ### Workflow editing and execution
 
 ```text
-Canvas or /build
+Canvas or /workflow
     │
     ▼
 Validate graph and node references
@@ -278,11 +296,14 @@ scheduled run (`scheduled_run`). Its event log contains status changes,
 progress, logs, results, and the final outcome. A Task schedule adds cron or
 interval timing, input presets, concurrency policy, and notification settings.
 
-A Deployment exposes a Workflow as one of three trigger types:
+A Deployment exposes a Workflow as one of two external trigger types:
 
 - **API**, authenticated with a deployment API key;
-- **Webhook**, authenticated with an HMAC secret;
-- **cron**, driven by a configured expression and timezone.
+- **Webhook**, authenticated with an HMAC secret.
+
+Recurring and calendar-based execution is modeled as a scheduled Task rather
+than a Deployment. This keeps external serving concerns separate from workload
+scheduling and gives scheduled work the Task lifecycle, history, and controls.
 
 A Deployment can track the current Workflow version or pin an explicit major
 and subversion. The invocation endpoint authenticates the caller, resolves the
@@ -305,11 +326,11 @@ screenshots, and tool schemas. Its CDP connection is carried through a
 short-lived, Chat- and generation-fenced WebSocket capability to the extension;
 the browser never exposes a public debugging port.
 
-The backend path starts in the
-[Runtime MCP descriptor](../api/src/vibecanvas_api/services/agent_runtime/mcp.py),
-passes through the authenticated
-[browser relay route](../api/src/vibecanvas_api/routes/browser.py), and reaches
-the selected extension through the
+The sandbox starts Playwright once and connects it to a stable local
+[CDP relay](../api/src/vibecanvas_api/services/agent_runtime/mcp_browser_transport.py).
+For each active Turn, the Host Gateway supplies a short-lived upstream binding
+that passes through the authenticated [browser relay route](../api/src/vibecanvas_api/routes/browser.py)
+and reaches the selected extension through the
 [transport registry](../api/src/vibecanvas_api/browser/registry.py). The
 reviewed Agent-facing tool allow-list is centralized in
 [`playwright_contract.py`](../api/src/vibecanvas_api/browser/playwright_contract.py);
@@ -322,7 +343,7 @@ are listed and when a call is forwarded.
 | --- | --- | --- |
 | **PostgreSQL** | System of record for Organizations, users, Chats, messages, Workflows, versions, runs, approvals, Tasks, Deployments, metadata, and ordered events | Tenant-specific business tables use row-level security |
 | **OpenFGA** | Relationship-based access control (ReBAC) | Evaluates whether a user can perform an action on a resource |
-| **Object storage** | File content for VFS, artifacts, Knowledge sources, Task outputs, and run files | Filesystem and S3 backends implement the same storage interface |
+| **Object storage** | File content for VFS, artifacts, authoritative Knowledge package files, Task outputs, and run files | Filesystem and S3 backends implement the same storage interface |
 | **Valkey** | Message broker and transient coordination | Carries Celery jobs, short-lived notifications, and locks; it is not the system of record |
 | **Runtime state** | LangChain checkpoints and SDK-specific Chat state | Persists independently of live network connections; it may use the same PostgreSQL cluster |
 | **Runtime volumes and snapshots** | Chat-specific runtime files and optional gVisor checkpoints | Used to resume execution efficiently, not to determine identity or permissions |
@@ -344,11 +365,26 @@ security (RLS) independently restricts database rows to the active tenant. Both
 the authorization context and tenant context are derived from the authenticated
 request; a sandbox cannot select its own tenant.
 
-Platform and custom MCP proxies use short-lived credentials limited to the
-current organization, user, Chat, Agent Run, and MCP server. Before performing
-a protected operation, the backend checks the current database records and
-resource permissions again. The sandbox receives only the files and
-credentials required for the current operation.
+Accounts are global identities, while each resource retains the personal or
+business organization that owns it. A direct grant to another account does not
+change that ownership. For a shared resource, the server first resolves a
+recipient-safe projection, admits exactly that resource in its owner tenant,
+binds RLS to the owner tenant, and performs the normal OpenFGA check again.
+Personal sharing resolves only an exact account email; business organizations
+can additionally target entries in their own member and group directory. This
+object-level sharing is available for Workflows, Tasks, Deployments, and
+Knowledge packages, but not for installed Skills or MCP servers, catalog
+entries, API credentials, or platform-built-in resources. See the
+[shared-resource admission](../api/src/vibecanvas_api/auth/deps.py),
+[resource access API](../api/src/vibecanvas_api/routes/resource_access.py), and
+[provenance presentation](../api/src/vibecanvas_api/services/resource_provenance.py).
+
+Host gateways for Platform capabilities and custom remote MCP connections use
+short-lived authority limited to the current organization, user, Chat, Agent
+Run, and MCP server. Before performing a protected operation, the backend
+checks the current database records and resource permissions again. Upstream
+MCP credentials remain on the Host; the sandbox receives only a logical broker
+route and a Turn-scoped execution capability.
 
 The main implementations are the
 [authorization service](../api/src/vibecanvas_api/authorization/openfga.py),

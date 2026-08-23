@@ -556,7 +556,11 @@ export function StoragePage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 bg-background text-foreground">
+    <div
+      className="flex h-full min-h-0 bg-background text-foreground"
+      data-page-archetype="editor-workspace"
+      data-edit-state={previewCanEdit ? (editDirty ? 'dirty' : 'saved') : 'view'}
+    >
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="surface-topbar flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-1.5 sm:px-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -576,7 +580,6 @@ export function StoragePage() {
                 ))}
               </SelectContent>
             </Select>
-            <div className="hidden h-5 w-px shrink-0 bg-edge-subtle sm:block" aria-hidden="true" />
             <div className="flex min-w-0 items-center gap-1 text-ui">
             {breadcrumbSegments.map((seg) => (
               <span key={seg.path} className="flex min-w-0 items-center gap-1">
@@ -687,7 +690,7 @@ export function StoragePage() {
                               'interactive-row group border-b data-[state=open]:bg-surface-hover',
                               selectedRowPath === item.path && 'bg-surface-hover',
                             )}
-                            onClick={() => setSelectedRowPath(item.path)}
+                            onClick={() => openItem(item)}
                             onDoubleClick={() => openItem(item)}
                           >
                             <td className="min-w-0 px-3 py-2 sm:px-4">
@@ -698,7 +701,10 @@ export function StoragePage() {
                                   else rowRefs.current.delete(item.path);
                                 }}
                                 tabIndex={selectedRowPath === item.path || (!selectedRowPath && item === visibleItems[0]) ? 0 : -1}
-                                onClick={() => setSelectedRowPath(item.path)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openItem(item);
+                                }}
                                 onKeyDown={(event) => handleRowKeyDown(event, item)}
                                 title={friendlyName ? `${friendlyName}\n${item.name}` : item.name}
                                 className="flex min-h-8 min-w-0 w-full items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
@@ -940,14 +946,37 @@ export function StoragePage() {
                     }, t)} · {formatBytes(preview.data.size_bytes)}
                     {preview.data.truncated ? ` · ${t('storage.truncated', 'truncated')}` : ''}
                   </span>
-                  <Button
-                    size="sm"
-                    disabled={!previewCanEdit || !editDirty || write.isPending}
-                    onClick={() => void submitSavePreview()}
-                  >
-                    {write.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {t('save', 'Save')}
-                  </Button>
+                  {previewCanEdit ? (
+                    <Button
+                      size="sm"
+                      disabled={!editDirty || write.isPending}
+                      onClick={() => void submitSavePreview()}
+                    >
+                      {write.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {t('save', 'Save')}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void submitDownload({
+                        name: filename(preview.data.path),
+                        path: preview.data.path,
+                        kind: 'file',
+                        size_bytes: preview.data.size_bytes,
+                        modified_at: null,
+                        content_type: preview.data.content_type,
+                        source: null,
+                        can_create_child: false,
+                        can_rename: false,
+                        can_delete: false,
+                        can_write: false,
+                      })}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('download', 'Download')}
+                    </Button>
+                  )}
                 </div>
                 <Textarea
                   value={previewText}

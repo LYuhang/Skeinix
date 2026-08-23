@@ -13,6 +13,9 @@ UV_VERSION="${UV_VERSION:-0.11.32}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.147.0}"
 PLAYWRIGHT_MCP_VERSION="${PLAYWRIGHT_MCP_VERSION:-0.0.79}"
+DRAWIO_DESKTOP_VERSION="${DRAWIO_DESKTOP_VERSION:-31.1.8}"
+DRAWIO_DESKTOP_AMD64_SHA256="${DRAWIO_DESKTOP_AMD64_SHA256:-f4c49ed84422ea4afd95818f53c54bc666e57b33bd036d468c7096619b47ffd9}"
+DRAWIO_DESKTOP_ARM64_SHA256="${DRAWIO_DESKTOP_ARM64_SHA256:-62a9ea636accada76076bd5a20f61b707e0e8093d3fd28c6583518663ca795d6}"
 
 usage() {
   cat <<'EOF'
@@ -53,7 +56,60 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential ca-certificates curl file git gnupg jq libpq-dev openssh-client \
   openssl patch postgresql postgresql-contrib procps redis-server ripgrep rsync \
   tar unzip util-linux zip \
-  fonts-dejavu-core fonts-noto-cjk fonts-wqy-zenhei
+  fonts-dejavu-core fonts-noto-cjk fonts-wqy-zenhei \
+  xvfb xauth \
+  libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui \
+  poppler-utils
+
+case "$(dpkg --print-architecture)" in
+  amd64)
+    drawio_arch="amd64"
+    drawio_sha256="$DRAWIO_DESKTOP_AMD64_SHA256"
+    ;;
+  arm64)
+    drawio_arch="arm64"
+    drawio_sha256="$DRAWIO_DESKTOP_ARM64_SHA256"
+    ;;
+  *)
+    echo "ERROR: draw.io Desktop is unsupported on $(dpkg --print-architecture)" >&2
+    exit 1
+    ;;
+esac
+installed_drawio_version="$(dpkg-query -W -f='${Version}' draw.io 2>/dev/null || true)"
+if [[ "$installed_drawio_version" != "$DRAWIO_DESKTOP_VERSION" ]]; then
+  drawio_deb="$(mktemp /tmp/skeinix-drawio.XXXXXX.deb)"
+  curl -fsSL --retry 3 -o "$drawio_deb" \
+    "https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_DESKTOP_VERSION}/drawio-${drawio_arch}-${DRAWIO_DESKTOP_VERSION}.deb"
+  echo "${drawio_sha256}  ${drawio_deb}" | sha256sum -c -
+  [[ "$(dpkg-deb -f "$drawio_deb" Package)" == "draw.io" ]]
+  [[ "$(dpkg-deb -f "$drawio_deb" Version)" == "$DRAWIO_DESKTOP_VERSION" ]]
+  [[ "$(dpkg-deb -f "$drawio_deb" Architecture)" == "$drawio_arch" ]]
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$drawio_deb"
+  rm -f "$drawio_deb"
+fi
+command -v drawio >/dev/null || {
+  echo "ERROR: draw.io Desktop CLI was not installed" >&2
+  exit 1
+}
+sudo install -m 0755 \
+  "$REPO_ROOT/api/drawio-runtime/export.sh" \
+  /usr/local/bin/skeinix-drawio-export
+command -v skeinix-drawio-export >/dev/null || {
+  echo "ERROR: draw.io feedback export wrapper was not installed" >&2
+  exit 1
+}
+
+office_command="$(command -v libreoffice || command -v soffice || true)"
+[[ -n "$office_command" ]] || {
+  echo "ERROR: LibreOffice headless converter was not installed" >&2
+  exit 1
+}
+command -v pdftoppm >/dev/null || {
+  echo "ERROR: Poppler pdftoppm was not installed" >&2
+  exit 1
+}
+"$office_command" --version
+pdftoppm -v
 
 node_is_compatible() {
   command -v node >/dev/null || return 1
@@ -73,7 +129,7 @@ else
   echo "[2/7] Reusing compatible Node.js $(node --version)"
 fi
 
-echo "[3/7] Installing the project-pinned pnpm, Codex CLI, and Playwright MCP"
+echo "[3/7] Installing the project-pinned pnpm, Codex CLI, Playwright MCP, and draw.io MCP"
 if command -v corepack >/dev/null; then
   sudo corepack enable
   corepack prepare pnpm@10.34.4 --activate
@@ -94,6 +150,14 @@ if ! skeinix-playwright-mcp --version 2>/dev/null | grep -q "${PLAYWRIGHT_MCP_VE
 fi
 skeinix-playwright-mcp --version | grep -q "${PLAYWRIGHT_MCP_VERSION}" || {
   echo "ERROR: expected Playwright MCP ${PLAYWRIGHT_MCP_VERSION}" >&2
+  exit 1
+}
+if ! skeinix-diagram-mcp --version 2>/dev/null | grep -qx "1.5.0"; then
+  sudo npm install --global --ignore-scripts --no-audit --no-fund \
+    "$REPO_ROOT/api/drawio-runtime"
+fi
+[[ "$(skeinix-diagram-mcp --version)" == "1.5.0" ]] || {
+  echo "ERROR: expected official draw.io MCP 1.5.0" >&2
   exit 1
 }
 

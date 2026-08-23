@@ -108,19 +108,6 @@ The launcher generates local secrets, builds the services, waits for their
 health checks, and verifies the deployment. The first build can take several
 minutes.
 
-For a remote server, provide the browser-visible HTTPS URL and the VM's private
-interface. The launcher derives the Host, CORS, secure-cookie, and extension
-build settings:
-
-```bash
-./scripts/deploy/local_server.sh up \
-  --public-url https://skeinix.example.com \
-  --bind-address 10.0.0.4
-```
-
-Terminate TLS at a reverse proxy and forward it to port `9001`. See
-[remote server deployment](docs/installation.md#remote-server-deployment).
-
 #### Native Linux or WSL
 
 Use the native bootstrap when developing on Debian, Ubuntu, or WSL:
@@ -129,15 +116,14 @@ Use the native bootstrap when developing on Debian, Ubuntu, or WSL:
 ./scripts/bootstrap_native_linux.sh
 ```
 
-For prerequisites, manual setup, configuration, remote access, and production
-guidance, see the [installation guide](docs/installation.md).
+For prerequisites, manual setup, local configuration, and production guidance,
+see the [installation guide](docs/installation.md).
 
 ### Common Commands
 
 | Action | Docker Compose | Native Linux/WSL |
 | --- | --- | --- |
 | Start | `./scripts/deploy/local_server.sh up` | `./launch.sh start` |
-| Configure a remote URL | `./scripts/deploy/local_server.sh init --public-url https://skeinix.example.com --bind-address 10.0.0.4` | Edit `.env.launch.local` |
 | Stop | `./scripts/deploy/local_server.sh stop` | `./launch.sh stop` |
 | Restart | `./scripts/deploy/local_server.sh restart` | `./launch.sh restart` |
 | Status | `./scripts/deploy/local_server.sh status` | `./launch.sh status` |
@@ -149,8 +135,8 @@ Open <http://localhost:9001> after startup verification succeeds.
 
 1. **Choose an Agent runtime.** Open **Settings → Agent runtime** and select the
    default runtime for new Chats:
-   - **LangChain** uses model-provider credentials and supports the full
-     LangChain toolset, including `/plan`.
+   - **LangChain** uses model-provider credentials and the LangChain Agent
+     toolset.
    - **Codex** runs conversations through the Codex runtime.
 
    Only runtimes enabled by the deployment are shown. The selection applies to
@@ -158,26 +144,32 @@ Open <http://localhost:9001> after startup verification succeeds.
 
 2. **Connect a model or account.** Complete the connection required by the
    selected runtime:
-   - For **LangChain**, open **API Key** from the sidebar, add a credential, and
-     enter its provider, model name, and API key. OpenAI, Azure OpenAI,
-     Anthropic, Google Gemini, and custom providers are supported.
+   - Open **Settings → API credentials** to connect OpenRouter or add a
+     write-only provider key. OpenAI, Azure OpenAI, Anthropic, Google Gemini,
+     and custom providers are supported where they are compatible with the
+     selected Runtime. OpenRouter connection requires the deployment's
+     canonical `VIBECANVAS_PUBLIC_URL` for its secure callback.
    - For **Codex**, either open **Settings → Agent runtime → Codex account** and
-     sign in with an OpenAI account using the device code, or open **API Key**
-     from the sidebar and add an OpenAI or Azure OpenAI credential. Compatible
-     saved models appear automatically under **OpenAI API** in the Codex model
-     picker. Deployment-managed API models may already be available without a
-     personal key.
+     sign in with an OpenAI account using the device code, or open
+     **Settings → API credentials** and add an OpenAI or Azure OpenAI
+     credential. A connected OpenRouter account also contributes its compatible
+     text and tool-calling models through the OpenRouter Responses API.
+     Deployment-managed API models may already be available without a personal
+     key.
 
    The available connection methods depend on the deployment configuration.
    Stored API keys are encrypted and write-only: they cannot be read back from
-   the application after saving.
+   the application after saving. The application filters every source by the
+   selected Runtime and API protocol before displaying its models.
 
 3. **Start a Chat and build the Workflow.** Open **Chat**, create a new
-   conversation, and select the connected model if more than one is available.
-   Activate `/build`, then describe the automation you want to create, including
-   its expected inputs, outputs, and important constraints. Inspect the
-   generated Workflow on the canvas, validate and run it, then review the node
-   outputs and refine the Workflow in Chat or on the canvas.
+   conversation, choose a source and model below the composer, and select a
+   supported thinking level when the model exposes one. The Runtime remains
+   fixed for the Chat, while the model and thinking level can be changed between
+   turns. Activate `/workflow`, then describe the automation you want to create,
+   including its expected inputs, outputs, and important constraints. Inspect
+   the generated Workflow on the canvas, validate and run it, then review the
+   node outputs and refine the Workflow in Chat or on the canvas.
 
 The workflow remains available as a versioned asset after the conversation ends.
 Publish it only after its inputs, outputs, and failure behavior have been
@@ -189,27 +181,43 @@ Most work begins in Chat, where the user describes what they need. When the task
 involves an authenticated website, the conversation can start from the browser
 extension instead. The agent uses tools to build a Workflow, which the user can
 inspect and refine on the canvas. The Workflow can then run directly, through a
-batch or scheduled Task, or as a Deployment that external systems can call.
+batch or scheduled Task, or as an API or webhook Deployment that external
+systems can call.
 
 ![Skeinix usage flow](docs/assets/usage-flow.svg)
 
 The diagram shows a common path, not a set of mandatory dependencies. A Workflow
 can be tested directly on the canvas or handed to a Task for batch or scheduled
-execution. Once published, external calls and schedules can start new Runs and
-Tasks without repeating the original build conversation.
+execution. Once published, API and webhook calls can start new Runs without
+repeating the original build conversation, while recurring execution remains a
+Task responsibility.
 
 ### Main Application
 
 | Surface | What you can do | Demo |
 | --- | --- | --- |
-| **Chat** | Describe a request in conversation and let a LangChain or Codex agent use tools, build Workflows, create diagrams, and organize files. Preview Workflows, execution plans, background jobs, common documents, tables, media, and diagrams beside the conversation. Each Chat has its own workspace, with a sandbox that starts, hibernates, and restores as needed. | <video src="https://github.com/user-attachments/assets/d71f4e21-f71b-445d-98f4-a20275029405" controls></video> |
+| **Chat** | Describe a request in conversation and let a LangChain or Codex agent use tools, build Workflows, create diagrams, and organize files. Preview Workflows, background jobs, common documents, tables, media, and diagrams beside the conversation. Each Chat has its own workspace, with a sandbox that starts, hibernates, and restores as needed. | <video src="https://github.com/user-attachments/assets/d71f4e21-f71b-445d-98f4-a20275029405" controls></video> |
 | **Workflow** | Add, connect, and configure nodes on a visual canvas, validate the graph, and execute either the full Workflow or an individual node. Review run output, generated files, and earlier versions, or use batch execution and JSON import and export. | <video src="https://github.com/user-attachments/assets/10d47621-7c3b-4bfa-b751-564ef62b507c" controls></video> |
 | **Task** | Run a Workflow across a tabular input file or schedule it for a particular time or interval. Task Center shows queue and execution progress, events, output, and failures, and lets users pause, cancel, or resume work where supported. | <video src="https://github.com/user-attachments/assets/095142b4-b42c-4799-af89-0318fca11b10" controls></video> |
-| **Deployment** | Publish a verified Workflow as an API, webhook, or scheduled service. Copy endpoints and code examples, test inputs in the UI, review run logs and latency metrics, and manage status, rate limits, and access credentials. | <video src="https://github.com/user-attachments/assets/59dca3ab-7b55-46bc-b73b-232514ab80f5" controls></video> |
-| **Knowledge** | Create a knowledge base and upload PDF, Office, text, web, JSON, or tabular sources. The page reports indexing status; once indexed, the agent can find and read relevant material through `/knowledge`. | <video src="https://github.com/user-attachments/assets/7392f893-ecce-4632-a5af-a45bee0b15e1" controls></video> |
+| **Deployment** | Publish a verified Workflow as an API or webhook for external systems. Each Deployment provides its invocation details, code examples, test requests, traffic controls, credentials, run history, and health metrics. Use a scheduled Task when the Workflow needs to run on a recurring or calendar-based schedule. | <video src="https://github.com/user-attachments/assets/59dca3ab-7b55-46bc-b73b-232514ab80f5" controls></video> |
+| **Knowledge** | Organize reusable notes and multimodal references as versioned file packages. Each package starts with a README and can be progressively read, edited, and published by the Agent through `/knowledge`. See [Knowledge packages](docs/knowledge.md). | <video src="https://github.com/user-attachments/assets/7392f893-ecce-4632-a5af-a45bee0b15e1" controls></video> |
 | **MCP Server** | Find external tools through the Official MCP Registry or Smithery, or connect a custom server by URL or command. Review the source, requested access, and credential requirements before installation; after connection, the agent loads its tools when needed. | <video src="https://github.com/user-attachments/assets/0fd6c1e5-4349-435f-8b5c-d53abb900c85" controls></video> |
 | **Skills** | Find and install reusable instruction packages from sources such as OpenAI and Anthropic, or import a custom Skill. Review its instructions, bundled files, tool requirements, and source before making it available to agents. | <video src="https://github.com/user-attachments/assets/9d6885a1-9a7a-464c-95da-d7921e6cedc9" controls></video> |
 | **Storage** | Browse platform files by shared mount, Workflow, Chat, or Task. Search, sort, upload, and download files, and—where permissions allow—create folders, rename or delete items, and preview or edit supported content. | <video src="https://github.com/user-attachments/assets/84876473-f2ab-463a-b48c-f686bf27cee4" controls></video> |
+
+#### Resource ownership and sharing
+
+Workflows, Tasks, Deployments, and Knowledge packages created by a user keep
+their original owner and provenance when shared. Personal resources are shared
+by entering an exact account email; the recipient remains an external Guest
+rather than becoming a member of the owner's personal workspace, and receives
+only the selected resource-level role. A business organization can instead
+share with an exact member email, an exact team or department path, or the
+entire organization. Recipients find these resources under **Shared with me**,
+and the effective role determines which actions are available.
+
+Installed Skills and MCP servers, catalog entries, API credentials, and
+platform-built-in resources are not shareable objects.
 
 #### Chat Slash Commands
 
@@ -220,12 +228,12 @@ combined when a task spans more than one area.
 
 | Command | Purpose | Availability |
 | --- | --- | --- |
-| `/build` | Ask the agent to create or open a Workflow, then modify nodes, validate the graph, create versions, or run it from the conversation | Main app and extension; LangChain/Codex |
+| `/workflow` | Ask the agent to create or open a Workflow, then modify nodes, validate the graph, create versions, or run it from the conversation | Main app and extension; LangChain/Codex |
 | `/task` | Ask the agent to find Tasks, create or update scheduled runs, and cancel or resume work | Main app and extension; LangChain/Codex |
 | `/deployment` | Ask the agent to find, create, update, or remove Workflow Deployments | Main app and extension; LangChain/Codex |
-| `/knowledge` | Let the agent find and progressively read material from knowledge bases the user can access | Main app and extension; LangChain/Codex |
-| `/diagram` | Ask the agent to create a semantic diagram, then validate, render, visually review, and export it | Main app and extension; LangChain/Codex |
-| `/plan` | Have the agent organize complex work into a durable execution plan and coordinate SubAgents across its steps | LangChain only |
+| `/knowledge` | Let the Agent read, create, and version Knowledge file packages in the active organization | Main app and extension; LangChain/Codex |
+| [`/diagram`](docs/diagram.md) | Create and refine native draw.io diagrams with the official sandbox-local MCP, then preview and export them | Main app and extension; LangChain/Codex |
+| `/document` | Create or revise professional PPTX, DOCX, XLSX, or PDF files, review their structure and rendered output, then publish the native file in Preview | Main app and extension; LangChain/Codex |
 | `/browser` | Let the agent read or operate tabs and authenticated pages in the connected browser | Extension side panel only; LangChain/Codex |
 
 ### Browser Extension

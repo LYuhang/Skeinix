@@ -11,7 +11,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
+
+from .mcp_runtime_protocol import McpDesiredState, McpExecutionContext
 
 
 RUNTIME_PROTOCOL_VERSION = 2
@@ -50,15 +59,12 @@ class RuntimeSession(BaseModel):
     runtime_version: int = Field(default=1, ge=1)
 
 
-class RuntimeMcpServer(BaseModel):
-    """One MCP server connection visible only to a sandbox Runtime.
+class HostMcpServerAuthority(BaseModel):
+    """Host-only authority material used to build secret-free Hub state.
 
-    This is deliberately the same connection vocabulary consumed by
-    ``langchain-mcp-adapters``. Remote custom descriptors contain only a
-    host-broker capability; provider headers/query/OAuth values never cross the
-    runtime bus. Secretless stdio descriptors carry structural command/args
-    only. Neither form is persisted as a product event or returned to the
-    frontend.
+    The Host may keep internal broker URLs and short-lived bearer capabilities
+    here. ``SandboxSession`` consumes this field and replaces it with
+    ``McpDesiredState`` before the request crosses the Runtime bus.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -72,9 +78,19 @@ class RuntimeMcpServer(BaseModel):
     required: bool = False
 
     @model_validator(mode="after")
-    def platform_servers_are_required(self) -> "RuntimeMcpServer":
+    def platform_servers_are_required(self) -> "HostMcpServerAuthority":
         if self.source == "platform":
             self.required = True
+            if self.connection.get("transport") not in {
+                "host_gateway",
+                "browser_gateway",
+            }:
+                raise ValueError("Platform MCP authority requires a Host Gateway")
+        elif self.connection.get("transport") in {
+            "host_gateway",
+            "browser_gateway",
+        }:
+            raise ValueError("Custom MCP authority cannot use the Platform Gateway")
         return self
 
     @field_validator("connection")
@@ -82,6 +98,13 @@ class RuntimeMcpServer(BaseModel):
     def validate_connection(cls, value: dict[str, Any]) -> dict[str, Any]:
         connection = dict(value or {})
         transport = str(connection.get("transport") or "")
+        if transport in {"host_gateway", "browser_gateway"}:
+            capability = str(connection.get("capability") or "")
+            if not capability:
+                raise ValueError("Host Gateway MCP authority requires a capability")
+            if set(connection) != {"transport", "capability"}:
+                raise ValueError("Host Gateway MCP authority contains unknown fields")
+            return connection
         if transport == "streamable-http":
             transport = "streamable_http"
             connection["transport"] = transport
@@ -252,7 +275,6 @@ class RuntimeTurnRequest(BaseModel):
     active_platform_mcps: list[
         Literal[
             "config",
-            "data",
             "interactive",
             "workflow",
             "task",
@@ -260,11 +282,18 @@ class RuntimeTurnRequest(BaseModel):
             "knowledge",
             "build",
             "browser",
-            "plan",
             "diagram",
+            "document",
         ]
     ] = Field(default_factory=list)
-    mcp_servers: list[RuntimeMcpServer] = Field(default_factory=list)
+    mcp_config_revision: int = Field(default=0, ge=0)
+    mcp_host_servers: list[HostMcpServerAuthority] = Field(default_factory=list)
+    # The Host first resolves credential-bearing authority; SandboxSession then
+    # replaces it with secret-free Hub lifecycle contracts before serialization.
+    # No Runtime adapter accepts Host-stage MCP descriptors.
+    mcp_runtime_stage: Literal["host", "sandbox"] = "host"
+    mcp_desired_state: McpDesiredState | None = None
+    mcp_execution_context: McpExecutionContext | None = None
     skills: list[RuntimeSkill] = Field(default_factory=list)
     # Backend-owned full Todo snapshot. Runtime adapters may mutate a turn-local
     # copy, but every update is projected back to the backend and the next Turn
@@ -328,16 +357,62 @@ class RuntimeTurnRequest(BaseModel):
         if len(active) != len(set(active)):
             raise ValueError("active_platform_mcps must not contain duplicates")
         attached = [
-            server.name for server in self.mcp_servers if server.source == "platform"
+            server.name
+            for server in self.mcp_host_servers
+            if server.source == "platform"
         ]
         if len(attached) != len(set(attached)):
             raise ValueError("platform MCP descriptors must not contain duplicates")
-        if set(attached) != set(active):
-            raise ValueError(
-                "platform MCP descriptors must exactly match active_platform_mcps"
+        if self.mcp_runtime_stage == "host":
+            if self.mcp_desired_state is not None or self.mcp_execution_context is not None:
+                raise ValueError("Host-stage MCP request cannot carry Hub contracts")
+            host_backed = set(active) - {"diagram", "document"}
+            if set(attached) != host_backed:
+                raise ValueError(
+                    "Host Platform MCP authority must exactly match active capabilities"
+                )
+        else:
+            desired = self.mcp_desired_state
+            execution = self.mcp_execution_context
+            if desired is None or execution is None:
+                raise ValueError(
+                    "Sandbox-stage MCP request requires desired state and execution context"
+                )
+            request_identity = (
+                self.tenant_id,
+                self.user_id,
+                self.chat_id,
+                self.runtime_session_id,
             )
-        if "plan" in active and self.runtime_type != RuntimeType.LANGCHAIN:
-            raise ValueError("the Plan Platform MCP requires the LangChain Runtime")
+            if request_identity != (
+                desired.organization_id,
+                desired.user_id,
+                desired.chat_id,
+                desired.runtime_session_id,
+            ) or request_identity != (
+                execution.organization_id,
+                execution.user_id,
+                execution.chat_id,
+                execution.runtime_session_id,
+            ):
+                raise ValueError(
+                    "MCP lifecycle contracts must match the Runtime Turn identity"
+                )
+            if (
+                execution.selected_mcp_revision
+                != desired.chat_mcp_config_revision
+            ):
+                raise ValueError(
+                    "MCP execution context must target the desired-state revision"
+                )
+            if set(execution.active_platform_capabilities) != set(active):
+                raise ValueError(
+                    "MCP execution capabilities must match active_platform_mcps"
+                )
+            if self.mcp_host_servers:
+                raise ValueError(
+                    "Sandbox-stage MCP request cannot carry Host authority descriptors"
+                )
         skill_names = [skill.name.casefold() for skill in self.skills]
         if len(skill_names) != len(set(skill_names)):
             raise ValueError("runtime skills must not contain duplicate names")
@@ -387,7 +462,7 @@ class RuntimeBackgroundJobRequest(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=20_000)
     output_fields: dict[str, dict[str, Any]] | None = None
     approval_mode: Literal["always_ask", "always_allow", "agent"] = "agent"
-    approval_owner: Literal["none", "execution_plan"] = "none"
+    approval_owner: Literal["none"] = "none"
 
     @model_validator(mode="after")
     def validate_runtime_root(self) -> "RuntimeBackgroundJobRequest":
@@ -439,7 +514,17 @@ class RuntimeModelOption(BaseModel):
     id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     description: str = ""
+    api_source: str | None = None
+    api_protocol: str | None = None
     provider: str | None = None
+    provider_model_id: str | None = None
+    context_length: int | None = Field(default=None, gt=0)
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+    supports_tools: bool | None = None
+    input_price: str | None = None
+    output_price: str | None = None
+    available: bool = True
     is_default: bool = False
     supported_reasoning_efforts: list[RuntimeReasoningEffortOption] = Field(
         default_factory=list
@@ -456,10 +541,9 @@ class RuntimeCapabilities(BaseModel):
     models: list[RuntimeModelOption] = Field(default_factory=list)
     default_model_id: str | None = None
     error_code: str | None = None
-    # Chat projection for the composer. Draft Chats expose the catalog only;
-    # after the first accepted Turn these non-secret settings are authoritative
-    # and the selectors become read-only.
-    chat_configuration_locked: bool = False
+    # Chat projection for the composer. Bound settings are the last accepted
+    # selection used to seed Resume; model and effort remain mutable between
+    # idle Turns while Runtime type stays fixed.
     bound_agent_settings: dict[str, Any] | None = None
 
 
@@ -484,6 +568,11 @@ RUNTIME_EVENT_TYPES = Literal[
     # Private Runtime→host submission request. The orchestrator consumes this
     # event and never projects its executor payload to the frontend.
     "background_job.requested",
+    # Private sandbox MCP Hub→Host Gateway request. Tool manifests and calls
+    # cross the Chat-bound Runtime bus; Platform URLs and bearer credentials do
+    # not. The orchestrator consumes this event and returns a private control
+    # response, so it is never projected to product history or the frontend.
+    "mcp.gateway.requested",
     # Product-level events that do not fit the portable message/tool primitives
     # (workflow patches, todo projections, rich debug frames, etc.).  The payload
     # contains the platform event name + JSON payload, never an SDK event object.
@@ -521,6 +610,26 @@ class RuntimeRequestCorrelation(BaseModel):
     runtime_turn_id: str | None = None
     runtime_item_id: str | None = None
     runtime_approval_id: str | None = None
+
+
+class RuntimeMcpGatewayRequest(BaseModel):
+    """Typed private request from the sandbox Hub to the trusted Host."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=256)
+    operation: Literal[
+        "manifest",
+        "call",
+        "launch",
+        "remote_message",
+        "remote_close",
+    ]
+    server: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    tool_name: str | None = Field(default=None, max_length=256)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    execution_capability: SecretStr
+    runtime_correlation: RuntimeRequestCorrelation
 
 
 class RuntimeControlResponse(BaseModel):
@@ -582,7 +691,40 @@ class RuntimeBackgroundJobResponse(BaseModel):
         return self
 
 
-RuntimeControlMessage = RuntimeControlResponse | RuntimeBackgroundJobResponse
+class RuntimeMcpGatewayResponse(BaseModel):
+    """Host response to one sandbox-local MCP Hub gateway request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: Literal[2] = RUNTIME_PROTOCOL_VERSION
+    request_id: str
+    chat_id: str
+    turn_id: str
+    control_type: Literal["mcp_gateway"] = "mcp_gateway"
+    operation: Literal[
+        "manifest",
+        "call",
+        "launch",
+        "remote_message",
+        "remote_close",
+    ]
+    action: Literal["accepted", "rejected"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    correlation: RuntimeRequestCorrelation
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "RuntimeMcpGatewayResponse":
+        if self.action == "rejected" and not self.error:
+            raise ValueError("rejected MCP Gateway request requires error")
+        return self
+
+
+RuntimeControlMessage = (
+    RuntimeControlResponse
+    | RuntimeBackgroundJobResponse
+    | RuntimeMcpGatewayResponse
+)
 
 
 @runtime_checkable

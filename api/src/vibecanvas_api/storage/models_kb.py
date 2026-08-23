@@ -58,6 +58,10 @@ class KnowledgeBase(Base):
     name: str = ""
     description: str | None = None
     summary: str | None = None
+    # Monotonic package revision. The raw file tree is authoritative; search
+    # chunks are replaceable projections of the files at this revision.
+    package_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -122,14 +126,8 @@ class KbFile(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending','indexing','indexed','failed')",
+            "status IN ('stored','pending','indexing','indexed','failed')",
             name="ck_kb_files_status"),
-        CheckConstraint(
-            "parser_type IN ('pdf','markdown','txt','docx','pptx','xlsx','csv','json','html')",
-            name="ck_kb_files_parser_type"),
-        Index(
-            "uq_kb_files_kb_hash_active", "kb_id", "content_hash",
-            unique=True, postgresql_where="deleted_at IS NULL"),
         Index("ix_kb_files_kb_deleted", "kb_id", "deleted_at"),
         Index(
             "ix_kb_files_status_orphan", "status", "updated_at",

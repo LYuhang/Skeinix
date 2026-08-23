@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
   Code2,
-  Copy,
   KeyRound,
+  Pencil,
   Play,
   RefreshCw,
   Rocket,
@@ -26,6 +26,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Tabs,
   TabsContent,
@@ -46,7 +47,16 @@ import {
 } from '@/lib/api/deployments';
 import { useFormatDateTime } from '@/lib/timezone';
 import { EntityDetailShell } from '@/components/layout/entity-detail-shell';
+import { SectionBlock } from '@/components/layout/section-block';
+import { DetailSummary } from '@/components/layout/detail-summary';
+import { OperationalSummary } from '@/components/layout/operational-summary';
+import {
+  IncrementalLogLoader,
+  LogHistoryControls,
+} from '@/components/logs/log-history-controls';
+import { resolveLogRange, type LogRangeValue, type LogSortOrder } from '@/lib/log-history';
 import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
 import { CopyButton } from '@/components/ui/copy-button';
 import { StatusBadge } from '@/components/ui/status';
 import { formatNumber } from '@/lib/format/number';
@@ -55,9 +65,17 @@ import { resolveApiUrl } from '@/lib/base-path';
 import { OneTimeSecretField } from '@/pages/deployments/OneTimeSecretField';
 import { useWorkflow } from '@/lib/api/queries/workflow';
 import { getStartNodeFields, type StartNodeField } from '@/lib/workflow/start-node';
+import type { TFunction } from 'i18next';
 
-type TabKey = 'overview' | 'config' | 'code' | 'runs' | 'monitoring' | 'test' | 'security';
+type TabKey = 'overview' | 'usage' | 'activity' | 'settings';
 type CodeLanguage = 'curl' | 'python' | 'javascript';
+
+function deploymentDetailTab(value: string | null): TabKey {
+  if (value === 'usage' || value === 'code' || value === 'test') return 'usage';
+  if (value === 'activity' || value === 'runs' || value === 'monitoring') return 'activity';
+  if (value === 'settings' || value === 'config' || value === 'security') return 'settings';
+  return 'overview';
+}
 
 function endpointFor(dep: Deployment): string {
   return dep.trigger_type === 'webhook'
@@ -71,51 +89,19 @@ function last24HoursRange() {
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
-function triggerLabel(dep: Deployment): string {
+function triggerLabel(dep: Deployment, t: TFunction): string {
   if (dep.trigger_type === 'api') return 'API';
-  if (dep.trigger_type === 'webhook') return 'Webhook';
-  return dep.trigger_type;
-}
-
-function copy(value: string, ok: string, fail: string) {
-  if (!navigator.clipboard?.writeText) {
-    toast.error(fail);
-    return;
-  }
-  navigator.clipboard.writeText(value).then(
-    () => toast.success(ok),
-    () => toast.error(fail),
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <div className="border-l border-edge-subtle px-4 py-3 first:border-l-0">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
-      {hint && <div className="mt-1 text-xs leading-4 text-muted-foreground">{hint}</div>}
-    </div>
-  );
+  return t('deployments.type.webhook', 'Webhook');
 }
 
 function OverviewTab({
   dep,
   latestMetric,
-  onCopyEndpoint,
-  onTest,
+  canUpdate,
 }: {
   dep: Deployment;
   latestMetric: MetricsPoint | null;
-  onCopyEndpoint: () => void;
-  onTest?: () => void;
+  canUpdate: boolean;
 }) {
   const { t } = useTranslation();
   const formatTime = useFormatDateTime();
@@ -125,80 +111,130 @@ function OverviewTab({
       : '0%';
 
   return (
-    <div className="space-y-5">
-      <section className="grid gap-3 md:grid-cols-4">
-        <MetricCard
-          label={t('deployments.detail.status', 'Status')}
-          value={dep.enabled
-            ? t('deployments.status.active', 'Active')
-            : t('deployments.status.disabled', 'Disabled')}
-          hint={t('deployments.detail.statusHint', 'Whether this deployment is currently serving requests.')}
-        />
-        <MetricCard
-          label={t('deployments.detail.calls', 'Calls')}
-          value={dep.invoke_count ?? 0}
-          hint={t('deployments.detail.totalCalls', 'Total recorded API, webhook, and test invocations.')}
-        />
-        <MetricCard
-          label={t('deployments.detail.errorRate', 'Error rate')}
-          value={errorRate}
-          hint={t('deployments.detail.errorRateHint', 'Errors divided by calls in the latest metrics bucket.')}
-        />
-        <MetricCard
-          label="P95"
-          value={latestMetric?.latency_p95 == null ? '-' : `${latestMetric.latency_p95.toFixed(0)} ms`}
-          hint={t('deployments.detail.p95Hint', '95th percentile latency in the latest metrics bucket.')}
-        />
-      </section>
+    <div>
+      <OperationalSummary
+        label={t('deployments.detail.operationalSummary', 'Deployment health summary')}
+        className="mt-5"
+        items={[
+          {
+            label: t('deployments.detail.calls', 'Calls'),
+            value: formatNumber(dep.invoke_count ?? 0),
+            hint: t('deployments.detail.totalCalls', 'Total recorded API, webhook, and test invocations.'),
+            tone: 'info',
+          },
+          {
+            label: t('deployments.detail.errorRate', 'Error rate'),
+            value: errorRate,
+            hint: t('deployments.detail.errorRateHint', 'Errors divided by calls in the latest metrics bucket.'),
+            tone: latestMetric && latestMetric.errors > 0 ? 'danger' : 'success',
+          },
+          {
+            label: t('deployments.detail.p95Latency', 'P95 latency'),
+            value: latestMetric?.latency_p95 == null ? '—' : `${latestMetric.latency_p95.toFixed(0)} ms`,
+            hint: t('deployments.detail.p95Hint', '95th percentile latency in the latest metrics bucket.'),
+            tone: latestMetric?.latency_p95 == null ? 'neutral' : 'warning',
+          },
+          {
+            label: t('deployments.detail.lastInvoked', 'Last invoked'),
+            value: formatTime(dep.last_invoked_at),
+            hint: t('deployments.detail.lastInvokedHint', 'Most recent request handled by this deployment.'),
+          },
+        ]}
+      />
+      <BasicInfoSection dep={dep} canUpdate={canUpdate} />
+    </div>
+  );
+}
 
-      <section className="border-y border-edge-subtle py-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold">
-              {t('deployments.detail.endpoint', 'Endpoint')}
-            </h2>
-            <code className="mt-2 block max-w-full select-text truncate rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs">
-              {endpointFor(dep)}
-            </code>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>{triggerLabel(dep)}</span>
-              <span>{t('deployments.detail.versionPolicy', 'Version')}: {dep.version_pin}</span>
-              <span>{t('deployments.detail.lastInvoked', 'Last invoked')}: {formatTime(dep.last_invoked_at)}</span>
-            </div>
+function BasicInfoSection({ dep, canUpdate }: { dep: Deployment; canUpdate: boolean }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [name, setName] = useState(dep.name);
+  const [editing, setEditing] = useState(false);
+  const dirty = name.trim() !== dep.name;
+  const patchMutation = useMutation({
+    mutationFn: () =>
+      patchDeployment(dep.id, {
+        name: name.trim(),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['deployment', dep.id] });
+      void qc.invalidateQueries({ queryKey: ['deployments'] });
+      setEditing(false);
+      toast.success(t('deployments.detail.saved', 'Saved'));
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+
+  return (
+    <SectionBlock
+      variant="plain"
+      className="max-w-4xl"
+      title={t('deployments.detail.basic', 'Basic information')}
+      description={t('deployments.detail.basicDescription', 'Identity and workflow routing for this deployment.')}
+      actions={canUpdate && !editing ? (
+        <Button variant="ghost" size="sm" onClick={() => {
+          setName(dep.name);
+          setEditing(true);
+        }}>
+          <Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
+          {t('deployments.detail.editBasic', 'Edit')}
+        </Button>
+      ) : null}
+    >
+      {editing ? (
+        <div className="max-w-xl space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dep-name">{t('deployments.create.fields.name', 'Name')}</Label>
+            <Input
+              id="dep-name"
+              name="deployment-name"
+              autoComplete="off"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onCopyEndpoint}>
-              <Copy className="mr-2 h-4 w-4" />
-              {t('deployments.actions.copyEndpoint', 'Copy endpoint')}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setName(dep.name);
+                setEditing(false);
+              }}
+            >
+              {t('common.cancel', 'Cancel')}
             </Button>
-            {onTest ? (
-              <Button size="sm" onClick={onTest}>
-                <Play className="mr-2 h-4 w-4" />
-                {t('deployments.detail.tabs.test', 'Test')}
-              </Button>
-            ) : null}
+            <Button onClick={() => patchMutation.mutate()} disabled={!dirty || !name.trim() || patchMutation.isPending}>
+              {patchMutation.isPending
+                ? t('common.saving', 'Saving…')
+                : t('deployments.detail.saveBasic', 'Save basic information')}
+            </Button>
           </div>
         </div>
-      </section>
-    </div>
+      ) : (
+        <DetailSummary
+          className="max-w-3xl gap-y-5"
+          items={[
+            { label: t('deployments.create.fields.name', 'Name'), value: dep.name },
+            { label: t('deployments.create.fields.slug', 'Slug'), value: <span className="font-mono text-xs" translate="no">{dep.slug}</span> },
+            { label: t('deployments.create.fields.wfId', 'Workflow ID'), value: <span className="font-mono text-xs" translate="no">{dep.wf_id}</span> },
+            { label: t('deployments.create.fields.triggerType', 'Trigger type'), value: triggerLabel(dep, t) },
+          ]}
+        />
+      )}
+    </SectionBlock>
   );
 }
 
 function ConfigTab({ dep }: { dep: Deployment }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [name, setName] = useState(dep.name);
   const [rateQps, setRateQps] = useState<number>(dep.rate_limit_qps);
   const [enabled, setEnabled] = useState(dep.enabled);
 
-  const dirty = name !== dep.name || rateQps !== dep.rate_limit_qps || enabled !== dep.enabled;
+  const dirty = rateQps !== dep.rate_limit_qps || enabled !== dep.enabled;
   const patchMutation = useMutation({
-    mutationFn: () =>
-      patchDeployment(dep.id, {
-        name,
-        rate_limit_qps: rateQps,
-        enabled,
-      }),
+    mutationFn: () => patchDeployment(dep.id, { rate_limit_qps: rateQps, enabled }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['deployment', dep.id] });
       void qc.invalidateQueries({ queryKey: ['deployments'] });
@@ -209,57 +245,37 @@ function ConfigTab({ dep }: { dep: Deployment }) {
 
   return (
     <div className="space-y-5">
-      <section className="border-y border-edge-subtle py-4">
-        <h2 className="text-sm font-semibold">{t('deployments.detail.basic', 'Basic')}</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dep-name">{t('deployments.create.fields.name', 'Name')}</Label>
-            <Input id="dep-name" value={name} onChange={(event) => setName(event.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('deployments.create.fields.slug', 'Slug')}</Label>
-            <Input value={dep.slug} disabled />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('deployments.create.fields.wfId', 'Workflow ID')}</Label>
-            <Input value={dep.wf_id} disabled className="font-mono text-xs" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('deployments.create.fields.triggerType', 'Trigger type')}</Label>
-            <Input value={triggerLabel(dep)} disabled />
-          </div>
-        </div>
-      </section>
 
-      <section className="border-y border-edge-subtle py-4">
-        <h2 className="text-sm font-semibold">{t('deployments.detail.runtime', 'Runtime limits')}</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dep-qps">{t('deployments.create.fields.rateLimitQps', 'Rate limit (QPS)')}</Label>
-            <Input
-              id="dep-qps"
-              type="number"
-              min={0}
-              value={rateQps}
-              onChange={(event) => setRateQps(Number(event.target.value) || 0)}
-            />
-          </div>
-          <label className="flex items-center gap-2 pt-6">
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
+      <SectionBlock
+        title={t('deployments.detail.trafficControl', 'Traffic and runtime controls')}
+        description={t('deployments.detail.trafficControlHelp', 'Control whether this deployment accepts traffic and how many requests per second it allows. Requests above the limit receive HTTP 429.')}
+        contentClassName="grid gap-4 md:grid-cols-2"
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="dep-qps">{t('deployments.create.fields.rateLimitQps', 'Rate limit (QPS)')}</Label>
+          <Input
+            id="dep-qps"
+            name="rate-limit-qps"
+            type="number"
+            min={0}
+            value={rateQps}
+            onChange={(event) => setRateQps(Number(event.target.value) || 0)}
+          />
+        </div>
+          <label className="flex items-center gap-2 md:self-end md:pb-2">
+            <Switch id="dep-enabled" checked={enabled} onCheckedChange={setEnabled} />
             <span className="text-sm">{t('deployments.col.enabled', 'Enabled')}</span>
           </label>
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          {t(
-            'deployments.detail.capacityNote',
-            'Capacity controls such as instances, workers, memory, and autoscaling are reserved for the runtime backend work. This page only exposes limits already supported by the API.',
-          )}
-        </p>
-      </section>
+      </SectionBlock>
 
       <div className="flex justify-end">
-        <Button onClick={() => patchMutation.mutate()} disabled={!dirty || patchMutation.isPending}>
-          {t('deployments.detail.save', 'Save changes')}
+        <Button
+          onClick={() => patchMutation.mutate()}
+          disabled={!dirty || patchMutation.isPending}
+        >
+          {patchMutation.isPending
+            ? t('common.saving', 'Saving…')
+            : t('deployments.detail.save', 'Save changes')}
         </Button>
       </div>
     </div>
@@ -294,7 +310,11 @@ function deploymentCodeExamples(
   dep: Deployment,
   exampleInputs: Record<string, unknown>,
 ): Record<CodeLanguage, string> {
-  const endpoint = resolveApiUrl(endpointFor(dep));
+  const endpointPath = endpointFor(dep);
+  if (!endpointPath) {
+    return { curl: '', python: '', javascript: '' };
+  }
+  const endpoint = resolveApiUrl(endpointPath);
   const payload = JSON.stringify(exampleInputs);
   if (dep.trigger_type === 'webhook') {
     return {
@@ -418,7 +438,7 @@ function CodeExamplesTab({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <Code2 className="size-4 text-focus" />
+            <Code2 className="size-4 text-focus" aria-hidden="true" />
             <h2 className="text-sm font-semibold">
               {t('deployments.code.title', 'Call this deployment')}
             </h2>
@@ -454,44 +474,154 @@ function CodeExamplesTab({
   );
 }
 
+function UsageEndpoint({ dep }: { dep: Deployment }) {
+  const { t } = useTranslation();
+  const endpointPath = endpointFor(dep);
+  const endpoint = resolveApiUrl(endpointPath);
+  return (
+    <section className="border-b border-edge-subtle pb-5">
+      <h2 className="text-sm font-semibold">
+        {t('deployments.detail.endpoint', 'Endpoint')}
+      </h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {t('deployments.detail.endpointHelp', 'Use this address from your application or the examples below.')}
+      </p>
+      <div className="mt-3 flex min-w-0 items-center gap-2 rounded-md border border-edge-subtle bg-surface-sunken/35 px-3 py-2">
+        <code className="min-w-0 flex-1 select-text truncate font-mono text-xs" title={endpoint}>
+          {endpoint}
+        </code>
+        <CopyButton value={endpoint} label={t('deployments.actions.copyEndpoint', 'Copy endpoint')} />
+      </div>
+    </section>
+  );
+}
+
 function RunsTab({ depId, active }: { depId: string; active: boolean }) {
   const { t } = useTranslation();
   const formatTime = useFormatDateTime();
-  const query = useQuery({
-    queryKey: ['deployment-history', depId],
-    queryFn: () => getHistory(depId, { limit: 50 }),
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [runSearch, setRunSearch] = useState('');
+  const [logRange, setLogRange] = useState<LogRangeValue>({ range: 'all', from: '', to: '' });
+  const [logOrder, setLogOrder] = useState<LogSortOrder>('desc');
+  const scrollRegionRef = useRef<HTMLDivElement>(null);
+  const logBounds = useMemo(() => resolveLogRange(logRange), [logRange]);
+  const query = useInfiniteQuery({
+    queryKey: ['deployment-history', depId, statusFilter, logRange, logOrder],
+    queryFn: ({ pageParam }) => getHistory(depId, {
+      limit: 50,
+      cursor: pageParam ?? undefined,
+      status: statusFilter === 'all' ? undefined : [statusFilter],
+      order: logOrder,
+      ...logBounds,
+    }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    placeholderData: (previousData) => previousData,
     enabled: active,
     refetchOnWindowFocus: false,
-    refetchInterval: active ? 10_000 : false,
   });
-  const rows: HistoryItem[] = query.data?.items ?? [];
+  const rows: HistoryItem[] = useMemo(
+    () => {
+      const byId = new Map<string, HistoryItem>();
+      for (const row of query.data?.pages.flatMap((page) => page.items) ?? []) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+      }
+      return [...byId.values()];
+    },
+    [query.data?.pages],
+  );
+  const visibleRows = useMemo(() => {
+    const needle = runSearch.trim().toLocaleLowerCase();
+    return rows.filter((row) => {
+      if (!needle) return true;
+      return [row.id, row.source, row.error, row.status]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(needle));
+    });
+  }, [rows, runSearch]);
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   if (!active) return null;
   if (query.isLoading) {
-    return <div className="empty-state">{t('tasks.loading', 'Loading...')}</div>;
+    return <div className="empty-state">{t('tasks.loading', 'Loading…')}</div>;
   }
   if (query.isError) {
     return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-        {t('deployments.detail.historyError', 'Failed to load runs.')}
-      </div>
+      <ActionableError
+        title={t('deployments.detail.historyError', 'Failed to load runs.')}
+        description={t('deployments.detail.historyErrorHint', 'Check the connection and try loading the latest requests again.')}
+        actionLabel={t('retry', 'Retry')}
+        onAction={() => void query.refetch()}
+        technicalDetails={query.error instanceof Error ? query.error.message : undefined}
+      />
     );
   }
-  if (rows.length === 0) {
-    return (
-      <div className="empty-state">
-        <div className="empty-state-title">{t('deployments.detail.noHistory', 'No runs yet.')}</div>
-        <div className="empty-state-copy">
-          {t('deployments.detail.noHistoryHint', 'API, webhook, and test invocations will appear here after the first request.')}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="overflow-x-auto border-y border-edge-subtle">
+    <div className="space-y-3">
+      <LogHistoryControls
+        value={logRange}
+        order={logOrder}
+        onValueChange={setLogRange}
+        onOrderChange={setLogOrder}
+      >
+        <div className="min-w-52 flex-1">
+          <Label htmlFor="deployment-run-search">{t('deployments.detail.searchRuns', 'Search runs')}</Label>
+          <Input
+            id="deployment-run-search"
+            className="mt-1.5 h-9"
+            value={runSearch}
+            onChange={(event) => setRunSearch(event.target.value)}
+            placeholder={t('deployments.detail.searchRunsPlaceholder', 'Request ID, source, or error')}
+          />
+        </div>
+        <div className="w-44">
+          <Label>{t('tasks.col.status', 'Status')}</Label>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger
+              className="mt-1.5 h-9"
+              aria-label={t('tasks.col.status', 'Status')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('common.all', 'All statuses')}</SelectItem>
+              {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map((status) => (
+                <SelectItem key={status} value={status}>
+                  {t(`tasks.executionStatus.${status}`, status)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <span className="pb-2 text-xs text-content-tertiary">
+          {t('logs.loadedVisible', '{{visible}} visible · {{loaded}} loaded', {
+            visible: visibleRows.length,
+            loaded: rows.length,
+          })}
+        </span>
+      </LogHistoryControls>
+      <div
+        ref={scrollRegionRef}
+        role="region"
+        tabIndex={0}
+        aria-label={t('deployments.detail.runHistoryRegion', 'Deployment run history')}
+        className="app-scrollbar h-96 max-h-[48vh] min-h-64 overflow-auto overscroll-contain rounded-lg border border-edge-subtle bg-surface-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        data-role="deployment-run-log-scroll-region"
+      >
+      {rows.length === 0 ? (
+        <div className="empty-state min-h-full">
+          <div className="empty-state-title">{t('deployments.detail.noHistory', 'No runs yet.')}</div>
+          <div className="empty-state-copy">
+            {t('deployments.detail.noHistoryHint', 'API, webhook, and test invocations will appear here after the first request.')}
+          </div>
+        </div>
+      ) : <>
+      <div className="hidden min-w-[58rem] sm:block">
       <table className="w-full text-sm">
-        <thead className="border-b bg-surface-sunken text-left text-xs font-medium text-muted-foreground">
+        <thead className="sticky top-0 z-10 border-b bg-surface-sunken text-left text-xs font-medium text-muted-foreground shadow-[0_1px_0_var(--color-edge-subtle)]">
           <tr>
             <th className="px-4 py-3 font-medium">{t('deployments.detail.requestId', 'Request id')}</th>
             <th className="px-4 py-3 font-medium">{t('deployments.detail.source', 'Source')}</th>
@@ -503,11 +633,13 @@ function RunsTab({ depId, active }: { depId: string; active: boolean }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <tr key={row.id} className="border-b last:border-b-0">
               <td className="px-4 py-3 font-mono text-xs">{row.id}</td>
-              <td className="px-4 py-3 text-muted-foreground">{row.source ?? '-'}</td>
-              <td className="px-4 py-3">{row.status}</td>
+              <td className="px-4 py-3 text-muted-foreground">
+                {row.source ? t(`deployments.source.${row.source}`, row.source) : '-'}
+              </td>
+              <td className="px-4 py-3">{t(`tasks.executionStatus.${row.status}`, row.status)}</td>
               <td className="px-4 py-3 text-muted-foreground">{formatTime(row.started_at ?? row.submitted_at)}</td>
               <td className="px-4 py-3 text-muted-foreground">{formatTime(row.finished_at)}</td>
               <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
@@ -520,6 +652,62 @@ function RunsTab({ depId, active }: { depId: string; active: boolean }) {
           ))}
         </tbody>
       </table>
+      {visibleRows.length === 0 ? (
+        <div className="px-4 py-8 text-center text-sm text-content-tertiary">
+          {t('deployments.detail.noMatchingRuns', 'No runs match these filters.')}
+        </div>
+      ) : null}
+      </div>
+      <div className="divide-y divide-edge-subtle px-4 sm:hidden">
+        {visibleRows.map((row) => (
+          <article key={row.id} className="space-y-3 py-4">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate font-mono text-xs font-medium" title={row.id}>{row.id}</div>
+                <div className="mt-1 text-xs text-content-tertiary">
+                  {row.source ? t(`deployments.source.${row.source}`, row.source) : '-'}
+                </div>
+              </div>
+              <StatusBadge status={row.status === 'succeeded' ? 'success' : row.status === 'failed' ? 'danger' : 'neutral'}>
+                {t(`tasks.executionStatus.${row.status}`, row.status)}
+              </StatusBadge>
+            </div>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+              <div>
+                <dt className="text-content-tertiary">{t('tasks.col.submitted', 'Started')}</dt>
+                <dd className="mt-0.5 text-muted-foreground">{formatTime(row.started_at ?? row.submitted_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-content-tertiary">{t('deployments.detail.finished', 'Finished')}</dt>
+                <dd className="mt-0.5 text-muted-foreground">{formatTime(row.finished_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-content-tertiary">{t('deployments.detail.latency', 'Latency')}</dt>
+                <dd className="mt-0.5 tabular-nums text-muted-foreground">
+                  {row.latency_ms == null ? '-' : `${row.latency_ms.toFixed(0)} ms`}
+                </dd>
+              </div>
+            </dl>
+            {row.error ? (
+              <p className="rounded-md bg-destructive/5 px-3 py-2 text-xs text-destructive">{row.error}</p>
+            ) : null}
+          </article>
+        ))}
+        {visibleRows.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-content-tertiary">
+            {t('deployments.detail.noMatchingRuns', 'No runs match these filters.')}
+          </div>
+        ) : null}
+      </div>
+      </>}
+      <IncrementalLogLoader
+        hasMore={Boolean(query.hasNextPage)}
+        loading={query.isFetchingNextPage}
+        onLoadMore={loadMore}
+        order={logOrder}
+        rootRef={scrollRegionRef}
+      />
+      </div>
     </div>
   );
 }
@@ -578,7 +766,7 @@ function MetricLineChart({
   );
 }
 
-function MonitoringTab({ depId, active }: { depId: string; active: boolean }) {
+function MonitoringTab({ depId, active, onTest }: { depId: string; active: boolean; onTest: () => void }) {
   const { t } = useTranslation();
   const formatTime = useFormatDateTime();
   const query = useQuery({
@@ -591,12 +779,16 @@ function MonitoringTab({ depId, active }: { depId: string; active: boolean }) {
   const series = query.data?.series ?? [];
 
   if (!active) return null;
-  if (query.isLoading) return <div className="empty-state">{t('tasks.loading', 'Loading...')}</div>;
+  if (query.isLoading) return <div className="empty-state">{t('tasks.loading', 'Loading…')}</div>;
   if (query.isError) {
     return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-        {t('deployments.detail.metricsError', 'Failed to load metrics.')}
-      </div>
+      <ActionableError
+        title={t('deployments.detail.metricsError', 'Failed to load metrics.')}
+        description={t('deployments.detail.metricsErrorHint', 'Check the connection and reload the last 24 hours of metrics.')}
+        actionLabel={t('retry', 'Retry')}
+        onAction={() => void query.refetch()}
+        technicalDetails={query.error instanceof Error ? query.error.message : undefined}
+      />
     );
   }
 
@@ -614,6 +806,13 @@ function MonitoringTab({ depId, active }: { depId: string; active: boolean }) {
         {series.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-title">{t('deployments.detail.noMetrics', 'No metrics in this window.')}</div>
+            <div className="empty-state-copy">
+              {t('deployments.detail.noMetricsHint', 'Metrics appear after an API, webhook, or Test request. Run a test to verify the deployment and generate its first data point.')}
+            </div>
+            <Button size="sm" variant="outline" onClick={onTest}>
+              <Play className="mr-2 h-4 w-4" aria-hidden="true" />
+              {t('deployments.detail.runTest', 'Run a test')}
+            </Button>
           </div>
         ) : (
           <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -663,13 +862,19 @@ function TestTab({
   const { t } = useTranslation();
   const [inputsText, setInputsText] = useState(JSON.stringify(exampleInputs, null, 2));
   const [output, setOutput] = useState<string | null>(null);
+  const [responseStatus, setResponseStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [parseError, setParseError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: (inputs: unknown) => testInvoke(depId, inputs),
-    onSuccess: (resp) => setOutput(JSON.stringify(resp, null, 2)),
+    onSuccess: (resp) => {
+      setResponseStatus('success');
+      setOutput(JSON.stringify(resp, null, 2));
+    },
     onError: (e) => {
-      setOutput(null);
-      toast.error(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setResponseStatus('error');
+      setOutput(message);
+      toast.error(message);
     },
   });
   const onRun = () => {
@@ -687,7 +892,10 @@ function TestTab({
   };
   return (
     <div className="space-y-4">
-      <section className="border-y border-edge-subtle py-4">
+      <SectionBlock
+        title={t('deployments.detail.testRequest', 'Request')}
+        description={t('deployments.detail.testRequestHelp', 'Edit the example generated from the workflow Start node, then send it to this deployment.')}
+      >
         <Label htmlFor="dep-test-inputs">{t('deployments.detail.testInputs', 'Inputs (JSON)')}</Label>
         <Textarea
           id="dep-test-inputs"
@@ -699,19 +907,29 @@ function TestTab({
         {parseError && <div className="mt-2 text-xs text-destructive">{parseError}</div>}
         <div className="mt-3">
           <Button onClick={onRun} disabled={mutation.isPending}>
-            <Play className="mr-2 h-4 w-4" />
+            <Play className="mr-2 h-4 w-4" aria-hidden="true" />
             {t('deployments.testInvoke.run', 'Run')}
           </Button>
         </div>
-      </section>
-      {output && (
-        <section className="border-y border-edge-subtle py-4">
-          <Label>{t('deployments.detail.testOutput', 'Output')}</Label>
+      </SectionBlock>
+        <SectionBlock
+          title={t('deployments.detail.testResponse', 'Response')}
+          description={responseStatus === 'idle'
+            ? t('deployments.detail.testResponsePending', 'Run the request to see the HTTP result and workflow output here.')
+            : responseStatus === 'success'
+              ? t('deployments.detail.testResponseSuccess', 'The deployment accepted the request successfully.')
+              : t('deployments.detail.testResponseError', 'The request failed. Review the message below, update the request or deployment, and try again.')}
+        >
+          {output ? (
           <pre className="mt-2 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs">
             {output}
           </pre>
-        </section>
-      )}
+          ) : (
+            <div className="rounded-md border border-dashed border-edge-subtle px-4 py-8 text-center text-sm text-content-tertiary">
+              {t('deployments.detail.noTestResponse', 'No response yet')}
+            </div>
+          )}
+        </SectionBlock>
     </div>
   );
 }
@@ -720,20 +938,25 @@ function SecurityTab({ dep }: { dep: Deployment }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [rotated, setRotated] = useState<string | null>(null);
+  const [rotateConfirmOpen, setRotateConfirmOpen] = useState(false);
+  const [secretSaved, setSecretSaved] = useState(false);
   const rotateMutation = useMutation({
     mutationFn: () => rotateKey(dep.id),
-    onSuccess: (resp) => setRotated(resp.api_key),
+    onSuccess: (resp) => {
+      setRotateConfirmOpen(false);
+      setSecretSaved(false);
+      setRotated(resp.api_key);
+    },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
   return (
     <div className="space-y-4">
-      <section className="border-y border-edge-subtle py-4">
+      <SectionBlock title={t('deployments.detail.securityModel', 'Access control')}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-state-success" />
-              <h2 className="text-sm font-semibold">{t('deployments.detail.securityModel', 'Access control')}</h2>
+              <ShieldCheck className="h-4 w-4 text-state-success" aria-hidden="true" />
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
               {dep.trigger_type === 'api'
@@ -742,8 +965,8 @@ function SecurityTab({ dep }: { dep: Deployment }) {
             </p>
           </div>
           {dep.trigger_type === 'api' && (
-            <Button variant="outline" onClick={() => rotateMutation.mutate()} disabled={rotateMutation.isPending}>
-              <KeyRound className="mr-2 h-4 w-4" />
+            <Button variant="outline" onClick={() => setRotateConfirmOpen(true)} disabled={rotateMutation.isPending}>
+              <KeyRound className="mr-2 h-4 w-4" aria-hidden="true" />
               {t('deployments.detail.rotateKey', 'Rotate API key')}
             </Button>
           )}
@@ -767,25 +990,40 @@ function SecurityTab({ dep }: { dep: Deployment }) {
             )}
           </p>
         </div>
-      </section>
+      </SectionBlock>
 
-      <section className="border-y border-edge-subtle py-4">
-        <h2 className="text-sm font-semibold">{t('deployments.detail.rateLimitPolicy', 'Rate limit policy')}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t('deployments.detail.rateLimitHint', 'Requests over the configured QPS limit should be rejected with HTTP 429. Retry-After support belongs to the gateway/runtime implementation.')}
-        </p>
-      </section>
+      <Dialog open={rotateConfirmOpen} onOpenChange={setRotateConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('deployments.detail.rotateConfirmTitle', 'Rotate API key?')}</DialogTitle>
+            <DialogDescription>
+              {t('deployments.detail.rotateConfirmDescription', 'The current API key will stop working immediately. Update every client with the new key after rotation.')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRotateConfirmOpen(false)} disabled={rotateMutation.isPending}>
+              {t('common_cancel', 'Cancel')}
+            </Button>
+            <Button variant="destructive" onClick={() => rotateMutation.mutate()} disabled={rotateMutation.isPending}>
+              {rotateMutation.isPending
+                ? t('deployments.detail.rotatingKey', 'Rotating…')
+                : t('deployments.detail.rotateKey', 'Rotate API key')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!rotated}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && secretSaved) {
             setRotated(null);
+            setSecretSaved(false);
             void qc.invalidateQueries({ queryKey: ['deployment', dep.id] });
           }
         }}
       >
-        <DialogContent>
+        <DialogContent closeDisabled={!secretSaved}>
           <DialogHeader>
             <DialogTitle>{t('deployments.detail.rotateTitle', 'New API key')}</DialogTitle>
             <DialogDescription>
@@ -796,14 +1034,34 @@ function SecurityTab({ dep }: { dep: Deployment }) {
             </DialogDescription>
           </DialogHeader>
           {rotated ? (
-            <OneTimeSecretField
-              value={rotated}
-              label={t('deployments.create.apiKey', 'API Key')}
-              testId="rotated-key"
-            />
+            <div className="space-y-4">
+              <OneTimeSecretField
+                value={rotated}
+                label={t('deployments.create.apiKey', 'API Key')}
+                testId="rotated-key"
+              />
+              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-edge-subtle p-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={secretSaved}
+                  onChange={(event) => setSecretSaved(event.target.checked)}
+                  className="mt-0.5 size-4 accent-primary"
+                />
+                <span>{t('deployments.detail.secretSavedConfirmation', 'I saved the new API key in a secure place.')}</span>
+              </label>
+            </div>
           ) : null}
           <DialogFooter>
-            <Button onClick={() => setRotated(null)}>{t('deployments.create.close', 'Close')}</Button>
+            <Button
+              disabled={!secretSaved}
+              onClick={() => {
+                setRotated(null);
+                setSecretSaved(false);
+                void qc.invalidateQueries({ queryKey: ['deployment', dep.id] });
+              }}
+            >
+              {t('deployments.create.close', 'Close')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -818,9 +1076,7 @@ export function DeploymentDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [shareOpen, setShareOpen] = useState(false);
   const requestedTab = searchParams.get('tab');
-  const tab: TabKey = ['overview', 'config', 'code', 'runs', 'monitoring', 'test', 'security'].includes(requestedTab ?? '')
-    ? requestedTab as TabKey
-    : 'overview';
+  const tab = deploymentDetailTab(requestedTab);
   const setTab = (nextTab: TabKey) => {
     const next = new URLSearchParams(searchParams);
     next.set('tab', nextTab);
@@ -850,7 +1106,7 @@ export function DeploymentDetailPage() {
     return <div className="flex-1 p-6 text-sm text-muted-foreground">{t('deployments.detail.missingId', 'Missing deployment id in URL')}</div>;
   }
   if (query.isLoading) {
-    return <div className="flex-1 p-6 text-sm text-muted-foreground">{t('tasks.loading', 'Loading...')}</div>;
+    return <div className="flex-1 p-6 text-sm text-muted-foreground">{t('tasks.loading', 'Loading…')}</div>;
   }
   if (query.isError || !query.data) {
     return (
@@ -876,17 +1132,12 @@ export function DeploymentDetailPage() {
   const canInspectRuns = capabilities.has('inspect_runs');
   const canExecute = capabilities.has('execute');
   const canManageSecret = capabilities.has('manage_secret');
-  const allowedTab = tab === 'config'
-    ? canUpdate
-    : tab === 'runs' || tab === 'monitoring'
-      ? canInspectRuns
-      : tab === 'test'
-        ? canExecute
-        : tab === 'security'
-          ? canManageSecret
-          : true;
+  const allowedTab = tab === 'activity'
+    ? canInspectRuns
+    : tab === 'settings'
+      ? canUpdate || canManageSecret
+      : true;
   const activeTab: TabKey = allowedTab ? tab : 'overview';
-  const endpoint = endpointFor(dep);
   const latestMetric = metricsQuery.data?.series.at(-1) ?? null;
   const versionLabel = dep.version_pin === 'head'
     ? t('deployments.detail.latestVersion', 'Latest version')
@@ -917,11 +1168,10 @@ export function DeploymentDetailPage() {
         </StatusBadge>
       </div>}
       metadata={<>
-        <span>{triggerLabel(dep)}</span>
+        <span>{triggerLabel(dep, t)}</span>
         <span>{versionLabel}</span>
         <span>{t('deployments.detail.updated', 'Updated')}: {formatTime(dep.updated_at ?? dep.created_at)}</span>
-        <code className="max-w-[440px] truncate font-mono">{endpoint}</code>
-        <CopyButton value={endpoint} label={t('deployments.actions.copyEndpoint', 'Copy endpoint')} />
+        <ResourceProvenanceLine provenance={dep.provenance} />
       </>}
       actions={<>
             <Button
@@ -932,69 +1182,61 @@ export function DeploymentDetailPage() {
                 metricsQuery.refetch(),
               ])}
             >
-              <RefreshCw className="mr-2 h-4 w-4" />
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
               {t('refresh', 'Refresh')}
             </Button>
             {canExecute ? (
-              <Button size="sm" onClick={() => setTab('test')}>
-                <Play className="mr-2 h-4 w-4" />
-                {t('deployments.detail.tabs.test', 'Test')}
+              <Button size="sm" onClick={() => setTab('usage')}>
+                <Play className="mr-2 h-4 w-4" aria-hidden="true" />
+                {t('deployments.detail.testAction', 'Test')}
               </Button>
             ) : null}
             {capabilities.has('manage_access') ? (
               <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-                <Share2 className="mr-2 h-4 w-4" />
+                <Share2 className="mr-2 h-4 w-4" aria-hidden="true" />
                 {t('deployments.action.share', 'Share deployment')}
               </Button>
             ) : null}
           </>}
     >
 
-        <Tabs value={activeTab} onValueChange={(value) => setTab(value as TabKey)} className="space-y-4">
-          <TabsList variant="underline" className="flex w-full flex-wrap justify-start">
-            <TabsTrigger value="overview">{t('deployments.detail.tabs.overview', 'Overview')}</TabsTrigger>
-            {canUpdate ? <TabsTrigger value="config">{t('deployments.detail.tabs.config', 'Config')}</TabsTrigger> : null}
-            <TabsTrigger value="code">{t('deployments.detail.tabs.code', 'Code examples')}</TabsTrigger>
-            {canInspectRuns ? <TabsTrigger value="runs">{t('deployments.detail.tabs.runs', 'Runs / Logs')}</TabsTrigger> : null}
-            {canInspectRuns ? <TabsTrigger value="monitoring">{t('deployments.detail.tabs.monitoring', 'Monitoring')}</TabsTrigger> : null}
-            {canExecute ? <TabsTrigger value="test">{t('deployments.detail.tabs.test', 'Test')}</TabsTrigger> : null}
-            {canManageSecret ? <TabsTrigger value="security">{t('deployments.detail.tabs.security', 'Security')}</TabsTrigger> : null}
+        <Tabs value={activeTab} onValueChange={(value) => setTab(value as TabKey)}>
+          <TabsList variant="underline" className="chat-scrollbar flex h-auto w-full justify-start overflow-x-auto border-b border-edge-subtle">
+            <TabsTrigger value="overview" className="shrink-0">{t('deployments.detail.tabs.overview', 'Overview')}</TabsTrigger>
+            <TabsTrigger value="usage" className="shrink-0">
+              {t('deployments.detail.tabs.usage', 'Usage')}
+            </TabsTrigger>
+            {canInspectRuns ? <TabsTrigger value="activity" className="shrink-0">{t('deployments.detail.tabs.activity', 'Activity')}</TabsTrigger> : null}
+            {canUpdate || canManageSecret ? <TabsTrigger value="settings" className="shrink-0">{t('deployments.detail.tabs.settings', 'Settings')}</TabsTrigger> : null}
           </TabsList>
           <TabsContent value="overview">
             <OverviewTab
               dep={dep}
               latestMetric={latestMetric}
-              onCopyEndpoint={() =>
-                copy(
-                  endpoint,
-                  t('deployments.actions.copied', 'Copied'),
-                  t('deployments.actions.copyFailed', 'Copy failed'),
-                )
-              }
-              onTest={canExecute ? () => setTab('test') : undefined}
+              canUpdate={canUpdate}
             />
           </TabsContent>
-          <TabsContent value="config">
-            <ConfigTab dep={dep} />
-          </TabsContent>
-          <TabsContent value="code">
+          <TabsContent value="usage" className="space-y-8">
+            <UsageEndpoint dep={dep} />
             <CodeExamplesTab dep={dep} exampleInputs={exampleInputs} />
+            {canExecute ? (
+              <TestTab
+                key={JSON.stringify(exampleInputs)}
+                depId={depId}
+                exampleInputs={exampleInputs}
+              />
+            ) : null}
           </TabsContent>
-          <TabsContent value="runs">
-            <RunsTab depId={depId} active={activeTab === 'runs'} />
+          <TabsContent value="activity" className="space-y-8">
+            <section className="space-y-3">
+              <h2 className="text-sm font-semibold">{t('deployments.detail.recentRuns', 'Recent runs')}</h2>
+              <RunsTab depId={depId} active={activeTab === 'activity'} />
+            </section>
+            <MonitoringTab depId={depId} active={activeTab === 'activity'} onTest={() => setTab('usage')} />
           </TabsContent>
-          <TabsContent value="monitoring">
-            <MonitoringTab depId={depId} active={activeTab === 'monitoring'} />
-          </TabsContent>
-          <TabsContent value="test">
-            <TestTab
-              key={JSON.stringify(exampleInputs)}
-              depId={depId}
-              exampleInputs={exampleInputs}
-            />
-          </TabsContent>
-          <TabsContent value="security">
-            <SecurityTab dep={dep} />
+          <TabsContent value="settings" className="space-y-8">
+            {canUpdate ? <ConfigTab dep={dep} /> : null}
+            {canManageSecret ? <SecurityTab dep={dep} /> : null}
           </TabsContent>
         </Tabs>
         <ResourceShareDialog

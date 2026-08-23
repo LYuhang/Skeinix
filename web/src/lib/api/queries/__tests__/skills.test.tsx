@@ -14,7 +14,7 @@ describe('useSkills', () => {
   beforeEach(() => vi.restoreAllMocks());
   it('returns the listed skills', async () => {
     vi.spyOn(client, 'listSkills').mockResolvedValue([
-      { id: 'skill-workflow-builder', name: 'workflow-builder', description: 'build wf', allowed_tools: ['canvas'], version: 1, created_at: null, updated_at: null, access: { capabilities: ['view', 'use'], effective_role: 'viewer', source: 'computed' } },
+      { id: 'skill-workflow-builder', name: 'workflow-builder', description: 'build wf', allowed_tools: ['canvas'], version: 1, created_at: null, updated_at: null, access: { capabilities: ['view', 'use'], effective_role: 'viewer', source: 'computed' }, provenance: { ownership_scope: 'platform', origin_type: 'catalog_install', owner: { type: 'platform', display_name: 'Skeinix' }, created_by: null } },
     ]);
     const { result } = renderHook(() => useSkills(), { wrapper });
     await waitFor(() => expect(result.current.data?.length).toBe(1));
@@ -36,6 +36,7 @@ describe('useSaveCustomSkill', () => {
       created_at: null,
       updated_at: null,
       access: { capabilities: ['view', 'use', 'update', 'delete', 'manage_access', 'publish'], effective_role: 'manager', source: 'computed' },
+      provenance: { ownership_scope: 'personal', origin_type: 'uploaded', owner: { type: 'user', display_name: 'Owner' }, created_by: { type: 'user', display_name: 'Owner' } },
     };
     const detail = {
       ...created,

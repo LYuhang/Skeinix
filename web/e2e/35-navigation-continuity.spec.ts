@@ -42,7 +42,6 @@ test.describe('dynamic route navigation continuity', () => {
       `/tasks/${MISSING_UUID}`,
       `/deployments/${MISSING_UUID}`,
       '/mcp-servers/discover/e2e-missing-source',
-      '/mcp-servers/platform/browser',
       `/mcp-servers/${MISSING_UUID}`,
       '/skills/discover/e2e-missing-source',
       `/skills/${MISSING_UUID}`,

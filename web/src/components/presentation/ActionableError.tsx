@@ -1,5 +1,6 @@
 import { CircleAlert, RotateCw } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -10,7 +11,7 @@ export function ActionableError({
   actionLabel,
   onAction,
   technicalDetails,
-  technicalDetailsLabel = 'Technical details',
+  technicalDetailsLabel,
   requestId,
   className,
 }: {
@@ -23,6 +24,7 @@ export function ActionableError({
   requestId?: string | null;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <section
       role="alert"
@@ -44,7 +46,7 @@ export function ActionableError({
           {technicalDetails || requestId ? (
             <details className="mt-3 text-xs text-content-tertiary">
               <summary className="w-fit cursor-pointer rounded-sm font-medium text-content-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
-                {technicalDetailsLabel}
+                {technicalDetailsLabel ?? t('common.technicalDetails')}
               </summary>
               <div className="mt-2 max-h-48 overflow-auto rounded-md bg-surface-sunken p-3 font-mono leading-5">
                 {technicalDetails}

@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 
 import { EntityDetailShell } from '@/components/layout/entity-detail-shell';
+import { DetailSummary } from '@/components/layout/detail-summary';
+import { SectionBlock } from '@/components/layout/section-block';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { StatusBadge } from '@/components/ui/status';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   useMcpCatalogItem,
@@ -104,7 +107,11 @@ export function McpCatalogDetailPage() {
       <div className="page-shell page-shell-contained">
         <div className="page-content max-w-5xl">
           {back}
-          <div className="empty-state">{t('mcp.catalog.loading', 'Loading Server Details…')}</div>
+          <div className="mt-4 space-y-4" aria-label={t('mcp.catalog.loading', 'Loading Server Details…')}>
+            <Skeleton className="h-8 w-72" />
+            <Skeleton className="h-4 w-full max-w-2xl" />
+            <Skeleton className="h-44 w-full" />
+          </div>
         </div>
       </div>
     );
@@ -191,36 +198,26 @@ export function McpCatalogDetailPage() {
           </TabsList>
 
           <TabsContent value="overview" className="page-scroll-region mt-0 min-h-0 flex-1 space-y-5 pr-2">
-            <section className="border-b pb-5">
-              <h2 className="text-sm font-semibold">{t('mcp.catalog.about', 'About')}</h2>
+            <SectionBlock title={t('mcp.catalog.about', 'About')}>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                 {item.description || t('mcp.no_description', 'No Brief Description Saved Yet.')}
               </p>
-            </section>
-            <dl className="grid gap-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-muted-foreground">{t('mcp.catalog.source', 'Source')}</dt>
-                <dd className="mt-1 font-medium">{catalogSourceName}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">{t('mcp.catalog.transport', 'Connection')}</dt>
-                <dd className="mt-1 font-medium">
-                  {item.connection?.transport.replace('_', ' ') ?? t('mcp.catalog.not_supported', 'Not Available')}
-                </dd>
-              </div>
-              {item.version ? (
-                <div>
-                  <dt className="text-muted-foreground">{t('mcp.catalog.version', 'Version')}</dt>
-                  <dd className="mt-1 font-medium">{item.version}</dd>
-                </div>
-              ) : null}
-              {item.usage_count != null ? (
-                <div>
-                  <dt className="text-muted-foreground">{t('mcp.catalog.uses', 'Uses')}</dt>
-                  <dd className="mt-1 font-medium">{formatNumber(item.usage_count)}</dd>
-                </div>
-              ) : null}
-            </dl>
+            </SectionBlock>
+            <SectionBlock title={t('mcp.catalog.details', 'Details')}>
+              <DetailSummary
+                items={[
+                  { label: t('mcp.catalog.detail_source', 'Catalog'), value: catalogSourceName },
+                  {
+                    label: t('mcp.catalog.transport', 'Connection'),
+                    value: item.connection?.transport.replace('_', ' ') ?? t('mcp.catalog.not_supported', 'Not Available'),
+                  },
+                  ...(item.version ? [{ label: t('mcp.catalog.version', 'Version'), value: item.version }] : []),
+                  ...(item.usage_count != null
+                    ? [{ label: t('mcp.catalog.uses', 'Uses'), value: formatNumber(item.usage_count) }]
+                    : []),
+                ]}
+              />
+            </SectionBlock>
             {item.homepage ? (
               <Button asChild variant="outline" size="sm">
                 <a href={item.homepage} target="_blank" rel="noreferrer">
@@ -232,22 +229,19 @@ export function McpCatalogDetailPage() {
           </TabsContent>
 
           {item.config_fields.length > 0 ? <TabsContent value="setup" className="page-scroll-region mt-0 min-h-0 flex-1 pr-2">
-            <section className="max-w-2xl space-y-5">
-              <div className="flex items-start gap-3 border-b pb-4">
-                <Settings2 className="mt-0.5 h-5 w-5 text-muted-foreground" />
-                <div>
-                  <h2 className="text-sm font-semibold">{t('mcp.catalog.setup_title', 'Required Configuration')}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t('mcp.catalog.setup_help', 'These fields are declared by this MCP server. Connection details and internal names are configured automatically.')}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {item.configuration_source === 'official_registry'
-                      ? t('mcp.catalog.setup_source_official', 'Configuration schema from the Official MCP Registry')
-                      : t('mcp.catalog.setup_source_smithery', 'Configuration schema published through Smithery')}
-                  </p>
-                </div>
+            <SectionBlock
+              className="max-w-2xl"
+              title={t('mcp.catalog.setup_title', 'Required Configuration')}
+              description={t('mcp.catalog.setup_help', 'These fields are declared by this MCP server. Connection details and internal names are configured automatically.')}
+              icon={<Settings2 className="size-4" aria-hidden="true" />}
+            >
+              <div className="mb-4 text-xs text-content-tertiary">
+                {item.configuration_source === 'official_registry'
+                  ? t('mcp.catalog.setup_source_official', 'Configuration schema from the Official MCP Registry')
+                  : t('mcp.catalog.setup_source_smithery', 'Configuration schema published through Smithery')}
               </div>
-              {item.config_fields.map((field) => (
+              <div className="space-y-5">
+                {item.config_fields.map((field) => (
                   <div key={field.key} className="flex flex-col gap-1.5">
                     <Label htmlFor={`mcp-config-${field.key}`}>
                       {field.label}{field.required ? ' *' : ''}
@@ -300,38 +294,37 @@ export function McpCatalogDetailPage() {
                     {field.description ? <p className="text-xs text-muted-foreground">{field.description}</p> : null}
                   </div>
                 ))}
-            </section>
+              </div>
+            </SectionBlock>
           </TabsContent> : null}
 
           {requiresOAuth ? (
             <TabsContent value="connection" className="page-scroll-region mt-0 min-h-0 flex-1 pr-2">
-              <section className="flex max-w-2xl items-start gap-3">
-                <LockKeyhole className="mt-0.5 h-5 w-5 text-muted-foreground" />
-                <div>
-                  <h2 className="text-sm font-semibold">
-                    {t('mcp.catalog.oauth_title', 'Account Connection Required')}
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    {t(
-                      'mcp.catalog.oauth_help',
-                      'Install the server first, then connect your account from its Connection tab. The server stays unavailable to agents until authorization succeeds.',
-                    )}
-                  </p>
-                </div>
-              </section>
+              <SectionBlock
+                className="max-w-2xl"
+                title={t('mcp.catalog.oauth_title', 'Account Connection Required')}
+                icon={<LockKeyhole className="size-4" aria-hidden="true" />}
+              >
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {t(
+                    'mcp.catalog.oauth_help',
+                    'Install the server first, then connect your account from its Connection tab. The server stays unavailable to agents until authorization succeeds.',
+                  )}
+                </p>
+              </SectionBlock>
             </TabsContent>
           ) : null}
 
           <TabsContent value="security" className="page-scroll-region mt-0 min-h-0 flex-1 pr-2">
-            <section className="flex max-w-2xl items-start gap-3">
-              <LockKeyhole className="mt-0.5 h-5 w-5 text-muted-foreground" />
-              <div>
-                <h2 className="text-sm font-semibold">{t('mcp.catalog.security_title', 'Review Access Before Installing')}</h2>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  {t('mcp.catalog.security_help', 'MCP servers may read data or perform actions in external services. Verify the publisher and requested credentials before installing. The connection is tested before the server is saved.')}
-                </p>
-              </div>
-            </section>
+            <SectionBlock
+              className="max-w-2xl"
+              title={t('mcp.catalog.security_title', 'Review Access Before Installing')}
+              icon={<LockKeyhole className="size-4" aria-hidden="true" />}
+            >
+              <p className="text-sm leading-6 text-muted-foreground">
+                {t('mcp.catalog.security_help', 'MCP servers may read data or perform actions in external services. Verify the publisher and requested credentials before installing. The connection is tested before the server is saved.')}
+              </p>
+            </SectionBlock>
           </TabsContent>
         </Tabs>
       </EntityDetailShell>

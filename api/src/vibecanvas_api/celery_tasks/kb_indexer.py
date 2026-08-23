@@ -7,8 +7,6 @@ async (it receives an :class:`AsyncSession`) and that's fine because
 task itself stays sync.
 
 Status state machine: ``pending → indexing → indexed | failed``.
-``reindex`` (T6) jumps a ``(failed|indexed)`` row back to ``pending``,
-then this task picks it up like any other.
 
 Failure contract:
 
@@ -182,8 +180,9 @@ def kb_index_file_task(
                 fid, status="indexed", chunk_count=chunk_count))
 
     except IndexingError as exc:
-        # Clean any partially-written chunks so a future reindex doesn't
-        # see zombie rows; then mark failed on kb_files.
+        # Clean partial derived rows so a later package update cannot see
+        # stale search data; then retain the original file and mark only the
+        # disposable derivation as failed.
         error_message = str(exc)
         run_in_short_session(
             lambda s: KbRepo(s).delete_chunks_for_file(fid))

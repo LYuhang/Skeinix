@@ -1,0 +1,20 @@
+[
+  {
+    "path": "src/pages/canvas/inspector/config-editors/PromptNodeEditor.tsx",
+    "kind": "jsx-placeholder",
+    "text": "sk-…",
+    "reason": "Credential-prefix example, not natural-language copy; translating it would make the expected API-key format inaccurate."
+  },
+  {
+    "path": "src/pages/canvas/inspector/config-editors/TransformNodeEditor.tsx",
+    "kind": "jsx-placeholder",
+    "text": "0 or \"n/a\" or [1,2]",
+    "reason": "Literal transform-value syntax example; its JSON-compatible tokens must remain unchanged in every locale."
+  },
+  {
+    "path": "src/pages/canvas/inspector/config-editors/TransformNodeEditor.tsx",
+    "kind": "jsx-placeholder",
+    "text": "a, b, c",
+    "reason": "Comma-separated field-name syntax example; translating the sample would obscure the accepted input format."
+  }
+]

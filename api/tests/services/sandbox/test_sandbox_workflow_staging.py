@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -110,6 +111,102 @@ async def test_workflow_job_is_staged_and_collected_by_owning_daemon(
 
     assert outcome["status"] == {"status": "success"}
     assert outcome["result"]["final_outputs"]["node"] == {"value": 6}
+
+
+@pytest.mark.asyncio
+async def test_streamed_workflow_reads_selected_workflow_run_not_chat_workspace(
+    tmp_path, monkeypatch,
+) -> None:
+    """The stream result path must follow ``run_subpath``.
+
+    Chat and selected Workflow ids normally differ.  Passing the Chat's host
+    directory into the warm pool made the worker write the Workflow result to
+    one directory while the host read another, producing a false
+    ``sandbox job completed without result.json`` engine error.
+    """
+    runs_root = tmp_path / "runs"
+    chat_root = runs_root / "chat-workspace"
+    chat_root.mkdir(parents=True)
+    selected_root = runs_root / "selected-workflow"
+    session = SandboxSession(
+        tenant_id="tenant-a",
+        wf_id="chat-workspace",
+        run_dir=str(chat_root),
+        overlay_dir=None,
+        provider=object(),
+        base_binds=[],
+        expose_run=True,
+    )
+
+    class FakePool:
+        def acquire_egress_hosts(self, _hosts):
+            return "lease"
+
+        def release_egress_hosts(self, lease):
+            assert lease == "lease"
+
+        async def submit_stream(self, **kwargs):
+            assert kwargs["run_subpath"] == "selected-workflow"
+            assert "run_dir" not in kwargs
+            exec_dir = selected_root / "__exec__"
+            assert json.loads((exec_dir / "workflow.json").read_text()) == {
+                "node": {"node_type": "StartNode"}
+            }
+            yield {
+                "type": "result",
+                "final_outputs": {"node": {"value": 6}},
+                "error_dict": {},
+                "execution_time": 0.01,
+            }
+
+    monkeypatch.setattr(session, "_get_fileop_pool", AsyncMock(return_value=FakePool()))
+
+    messages = [
+        message
+        async for message in session.submit_workflow_stream(
+            workflow={"node": {"node_type": "StartNode"}},
+            inputs={"value": 3},
+            run_id="selected-workflow",
+            tenant="tenant-a",
+            run_subpath="selected-workflow",
+            run_dir="untrusted://ignored",
+            timeout=15.0,
+        )
+    ]
+
+    assert messages[-1]["final_outputs"]["node"] == {"value": 6}
+    assert not (chat_root / "__exec__" / "workflow.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_clear_workflow_run_targets_selected_workflow_id(
+    tmp_path, monkeypatch,
+) -> None:
+    from vibecanvas_api.services import vfs_run_context
+
+    chat_root = tmp_path / "chat-workspace"
+    chat_root.mkdir()
+    session = SandboxSession(
+        tenant_id="tenant-a",
+        wf_id="chat-workspace",
+        run_dir=str(chat_root),
+        overlay_dir=None,
+        provider=object(),
+        base_binds=[],
+        expose_run=True,
+    )
+    cleared: list[tuple[str, str]] = []
+
+    async def clear(run_id: str, tenant_id: str):
+        cleared.append((run_id, tenant_id))
+
+    monkeypatch.setattr(vfs_run_context, "clear_run_contents", clear)
+
+    await session.clear_workflow_run("selected-workflow")
+
+    assert cleared == [("selected-workflow", "tenant-a")]
+    with pytest.raises(ValueError, match="workflow run id"):
+        await session.clear_workflow_run("../escape")
 
 
 @pytest.mark.asyncio

@@ -152,7 +152,7 @@ describe('chat attachments', () => {
       <MessageItem
         message={{
           role: 'user',
-          content: '/build compare @photo.png with @not-attached',
+          content: '/workflow compare @photo.png with @not-attached',
           tool_calls: [],
           attachments: [{
             type: 'image',
@@ -164,7 +164,7 @@ describe('chat attachments', () => {
         }}
       />,
     );
-    expect(screen.getByText(/\/build compare/)).not.toHaveAttribute('data-token-kind');
+    expect(screen.getByText(/\/workflow compare/)).not.toHaveAttribute('data-token-kind');
     expect(screen.getByText('@photo.png')).toHaveAttribute('data-token-kind', 'attachment');
     expect(screen.getByText(/@not-attached/).tagName).toBe('SPAN');
   });

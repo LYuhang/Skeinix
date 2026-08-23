@@ -125,9 +125,13 @@ _SERVER_POLICY: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"knowledge_base:*"}),
         frozenset(
             {
+                "organization:create",
                 "knowledge_base:view_metadata",
                 "knowledge_base:view",
                 "knowledge_base:use",
+                "knowledge_base:create",
+                "knowledge_base:update",
+                "knowledge_base:delete",
             }
         ),
     ),
@@ -141,23 +145,6 @@ _SERVER_POLICY: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "vfs_path:update",
             }
         ),
-    ),
-    "plan": (
-        frozenset({"execution_plan:*", "vfs_path:*"}),
-        frozenset(
-            {
-                "execution_plan:create",
-                "vfs_path:view",
-            }
-        ),
-    ),
-    "diagram": (
-        frozenset({"platform_catalog:*", "vfs_path:*"}),
-        frozenset({
-            "platform_catalog:view",
-            "vfs_path:view",
-            "vfs_path:update",
-        }),
     ),
 }
 

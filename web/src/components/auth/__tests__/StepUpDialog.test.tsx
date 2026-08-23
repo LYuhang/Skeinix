@@ -13,7 +13,7 @@ const browser = vi.hoisted(() => ({
   createWebAuthnCredential: vi.fn(),
 }));
 
-vi.mock('@/lib/api/mfa', () => api);
+vi.mock('@/lib/api/passkeys', () => api);
 vi.mock('@/lib/auth/webauthn-browser', () => browser);
 
 import { StepUpDialog } from '@/components/auth/StepUpDialog';

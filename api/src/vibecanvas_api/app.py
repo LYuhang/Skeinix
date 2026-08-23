@@ -252,17 +252,15 @@ async def lifespan(app: FastAPI):
         await openfga_client.probe()
         app.state.openfga_client = openfga_client
 
-        # Built-in Workflow/Browser capabilities are real stateless
-        # Streamable HTTP MCP servers. Their session managers share the API
-        # lifespan but remain protocol-isolated from FastAPI routes.
-        from .services.platform_mcp.server import (
-            enter_platform_mcp_lifespans,
+        # Platform tools execute behind the private Host Capability Gateway.
+        # Their canonical invocation layer shares the API lifespan's OpenFGA
+        # client, but no model-visible Platform MCP transport runs on the Host.
+        from .services.platform_mcp.invocation import (
             set_platform_mcp_openfga_client,
         )
 
         set_platform_mcp_openfga_client(getattr(app.state, "openfga_client", None))
         stack.callback(set_platform_mcp_openfga_client, None)
-        await enter_platform_mcp_lifespans(stack)
 
         # 3. Postgres checkpointer on a psycopg AsyncConnectionPool.
         #    Runtime state is deliberately separate from the product database.
@@ -344,18 +342,6 @@ async def lifespan(app: FastAPI):
             openfga_client=getattr(app.state, "openfga_client", None),
         )
         stack.push_async_callback(background_result_delivery.shutdown)
-        from .services.execution_plans.scheduler import execution_plan_scheduler
-
-        execution_plan_scheduler_task = asyncio.create_task(
-            execution_plan_scheduler.run_loop(),
-            name="execution-plan-scheduler",
-        )
-        stack.push_async_callback(
-            _stop_execution_plan_scheduler,
-            execution_plan_scheduler,
-            execution_plan_scheduler_task,
-        )
-
         # Some dependency initializers used above may configure stdlib logging
         # as a side effect. This is the final startup boundary immediately
         # before requests are accepted, so make the product pipeline
@@ -451,15 +437,6 @@ def build_app() -> FastAPI:
         production=app_config.environment == "production",
     )
 
-    # Mount official MCP ASGI transports before product routers. Sandbox
-    # Runtimes reach these through PLATFORM_MCP_INTERNAL_BASE_URL; browser
-    # proxy/base-path configuration is intentionally irrelevant to this private
-    # service-to-service channel.
-    from .services.platform_mcp.server import PLATFORM_MCP_PATHS, platform_mcp_apps
-
-    for server_name, mcp_app in platform_mcp_apps().items():
-        app.mount(PLATFORM_MCP_PATHS[server_name], mcp_app)
-
     # Mount routers
     from .routes import agent_runtime as _agent_runtime_routes
     from .routes import audit as _audit_routes
@@ -470,16 +447,15 @@ def build_app() -> FastAPI:
     from .routes import deployments as _deployment_routes
     from .routes import enterprise_identity as _enterprise_identity_routes
     from .routes import envs as _envs_routes
-    from .routes import execution_plans as _execution_plan_routes
     from .routes import executions as _exec_routes
     from .routes import kb as _kb_routes
     from .routes import llm_credentials as _llm_credentials_routes
     from .routes import mcp_servers as _mcp_servers_routes
     from .routes import meta as _meta_routes
-    from .routes import mfa as _mfa_routes
     from .routes import organizations as _organization_routes
     from .routes import platform_management as _platform_management_routes
     from .routes import previews as _preview_routes
+    from .routes import resource_access as _resource_access_routes
     from .routes import privileged_access as _privileged_access_routes
     from .routes import runtime_mcp_broker as _runtime_mcp_broker_routes
     from .routes import runtime_model_broker as _runtime_model_broker_routes
@@ -496,7 +472,6 @@ def build_app() -> FastAPI:
         _scim_routes.scim_exception_handler,
     )
     app.include_router(_auth_routes.router)
-    app.include_router(_mfa_routes.router)
     app.include_router(_webauthn_routes.router)
     app.include_router(_privileged_access_routes.router)
     app.include_router(_platform_management_routes.router)
@@ -515,13 +490,13 @@ def build_app() -> FastAPI:
     app.include_router(_audit_routes.router)
     app.include_router(_vfs_routes.router)
     app.include_router(_preview_routes.router)
+    app.include_router(_resource_access_routes.router)
     app.include_router(_storage_routes.router)
     app.include_router(_envs_routes.router)
     app.include_router(_browser_routes.router)
     app.include_router(_agent_runtime_routes.router)
     app.include_router(_runtime_mcp_broker_routes.router)
     app.include_router(_runtime_model_broker_routes.router)
-    app.include_router(_execution_plan_routes.router)
     app.include_router(_enterprise_identity_routes.router)
     app.include_router(_scim_routes.router)
 
@@ -542,14 +517,6 @@ def build_app() -> FastAPI:
     route_permission_manifest(app)
 
     return app
-
-
-async def _stop_execution_plan_scheduler(scheduler, task: asyncio.Task) -> None:
-    await scheduler.shutdown()
-    if not task.done():
-        task.cancel()
-    with contextlib.suppress(BaseException):
-        await task
 
 
 async def _stop_sandbox_runtime(

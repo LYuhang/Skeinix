@@ -478,7 +478,7 @@ describe('ChatMessageList', () => {
     expect(screen.getByText('Send a message to start the conversation.')).toBeInTheDocument();
   });
 
-  it('renders assistant text and tool activity as separate blocks, not nested bubbles', () => {
+  it('renders assistant text as a plain content rail, separate from tool activity', () => {
     sessionsMock.mockReturnValue({
       data: { items: [{ chat_id: 'c1', chat_context: 'Build' }] },
       isLoading: false,
@@ -503,16 +503,21 @@ describe('ChatMessageList', () => {
     });
     const { container } = render(<ChatMessageList wfId="wf" activeChatId="c1" />);
 
-    const assistantBubble = container.querySelector('[data-message-role="assistant"]');
-    expect(assistantBubble).toHaveTextContent('I will update it.');
-    expect(assistantBubble?.querySelector('[data-action="tool-activity-toggle"]')).toBeNull();
+    const assistantResponse = container.querySelector('[data-message-surface="plain"]');
+    expect(assistantResponse).toHaveTextContent('I will update it.');
+    expect(assistantResponse).not.toHaveClass(
+      'rounded-2xl',
+      'border',
+      'bg-surface-sunken/70',
+    );
+    expect(assistantResponse?.querySelector('[data-action="tool-activity-toggle"]')).toBeNull();
     expect(container.querySelector('[data-tool-activity="true"] [data-action="tool-activity-toggle"]')).toBeInTheDocument();
 
     const rails = Array.from(
       container.querySelectorAll<HTMLElement>('[data-message-content-rail="assistant"]'),
     );
     expect(rails).toHaveLength(2);
-    // Text bubbles and tool activity use one 36px avatar rail and one 12px
+    // Text responses and tool activity use one 36px avatar rail and one 12px
     // gutter, so their content begins on exactly the same visual axis.
     for (const rail of rails) {
       const row = rail.parentElement;
@@ -547,105 +552,6 @@ describe('ChatMessageList', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toHaveTextContent('Running tools');
     expect(groups[0].querySelector('.animate-spin')).toBeInTheDocument();
-  });
-
-  it('keeps a completed diagram inline until the user chooses its preview action', async () => {
-    historyMock.mockReturnValue({ data: { items: [] }, isLoading: false });
-    const onOpenFilePreview = vi.fn();
-    const stream = useChatStreamStore.getState();
-    stream.beginTurn('c1', 'turn-diagram');
-    stream.applyEvent({
-      type: 'tool_start',
-      message_id: 'toolmsg:present-1',
-      tool_call_id: 'present-1',
-      name: 'present_diagram',
-      arguments: '{}',
-    }, 'c1');
-    const { rerender } = render(
-      <ChatMessageList
-        wfId="wf"
-        activeChatId="c1"
-        onOpenFilePreview={onOpenFilePreview}
-      />,
-      { wrapper: ChatQueryWrapper },
-    );
-
-    expect(screen.getByRole('button', { name: /present_diagram/i }))
-      .toHaveAttribute('aria-expanded', 'false');
-    act(() => stream.applyEvent({
-      type: 'tool_end',
-      tool_call_id: 'present-1',
-      content: JSON.stringify([{
-        type: 'text',
-        text: JSON.stringify({
-          status: 'presented',
-          preview_ref: {
-            fileRef: { path: '/data/diagrams/system.vdiagram.json' },
-          },
-        }),
-      }]),
-      status: 'done',
-    }, 'c1'));
-
-    await waitFor(() => expect(screen.getByTestId('diagram-presentation')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /open in preview/i })).toBeInTheDocument();
-    rerender(
-      <ChatMessageList
-        wfId="wf"
-        activeChatId="c1"
-        compact
-        onOpenFilePreview={onOpenFilePreview}
-      />,
-    );
-    expect(screen.queryByRole('button', { name: /open in preview/i })).not.toBeInTheDocument();
-    expect(onOpenFilePreview).not.toHaveBeenCalled();
-    act(() => stream.setState('complete', 'c1'));
-    expect(onOpenFilePreview).not.toHaveBeenCalled();
-  });
-
-  it('does not auto-open a persisted diagram presentation', async () => {
-    sessionsMock.mockReturnValue({
-      data: { items: [{ chat_id: 'c1', chat_context: 'Diagram' }] },
-      isLoading: false,
-    });
-    historyMock.mockReturnValue({
-      data: {
-        items: [
-          {
-            role: 'assistant',
-            content: '',
-            tool_calls: [{ id: 'present-history', name: 'present_diagram', arguments: '{}' }],
-          },
-          {
-            role: 'tool',
-            tool_call_id: 'present-history',
-            content: JSON.stringify([{
-              type: 'text',
-              text: JSON.stringify({
-                preview_ref: {
-                  fileRef: { path: '/data/diagrams/history.vdiagram.json' },
-                },
-              }),
-            }]),
-            artifact: { status: 'success' },
-          },
-        ],
-      },
-      isLoading: false,
-    });
-    const onOpenFilePreview = vi.fn();
-
-    render(
-      <ChatMessageList
-        wfId="wf"
-        activeChatId="c1"
-        onOpenFilePreview={onOpenFilePreview}
-      />,
-      { wrapper: ChatQueryWrapper },
-    );
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(onOpenFilePreview).not.toHaveBeenCalled();
   });
 
   it('keeps following tool calls in the same block when the first tool-call message has assistant text', () => {

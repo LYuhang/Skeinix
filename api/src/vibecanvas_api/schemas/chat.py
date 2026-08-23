@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-import math
 import uuid
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from vibecanvas_api.schemas.access import ResourceAccessOut
-from vibecanvas_api.diagrams.limits import MAX_CANVAS_EXTENT
 
 
 class ChatListItem(BaseModel):
@@ -110,50 +108,6 @@ class ChatStateOut(BaseModel):
     active_modes: list[str] = Field(default_factory=list)
     mcp_server_ids: list[str] = Field(default_factory=list)
     mcp_config_revision: int = Field(default=0, ge=0)
-
-
-class DiagramViewportBounds(BaseModel):
-    x: float = Field(ge=-MAX_CANVAS_EXTENT, le=MAX_CANVAS_EXTENT)
-    y: float = Field(ge=-MAX_CANVAS_EXTENT, le=MAX_CANVAS_EXTENT)
-    width: float = Field(gt=0, le=MAX_CANVAS_EXTENT)
-    height: float = Field(gt=0, le=MAX_CANVAS_EXTENT)
-
-    @model_validator(mode="after")
-    def finite_values(self) -> "DiagramViewportBounds":
-        if not all(math.isfinite(value) for value in (
-            self.x, self.y, self.width, self.height,
-        )):
-            raise ValueError("viewport bounds must be finite")
-        return self
-
-
-class ActiveDiagramViewUpdate(BaseModel):
-    """Optimistic Preview context update for one exact presented revision."""
-
-    path: str = Field(
-        min_length=1,
-        max_length=512,
-        pattern=r"^/data/diagrams/[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.vdiagram\.json$",
-    )
-    revision: str = Field(min_length=1, max_length=160)
-    source_hash: str = Field(min_length=1, max_length=160)
-    selected_element_ids: list[str] = Field(default_factory=list, max_length=100)
-    viewport_bounds: DiagramViewportBounds | None = None
-
-    @field_validator("selected_element_ids")
-    @classmethod
-    def valid_unique_element_ids(cls, value: list[str]) -> list[str]:
-        if len(value) != len(set(value)):
-            raise ValueError("selected element IDs must be unique")
-        for element_id in value:
-            if not element_id or len(element_id) > 96:
-                raise ValueError("selected element ID length is invalid")
-            if not all(
-                char.isascii() and (char.isalnum() or char in "_.:-")
-                for char in element_id
-            ) or not element_id[0].isalpha():
-                raise ValueError("selected element ID has an invalid format")
-        return value
 
 
 class Attachment(BaseModel):
@@ -297,8 +251,8 @@ class MessagePostBody(BaseModel):
     # resolve to the same durable Agent Run instead of duplicating the message.
     client_request_id: str | None = None
     attachments: list[Attachment] = Field(default_factory=list)
-    # Browser mode adds the extension-backed toolset. Workflow construction and
-    # dynamic plans use the ordinary command registry (`/build` and `/plan`).
+    # Browser mode adds the extension-backed toolset. Workflow construction
+    # uses the ordinary command registry (`/workflow`).
     mode: Literal["chat", "browser"] = "chat"
     # Reserved per-turn authorization policy. The UI currently omits this
     # control and defaults pre-tool execution to automatic approval; the enum

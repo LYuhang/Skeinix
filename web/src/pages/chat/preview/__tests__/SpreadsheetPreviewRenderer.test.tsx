@@ -4,15 +4,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PreviewDescriptorV1 } from '@/lib/preview/protocol';
 import { SpreadsheetPreviewRenderer } from '../SpreadsheetPreviewRenderer';
-import { workbookCellDisplayText } from '../spreadsheet-cell-text';
 
+const nativeViewerProps = vi.hoisted(() => vi.fn());
+
+vi.mock('@file-viewer/react', () => ({
+  default: (props: Record<string, unknown>) => {
+    nativeViewerProps(props);
+    return <div data-testid="native-file-viewer">Native workbook</div>;
+  },
+}));
+vi.mock('@file-viewer/renderer-spreadsheet', () => ({
+  spreadsheetRenderer: { name: 'spreadsheet' },
+}));
+vi.mock('next-themes', () => ({
+  useTheme: () => ({ resolvedTheme: 'light' }),
+}));
 vi.mock('ag-grid-community', () => ({
   AllCommunityModule: {},
   ModuleRegistry: { registerModules: vi.fn() },
   themeQuartz: {},
 }));
 vi.mock('ag-grid-react', () => ({
-  AgGridReact: () => null,
+  AgGridReact: () => <div data-testid="structured-data-grid" />,
 }));
 
 const descriptor: PreviewDescriptorV1 = {
@@ -30,7 +43,7 @@ const descriptor: PreviewDescriptorV1 = {
   revision: 'sha256:pending',
   renderer: 'spreadsheet',
   loadPolicy: 'stream',
-  capabilities: { preview: true, edit: true, download: true },
+  capabilities: { preview: true, edit: false, download: true },
   content: {
     url: '/api/v1/previews/content/pending.csv',
     truncated: false,
@@ -40,21 +53,70 @@ const descriptor: PreviewDescriptorV1 = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  nativeViewerProps.mockReset();
 });
 
 describe('SpreadsheetPreviewRenderer lifecycle', () => {
-  it('shows a formula when the workbook has no cached calculation result', () => {
-    expect(workbookCellDisplayText({
-      text: '',
-      value: { formula: 'SUM(B5:B10)' },
-    })).toBe('=SUM(B5:B10)');
-  });
+  it('opens native workbooks in one style-preserving spreadsheet viewer', async () => {
+    const view = render(
+      <SpreadsheetPreviewRenderer
+        descriptor={{
+          ...descriptor,
+          name: 'board.xlsx',
+          fileRef: {
+            schemaVersion: 1,
+            scope: 'chat',
+            chatId: 'chat-1',
+            path: '/data/board.xlsx',
+          },
+          detectedType: 'spreadsheet',
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          rendition: null,
+        }}
+        loadAllowed
+        onDirtyChange={() => undefined}
+      />,
+    );
 
-  it('prefers a cached formula result when ExcelJS exposes one as text', () => {
-    expect(workbookCellDisplayText({
-      text: '$2,192,850.00',
-      value: { formula: 'SUM(E5:E10)', result: 2192850 },
-    })).toBe('$2,192,850.00');
+    expect(await screen.findByTestId('native-file-viewer')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Formatted view' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Data view' })).not.toBeInTheDocument();
+    expect(nativeViewerProps).toHaveBeenCalledWith(expect.objectContaining({
+      url: '/api/v1/previews/content/pending.csv',
+      name: 'board.xlsx',
+      type: 'xlsx',
+      options: expect.objectContaining({
+        rendererMode: 'replace',
+        toolbar: expect.objectContaining({ download: false }),
+        spreadsheet: expect.objectContaining({
+          resizableColumns: true,
+          resizableRows: true,
+        }),
+      }),
+    }));
+    const firstProps = nativeViewerProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    view.rerender(
+      <SpreadsheetPreviewRenderer
+        descriptor={{
+          ...descriptor,
+          name: 'board.xlsx',
+          fileRef: {
+            schemaVersion: 1,
+            scope: 'chat',
+            chatId: 'chat-1',
+            path: '/data/board.xlsx',
+          },
+          detectedType: 'spreadsheet',
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          rendition: null,
+        }}
+        loadAllowed
+        onDirtyChange={() => undefined}
+      />,
+    );
+    const rerenderedProps = nativeViewerProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(rerenderedProps.onStateChange).toBe(firstProps.onStateChange);
+    expect(rerenderedProps.options).toBe(firstProps.options);
   });
 
   it('keeps structured text tables read-only even if a stale descriptor advertises edit', async () => {
@@ -70,15 +132,16 @@ describe('SpreadsheetPreviewRenderer lifecycle', () => {
           },
         }}
         loadAllowed
-        onDirtyChange={vi.fn()}
+        onDirtyChange={() => undefined}
       />,
     );
 
     expect(await screen.findByText('Read only')).toBeInTheDocument();
+    expect(screen.getByTestId('structured-data-grid')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   });
 
-  it('aborts an in-flight file read when its Preview tab is closed', async () => {
+  it('aborts an in-flight structured-table read when its Preview tab is closed', async () => {
     let requestSignal: AbortSignal | undefined;
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       requestSignal = init?.signal ?? undefined;
@@ -103,7 +166,7 @@ describe('SpreadsheetPreviewRenderer lifecycle', () => {
         <SpreadsheetPreviewRenderer
           descriptor={descriptor}
           loadAllowed
-          onDirtyChange={vi.fn()}
+          onDirtyChange={() => undefined}
         />
       </QueryClientProvider>,
     );
@@ -114,5 +177,38 @@ describe('SpreadsheetPreviewRenderer lifecycle', () => {
     view.unmount();
 
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('does not reload an unchanged structured table when its parent rerenders', async () => {
+    const fetchMock = vi.fn(async () => new Response('name,value\nalpha,1\n'));
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(
+      <SpreadsheetPreviewRenderer
+        descriptor={descriptor}
+        loadAllowed
+        onDirtyChange={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await screen.findByText('Read only');
+
+    view.rerender(
+      <SpreadsheetPreviewRenderer
+        descriptor={{
+          ...descriptor,
+          fileRef: { ...descriptor.fileRef },
+          content: {
+            inlineText: descriptor.content?.inlineText,
+            url: descriptor.content?.url,
+            truncated: descriptor.content?.truncated ?? false,
+            rangeSupported: descriptor.content?.rangeSupported ?? false,
+          },
+        }}
+        loadAllowed
+        onDirtyChange={() => undefined}
+      />,
+    );
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

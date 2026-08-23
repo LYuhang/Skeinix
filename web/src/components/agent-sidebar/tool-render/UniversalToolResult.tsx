@@ -2,6 +2,7 @@ import { ExternalLink, FileText, Image as ImageIcon, Network } from 'lucide-reac
 import { Button } from '@/components/ui/button';
 import { JsonTree } from './JsonTree';
 import { CopyButton } from './CopyButton';
+import i18n from '@/lib/i18n';
 import {
   diagramPreviewPathFromStandardResult,
   type StandardContentBlock,
@@ -30,20 +31,20 @@ function ContentBlock({ block }: { block: StandardContentBlock }) {
   }
   if (block.type === 'image' && block.data && block.mimeType?.startsWith('image/')) {
     if (block.data.length > MAX_INLINE_IMAGE_BASE64_CHARS) {
-      return <div className="rounded-md border border-edge-subtle bg-surface-sunken p-3 text-xs text-content-tertiary">Image output is too large to render inline.</div>;
+      return <div className="rounded-md border border-edge-subtle bg-surface-sunken p-3 text-xs text-content-tertiary">{i18n.t('tool.result.imageTooLarge', 'Image output is too large to render inline.')}</div>;
     }
     return <div className="rounded-md border border-edge-subtle bg-surface-sunken p-2"><div className="mb-2 flex items-center gap-1.5 text-xs text-content-tertiary"><ImageIcon className="h-3.5 w-3.5" />{block.mimeType}</div><img className="max-h-80 max-w-full rounded object-contain" src={`data:${block.mimeType};base64,${block.data}`} alt={block.name || 'Tool output'} /></div>;
   }
   if (block.type === 'resource_link' && block.uri) {
     const href = safeExternalUri(block.uri);
-    if (!href) return <div className="rounded-md border border-edge-subtle px-3 py-2 text-xs text-content-tertiary">Blocked unsafe resource link</div>;
+    if (!href) return <div className="rounded-md border border-edge-subtle px-3 py-2 text-xs text-content-tertiary">{i18n.t('tool.result.unsafeLinkBlocked', 'Blocked unsafe resource link')}</div>;
     return <a href={href} target="_blank" rel="noreferrer" className="flex min-h-10 items-center gap-2 rounded-md border border-edge-subtle px-3 text-xs text-state-info hover:bg-surface-hover"><ExternalLink className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{block.name || block.uri}</span></a>;
   }
   if (block.type === 'resource' && block.resource) {
     return <div className="rounded-md border border-edge-subtle"><div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 text-xs text-content-tertiary"><FileText className="h-3.5 w-3.5" /><span className="truncate">{block.resource.uri || block.resource.mimeType || 'Resource'}</span></div><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-5">{block.resource.text ? boundedText(block.resource.text) : '(binary resource)'}</pre></div>;
   }
   const raw = JSON.stringify(block, null, 2);
-  return <div className="relative"><pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-surface-sunken p-2.5 font-mono text-xs">{raw}</pre><div className="absolute right-1 top-1"><CopyButton value={raw} label="Copy raw JSON" /></div></div>;
+  return <div className="relative"><pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-surface-sunken p-2.5 font-mono text-xs">{raw}</pre><div className="absolute right-1 top-1"><CopyButton value={raw} label={i18n.t('tool.result.copyRawJson', 'Copy raw JSON')} /></div></div>;
 }
 
 export function UniversalToolResult({
@@ -61,7 +62,7 @@ export function UniversalToolResult({
       {previewPath && onOpenFile ? (
         <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => onOpenFile(previewPath)}>
           <Network className="mr-2 h-3.5 w-3.5" />
-          Open diagram
+          {i18n.t('tool.result.openDiagram', 'Open diagram')}
         </Button>
       ) : null}
       {value.structuredContent !== undefined ? (

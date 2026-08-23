@@ -1,10 +1,5 @@
 import type { MergedMessage, MergedToolCall } from '@/components/agent-sidebar/types';
 import { parseEnvelope } from '@/components/agent-sidebar/tool-render/parseEnvelope';
-import {
-  diagramPreviewPathFromStandardResult,
-  parseStandardToolResult,
-} from '@/components/agent-sidebar/tool-render/parseStandardToolResult';
-import { isTrustedToolPresentation } from '@/components/agent-sidebar/tool-render/presenterRegistry';
 
 function isObject(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -65,24 +60,15 @@ export function isInteractiveArtifactCall(call: MergedToolCall): boolean {
     || hasInteractiveProjection(parseEnvelope(call.result)?.output?.data);
 }
 
-export function isDiagramPresentationCall(call: MergedToolCall): boolean {
-  return call.name === 'present_diagram'
-    && call.status === 'done'
-    && isTrustedToolPresentation(call)
-    && diagramPreviewPathFromStandardResult(parseStandardToolResult(call.result)) !== null;
-}
-
 export type RenderItem =
   | { kind: 'message'; message: MergedMessage; index: number; showAvatar: boolean }
   | { kind: 'tool_group'; calls: MergedToolCall[]; startIndex: number; endIndex: number; showAvatar: boolean }
-  | { kind: 'interactive_artifact'; call: MergedToolCall; index: number; showAvatar: boolean }
-  | { kind: 'diagram_presentation'; call: MergedToolCall; index: number; showAvatar: boolean };
+  | { kind: 'interactive_artifact'; call: MergedToolCall; index: number; showAvatar: boolean };
 
 type RenderItemWithoutAvatar =
   | { kind: 'message'; message: MergedMessage; index: number }
   | { kind: 'tool_group'; calls: MergedToolCall[]; startIndex: number; endIndex: number }
-  | { kind: 'interactive_artifact'; call: MergedToolCall; index: number }
-  | { kind: 'diagram_presentation'; call: MergedToolCall; index: number };
+  | { kind: 'interactive_artifact'; call: MergedToolCall; index: number };
 
 export function groupToolActivity(messages: MergedMessage[]): RenderItem[] {
   const items: RenderItemWithoutAvatar[] = [];
@@ -123,11 +109,6 @@ export function groupToolActivity(messages: MergedMessage[]): RenderItem[] {
     }
 
     for (const call of message.tool_calls) {
-      if (isDiagramPresentationCall(call)) {
-        flushTools();
-        items.push({ kind: 'diagram_presentation', call, index: i });
-        continue;
-      }
       if (isInteractiveArtifactCall(call)) {
         flushTools();
         items.push({ kind: 'interactive_artifact', call, index: i });
@@ -144,7 +125,7 @@ export function groupToolActivity(messages: MergedMessage[]): RenderItem[] {
 
 function withAgentAvatars(items: RenderItemWithoutAvatar[]): RenderItem[] {
   const out: RenderItem[] = [];
-  let previousAgentKind: 'message' | 'tool_group' | 'interactive_artifact' | 'diagram_presentation' | null = null;
+  let previousAgentKind: 'message' | 'tool_group' | 'interactive_artifact' | null = null;
   let groupStartedWithLeadingTools = false;
   for (const item of items) {
     if (item.kind === 'message' && item.message.role === 'user') {
@@ -157,7 +138,6 @@ function withAgentAvatars(items: RenderItemWithoutAvatar[]): RenderItem[] {
     if (
       item.kind === 'tool_group'
       || item.kind === 'interactive_artifact'
-      || item.kind === 'diagram_presentation'
     ) {
       const showAvatar = previousAgentKind === null;
       if (showAvatar) groupStartedWithLeadingTools = true;
@@ -170,7 +150,6 @@ function withAgentAvatars(items: RenderItemWithoutAvatar[]): RenderItem[] {
       (
         previousAgentKind === 'tool_group'
         || previousAgentKind === 'interactive_artifact'
-        || previousAgentKind === 'diagram_presentation'
       ) &&
       groupStartedWithLeadingTools;
     const showAvatar = !continuesLeadingToolGroup;

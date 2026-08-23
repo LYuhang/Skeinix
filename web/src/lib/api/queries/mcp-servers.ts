@@ -21,7 +21,6 @@ import {
   getMcpServer,
   installMcpCatalogItem,
   listMcpServers,
-  listPlatformMcpServices,
   resolveMcpCatalogItem,
   refreshMcpServer,
   searchMcpCatalog,
@@ -41,13 +40,6 @@ export const useMcpServers = (opts?: { enabled?: boolean }) =>
     queryKey: LIST_KEY,
     queryFn: () => listMcpServers(),
     enabled: opts?.enabled ?? true,
-  });
-
-export const usePlatformMcpServices = () =>
-  useQuery({
-    queryKey: ['mcp-servers', 'platform'] as const,
-    queryFn: listPlatformMcpServices,
-    staleTime: Number.POSITIVE_INFINITY,
   });
 
 export const useMcpCatalog = (

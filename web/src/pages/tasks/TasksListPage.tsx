@@ -2,16 +2,19 @@ import { lazy, Suspense, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { toast } from 'sonner';
 import {
   CalendarClock,
   ChevronDown,
   Download,
+  ListFilter,
   MoreHorizontal,
   Play,
   RefreshCw,
   Search,
   Share2,
+  X,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -25,8 +28,10 @@ import {
 } from '@/components/ui/dialog';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -62,12 +67,21 @@ import { useWorkflow } from '@/lib/api/queries/workflow';
 import { getStartNodeFields } from '@/lib/workflow/start-node';
 import { useFormatDateTime } from '@/lib/timezone';
 import { TIMEZONE_GROUPS } from '@/lib/timezone-list';
-import { ManagementPageShell } from '@/components/layout/management-page-shell';
+import { ManagementPageShell, ManagementToolbar } from '@/components/layout/management-page-shell';
+import { OperationalSummary } from '@/components/layout/operational-summary';
 import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
 import { ProgressState, StatusBadge, StatusDot, type SemanticStatus } from '@/components/ui/status';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { AsyncState } from '@/components/ui/async-state';
 import { ResourceIcon } from '@/components/presentation/ResourceIcon';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
+import { describeCronExpression, scheduleLocale } from '@/lib/cron-description';
+import { SharedResourceList } from '@/components/resources/SharedResourceList';
+import {
+  ResourceScopeSwitch,
+  type ResourceListScope,
+} from '@/components/resources/ResourceScopeSwitch';
 
 const PAGE_SIZE = 25;
 const TASK_LIST_REFETCH_ACTIVE_MS = 2_000;
@@ -156,16 +170,24 @@ function visibleTaskStatus(status: TaskStatus): TaskStatus {
     : status;
 }
 
-function formatScheduleProgress(task: Task, formatTime: (value?: string | null) => string): string {
+function formatScheduleProgress(
+  task: Task,
+  formatTime: (value?: string | null) => string,
+  t: TFunction,
+): string {
   const payload = task.payload && typeof task.payload === 'object'
     ? task.payload as Record<string, unknown>
     : {};
   const next = typeof payload.next_run_at === 'string' ? payload.next_run_at : null;
   const last = typeof payload.last_status === 'string' ? payload.last_status : null;
-  if (task.status === 'paused') return 'Paused';
-  if (task.status === 'running') return last ? `Running · last ${last}` : 'Running';
-  if (next) return `Next: ${formatTime(next)}`;
-  return 'No next run';
+  if (task.status === 'paused') return t('tasks.scheduleProgress.paused', 'Paused');
+  if (task.status === 'running') {
+    return last
+      ? t('tasks.scheduleProgress.runningWithLast', 'Running · last {{status}}', { status: last })
+      : t('tasks.scheduleProgress.running', 'Running');
+  }
+  if (next) return t('tasks.scheduleProgress.next', 'Next: {{time}}', { time: formatTime(next) });
+  return t('tasks.scheduleProgress.none', 'No next run');
 }
 
 function tabStatusOptions(type: TaskType): TaskStatus[] {
@@ -190,14 +212,16 @@ function sandboxSemanticStatus(status?: TaskSandboxStatus | null): SemanticStatu
   }
 }
 
-function taskName(task: Task): string {
+function taskName(task: Task, t: TFunction): string {
   const payload = task.payload && typeof task.payload === 'object'
     ? (task.payload as Record<string, unknown>)
     : {};
-  return (
-    (typeof payload.name === 'string' && payload.name) ||
-    (task.task_type === 'scheduled_run' ? 'Scheduled run' : 'Batch execution')
-  );
+  const configuredName = typeof payload.name === 'string' ? payload.name.trim() : '';
+  const isLegacyDefault = configuredName === 'Scheduled run' || configuredName === 'Batch execution';
+  if (configuredName && !isLegacyDefault) return configuredName;
+  return task.task_type === 'scheduled_run'
+    ? t('tasks.type.scheduled_run', 'Scheduled run')
+    : t('tasks.type.batch_exec', 'Batch run');
 }
 
 function workflowOptions(
@@ -223,28 +247,6 @@ function duration(task: Task): string {
   const rest = seconds % 60;
   if (minutes < 60) return `${minutes}m ${rest}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function SummaryCard({
-  label,
-  value,
-  tone,
-  hint,
-}: {
-  label: string;
-  value: number;
-  tone: string;
-  hint: string;
-}) {
-  return (
-    <div className="border-l border-edge-structural px-4 py-2 first:border-l-0">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>
-        {value}
-      </div>
-      <div className="mt-1 text-xs leading-4 text-muted-foreground">{hint}</div>
-    </div>
-  );
 }
 
 function BatchTaskCreatePanel({
@@ -458,7 +460,7 @@ function ScheduledRunCreatePanel({
   onCancel: () => void;
   onCreated: (taskId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const workflowsQuery = useWorkspaceList(200, 0);
   const workflows = useMemo(() => workflowsQuery.data?.items ?? [], [workflowsQuery.data?.items]);
   const workflowSelectOptions = useMemo(() => workflowOptions(workflows), [workflows]);
@@ -635,6 +637,11 @@ function ScheduledRunCreatePanel({
                   <label className="grid gap-1.5 text-xs text-muted-foreground">
                     {t('tasks.scheduled.cronExpression', 'Cron expression')}
                     <Input className="font-mono" value={customCron} onChange={(event) => setCustomCron(event.target.value)} placeholder="0 9 * * *" />
+                    <span>
+                      {t('tasks.scheduled.schedulePreview', 'Schedule preview: {{schedule}}', {
+                        schedule: describeCronExpression(customCron, scheduleLocale(i18n.resolvedLanguage)).text,
+                      })}
+                    </span>
                   </label>
                 ) : (
                   <>
@@ -829,6 +836,9 @@ export function TasksListPage() {
   const formatTime = useFormatDateTime();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const resourceScope: ResourceListScope = searchParams.get('scope') === 'shared'
+    ? 'shared'
+    : 'owned';
   const activeType: TaskType = searchParams.get('type') === 'scheduled_run'
     ? 'scheduled_run'
     : 'batch_exec';
@@ -884,6 +894,7 @@ export function TasksListPage() {
       return hasActiveTask ? TASK_LIST_REFETCH_ACTIVE_MS : TASK_LIST_REFETCH_IDLE_MS;
     },
     refetchOnWindowFocus: false,
+    enabled: resourceScope === 'owned',
   });
 
   const summaryQuery = useQuery({
@@ -894,6 +905,7 @@ export function TasksListPage() {
       return (data?.active ?? 0) > 0 ? TASK_LIST_REFETCH_ACTIVE_MS : TASK_LIST_REFETCH_IDLE_MS;
     },
     refetchOnWindowFocus: false,
+    enabled: resourceScope === 'owned',
   });
 
   const cancelMutation = useMutation({
@@ -950,6 +962,35 @@ export function TasksListPage() {
     setActiveType(type);
   };
   const statusOptions = tabStatusOptions(activeType);
+  const setResourceScope = (value: ResourceListScope) => updateListParams({
+    scope: value === 'shared' ? 'shared' : null,
+    type: null,
+    status: null,
+    offset: null,
+  });
+
+  if (resourceScope === 'shared') {
+    return (
+      <ManagementPageShell
+        resourceKind="task"
+        className="gap-5"
+        title={t('tasks.title', 'Task')}
+        description={t('tasks.subtitle', 'Batch and scheduled workflow runs')}
+      >
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
+        <div className="relative min-w-[240px] sm:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            value={queryText}
+            onChange={(event) => setQueryText(event.target.value)}
+            placeholder={t('tasks.searchShared', 'Search shared tasks')}
+            className="pl-9"
+          />
+        </div>
+        <SharedResourceList resourceType="task" search={queryText} />
+      </ManagementPageShell>
+    );
+  }
 
   return (
     <>
@@ -1004,6 +1045,8 @@ export function TasksListPage() {
           </>}
       >
 
+        <ResourceScopeSwitch value={resourceScope} onValueChange={setResourceScope} />
+
         {createMode === 'batch_exec' && (
           <BatchTaskCreatePanel
             onCancel={() => setCreateMode(null)}
@@ -1049,65 +1092,24 @@ export function TasksListPage() {
           </Tabs>
         </div>
 
-        <div className="grid rounded-lg border border-edge-subtle bg-surface-sunken/30 py-2 md:grid-cols-4">
-          {activeType === 'scheduled_run' ? (
-            <>
-              <SummaryCard
-                label={t('tasks.summary.enabled', 'Enabled')}
-                value={summary?.enabled ?? 0}
-                tone="text-state-success"
-                hint={t('tasks.summaryHint.enabled', 'Schedules that will trigger future runs.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.paused', 'Paused')}
-                value={summary?.paused ?? 0}
-                tone="text-content-secondary"
-                hint={t('tasks.summaryHint.paused', 'Schedules stopped by the user.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.running', 'Running')}
-                value={(summary?.running ?? 0) + (summary?.resuming ?? 0)}
-                tone="text-state-running"
-                hint={t('tasks.summaryHint.scheduledRunning', 'Scheduled runs currently executing.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.failed', 'Failed')}
-                value={summary?.failed ?? 0}
-                tone="text-state-danger"
-                hint={t('tasks.summaryHint.scheduledFailed', 'Schedules whose latest state needs attention.')}
-              />
-            </>
-          ) : (
-            <>
-              <SummaryCard
-                label={t('tasks.summary.running', 'Running')}
-                value={(summary?.running ?? 0) + (summary?.resuming ?? 0)}
-                tone="text-state-running"
-                hint={t('tasks.summaryHint.batchRunning', 'Batch jobs actively processing rows.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.queued', 'Queued')}
-                value={summary?.queued ?? 0}
-                tone="text-content-secondary"
-                hint={t('tasks.summaryHint.queued', 'Batch jobs waiting for worker capacity.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.failed', 'Failed')}
-                value={summary?.failed ?? 0}
-                tone="text-state-danger"
-                hint={t('tasks.summaryHint.batchFailed', 'Batch jobs that stopped with errors.')}
-              />
-              <SummaryCard
-                label={t('tasks.summary.finished', 'Finished')}
-                value={summary?.finished ?? 0}
-                tone="text-state-success"
-                hint={t('tasks.summaryHint.finished', 'Batch jobs completed successfully.')}
-              />
-            </>
-          )}
-        </div>
+        <OperationalSummary
+          label={t('tasks.summary.label', 'Task status summary')}
+          items={activeType === 'scheduled_run'
+            ? [
+                { label: t('tasks.summary.enabled', 'Enabled'), value: summary?.enabled ?? 0, tone: 'success', hint: t('tasks.summaryHint.enabled', 'Schedules that will trigger future runs.') },
+                { label: t('tasks.summary.paused', 'Paused'), value: summary?.paused ?? 0, tone: 'neutral', hint: t('tasks.summaryHint.paused', 'Schedules stopped by the user.') },
+                { label: t('tasks.summary.running', 'Running'), value: (summary?.running ?? 0) + (summary?.resuming ?? 0), tone: 'info', hint: t('tasks.summaryHint.scheduledRunning', 'Scheduled runs currently executing.') },
+                { label: t('tasks.summary.failed', 'Failed'), value: summary?.failed ?? 0, tone: 'danger', hint: t('tasks.summaryHint.scheduledFailed', 'Schedules whose latest state needs attention.') },
+              ]
+            : [
+                { label: t('tasks.summary.running', 'Running'), value: (summary?.running ?? 0) + (summary?.resuming ?? 0), tone: 'info', hint: t('tasks.summaryHint.batchRunning', 'Batch jobs actively processing rows.') },
+                { label: t('tasks.summary.queued', 'Queued'), value: summary?.queued ?? 0, tone: 'neutral', hint: t('tasks.summaryHint.queued', 'Batch jobs waiting for worker capacity.') },
+                { label: t('tasks.summary.failed', 'Failed'), value: summary?.failed ?? 0, tone: 'danger', hint: t('tasks.summaryHint.batchFailed', 'Batch jobs that stopped with errors.') },
+                { label: t('tasks.summary.finished', 'Finished'), value: summary?.finished ?? 0, tone: 'success', hint: t('tasks.summaryHint.finished', 'Batch jobs completed successfully.') },
+              ]}
+        />
 
-        <section className="rounded-lg border border-edge-structural bg-surface-work p-3">
+        <ManagementToolbar className="flex-col items-stretch rounded-lg border-x border-edge-structural bg-surface-work">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <form
               className="relative w-full lg:max-w-sm"
@@ -1127,31 +1129,69 @@ export function TasksListPage() {
               />
             </form>
             <div className="flex flex-wrap items-center gap-2">
-              {statusOptions.map((status) => {
-                const active = statusFilter.includes(status);
-                return (
-                  <button
-                    key={status}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
                     type="button"
-                    onClick={() => toggleStatus(status)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                      active
-                        ? 'border-focus bg-focus text-white'
-                        : 'border-edge-structural bg-surface-raised text-muted-foreground hover:bg-surface-hover'
-                    }`}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    aria-label={t('tasks.filters.status', 'Filter by status')}
                   >
-                    {t(`tasks.status.${status}`, status)}
-                  </button>
-                );
-              })}
+                    <ListFilter className="size-4" aria-hidden="true" />
+                    {t('tasks.filters.statusLabel', 'Status')}
+                    {statusFilter.length > 0 ? (
+                      <span className="rounded-full bg-focus/10 px-1.5 text-xs font-semibold tabular-nums text-focus">
+                        {statusFilter.length}
+                      </span>
+                    ) : null}
+                    <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>{t('tasks.filters.statusLabel', 'Status')}</DropdownMenuLabel>
+                  {statusOptions.map((status) => (
+                    <DropdownMenuCheckboxItem
+                      key={status}
+                      checked={statusFilter.includes(status)}
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={() => toggleStatus(status)}
+                    >
+                      {t(`tasks.status.${status}`, status)}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  {statusFilter.length > 0 ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => setStatusFilter([])}>
+                        {t('tasks.filters.clear', 'Clear status filters')}
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
-        </section>
+          {statusFilter.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5" aria-label={t('tasks.filters.selected', 'Selected status filters')}>
+              {statusFilter.map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => toggleStatus(status)}
+                  className="inline-flex h-7 items-center gap-1 rounded-full border border-focus/25 bg-focus/[0.07] px-2.5 text-xs font-medium text-focus hover:bg-focus/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                  aria-label={t('tasks.filters.removeStatus', 'Remove {{status}} filter', { status: t(`tasks.status.${status}`, status) })}
+                >
+                  {t(`tasks.status.${status}`, status)}
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </ManagementToolbar>
 
         {listQuery.isLoading ? (
-          <div className="border border-edge-structural bg-surface-work p-10 text-center text-sm text-muted-foreground">
-            {t('tasks.loading', 'Loading…')}
-          </div>
+          <AsyncState kind="loading" title={t('tasks.loading', 'Loading…')} />
         ) : listQuery.isError ? (
           <ActionableError
             title={t('tasks.load_error', 'Failed to load tasks. Try again later.')}
@@ -1214,13 +1254,14 @@ export function TasksListPage() {
                             <Link
                               to={`/tasks/${task.id}`}
                               className="block truncate font-medium underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-                              title={taskName(task)}
+                              title={taskName(task, t)}
                             >
-                              {taskName(task)}
+                              {taskName(task, t)}
                             </Link>
                             <div className="font-mono text-xs text-muted-foreground">
                               {task.id.slice(0, 8)}
                             </div>
+                            <ResourceProvenanceLine provenance={task.provenance} className="mt-0.5 flex" />
                           </div>
                         </div>
                       </td>
@@ -1233,13 +1274,14 @@ export function TasksListPage() {
                       <td className="px-4 py-3">
                         {task.task_type === 'scheduled_run' ? (
                           <span className="text-xs text-muted-foreground">
-                            {formatScheduleProgress(task, formatTime)}
+                            {formatScheduleProgress(task, formatTime, t)}
                           </span>
                         ) : (
                           <ProgressState
                             className="w-32"
                             status={taskSemanticStatus(task.status)}
                             label={<span className="sr-only">{t('tasks.col.progress', 'Progress')}</span>}
+                            progressLabel={t('tasks.col.progress', 'Progress')}
                             detail={`${pct}%`}
                             value={pct}
                           />
@@ -1253,13 +1295,32 @@ export function TasksListPage() {
                       </td>
                       <td className="px-4 py-3">
                         {task.results_uri && capabilities.has('export') ? (
-                          <a
-                            href={`/api/v1/tasks/${task.id}/download`}
-                            onClick={(event) => event.stopPropagation()}
-                            className="text-xs text-primary underline-offset-4 hover:underline"
-                          >
-                            {t('taskDetail.downloadCsv', 'Download CSV')}
-                          </a>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-xs text-primary"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                {t('taskDetail.download', 'Download')}
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <a href={`/api/v1/tasks/${task.id}/download?format=csv`}>CSV</a>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <a href={`/api/v1/tasks/${task.id}/download?format=jsonl`}>JSONL</a>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <a href={`/api/v1/tasks/${task.id}/download?format=xlsx`}>Excel (.xlsx)</a>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         ) : task.error ? (
                           <span className="max-w-[180px] truncate text-xs text-state-danger" title={task.error}>
                             {task.error}
@@ -1457,7 +1518,7 @@ export function TasksListPage() {
           onOpenChange={(open) => !open && setShareTarget(null)}
           resourceKind="task"
           resourceId={shareTarget.id}
-          resourceName={taskName(shareTarget)}
+          resourceName={taskName(shareTarget, t)}
           effectiveRole={shareTarget.access?.effective_role}
           accessSource={shareTarget.access?.source}
         />

@@ -159,8 +159,8 @@
   "create_and_enter": "创建并进入",
   "create_title": "新建 Workflow",
   "current_label": "当前",
-  "custom_api_key": "API Key",
-  "custom_api_key_ph": "输入你的 API Key",
+  "custom_api_key": "API 密钥",
+  "custom_api_key_ph": "输入你的 API 密钥",
   "custom_api_url": "API URL",
   "custom_api_url_ph": "https://api.openai.com/v1",
   "custom_model_name": "模型名称",
@@ -228,8 +228,8 @@
   "filter_source_own": "我的 Workflow",
   "filter_source_shared": "分享给我的",
   "got_it": "我知道了",
-  "http_apikey_ph": "输入 API Key",
-  "http_auth_apikey": "API Key",
+  "http_apikey_ph": "输入 API 密钥",
+  "http_auth_apikey": "API 密钥",
   "http_auth_basic": "Basic Auth",
   "http_auth_bearer": "Bearer Token",
   "http_auth_none": "无",
@@ -565,13 +565,6 @@
   "organization.identity.clientAuthDescription": "修改标准 Token 端点认证方式或轮换客户端密钥。现有密钥不会被显示。",
   "organization.identity.replacementClientSecret": "新客户端密钥",
   "organization.identity.keepClientSecret": "留空将保留当前密钥。",
-  "auth_mfa_back": "返回密码登录",
-  "auth_mfa_code": "身份验证器验证码",
-  "auth_mfa_code_or_recovery": "身份验证器验证码或恢复码",
-  "auth_mfa_description": "密码验证已通过，请使用已绑定的第二因素完成登录。",
-  "auth_mfa_or": "或",
-  "auth_mfa_title": "完成两步验证",
-  "auth_mfa_verify": "验证并登录",
   "auth_logout": "登出",
   "auth_new_password_label": "新密码",
   "settings_title": "设置",
@@ -606,18 +599,18 @@
   "embed.settings.title": "侧边栏设置",
   "embed.settings.subtitle": "管理会影响当前账号浏览器对话的偏好。",
   "embed.settings.language_hint": "同时更新网页上显示的浏览器控制状态语言。",
-  "embed.settings.runtime_hint": "用于新建浏览器对话；已有对话继续使用创建时绑定的 Runtime。",
-  "embed.settings.open_runtime": "在主应用中管理 Runtime 连接",
+  "embed.settings.runtime_hint": "用于新建浏览器对话；已有对话继续使用创建时绑定的智能体运行时。",
+  "embed.settings.open_runtime": "在主应用中管理智能体运行时连接",
   "embed.tab.chat": "对话",
   "embed.tab.execution": "执行",
   "embed.tab.settings": "设置",
   "embed.tab.aria": "侧边栏区域",
   "settings_tab_account": "账号",
-  "account_subtitle": "管理不可撤销的账号操作。",
+  "account_subtitle": "管理通行密钥与账号生命周期。",
   "account_delete_title": "删除账号",
   "account_delete_desc_immediate": "账号和个人服务会立即锁定，随后开始永久删除，且无法撤销。",
   "account_delete_desc_delayed": "账号和个人服务会立即锁定；如未在登录页撤销，{{days}} 天后开始永久删除。",
-  "account_delete_organization_policy": "个人对话、工作流、任务、API 密钥、文件、凭证和 Runtime 状态会被删除。组织拥有的内容会保留，并转为“已删除用户”归属。若你是组织唯一 Owner，必须先转移所有权。",
+  "account_delete_organization_policy": "个人对话、工作流、任务、API 密钥、文件、凭证和智能体运行时状态会被删除。组织拥有的内容会保留，并转为“已删除用户”归属。若你是组织唯一所有者，必须先转移所有权。",
   "account_delete_email_label": "输入你的邮箱以确认",
   "account_delete_button": "删除账号",
   "account_delete_confirm_title": "确认删除此账号？",
@@ -723,6 +716,7 @@
   "common_create": "创建",
   "common_cancel": "取消",
   "common.cancel": "取消",
+  "common.saving": "保存中…",
   "common.previous": "上一页",
   "common.next": "下一页",
   "refresh": "刷新",
@@ -779,8 +773,8 @@
   "nav.chatHistory.deleted": "对话已删除",
   "nav.chatHistory.deleteFailed": "删除失败",
   "nav.chatHistory.browserSessionActive": "请先结束浏览器控制，再删除这个对话。",
-  "chat.runtime.pending": "Runtime 待确定",
-  "chat.runtime.current": "当前 Runtime：{{runtime}}",
+  "chat.runtime.pending": "智能体运行时待确定",
+  "chat.runtime.current": "当前智能体运行时：{{runtime}}",
   "chat.toolbar.previewShort": "预览",
   "chat.toolbar.moreShort": "更多",
   "tasks.title": "任务",
@@ -804,6 +798,8 @@
   "tasks.status.paused": "已暂停",
   "tasks.type.batch_exec": "批量执行",
   "tasks.type.scheduled_run": "定时执行",
+  "tasks.type.batch_exec.description": "对表格中的多条记录运行同一工作流，并汇总每行结果。",
+  "tasks.type.scheduled_run.description": "按照设定的周期自动运行工作流。",
   "tasks.col.status": "状态",
   "tasks.col.sandbox": "沙盒",
   "tasks.col.task": "任务",
@@ -850,11 +846,13 @@
   "tasks.summaryHint.finished": "已经成功完成的批量任务。",
   "tasks.scheduled.name": "名称",
   "tasks.scheduled.timing": "运行频率",
+  "tasks.scheduled.everySeconds": "每 {{count}} 秒",
   "tasks.scheduled.hourly": "每小时",
   "tasks.scheduled.daily": "每天",
   "tasks.scheduled.weekly": "每周",
   "tasks.scheduled.enabled": "创建后启用",
   "tasks.scheduled.timezone": "时区",
+  "tasks.scheduled.fixedInputs": "固定输入",
   "tasks.scheduled.mountUserStorage": "挂载用户存储",
   "tasks.scheduled.mountUserStorageHint": "允许每次运行访问 /mount 下的用户文件。",
   "tasks.scheduled.inputPreset": "工作流固定输入",
@@ -872,7 +870,34 @@
   "tasks.scheduled.resume": "恢复计划",
   "tasks.scheduled.paused": "计划已暂停",
   "tasks.scheduled.resumed": "计划已恢复",
+  "tasks.scheduled.configuration": "计划配置",
+  "tasks.scheduled.operationalSummary": "计划运行摘要",
+  "tasks.scheduled.executionsRecorded": "已记录的执行次数",
+  "tasks.scheduled.configurationDescription": "每次定时执行所使用的时间与工作流配置。",
+  "tasks.scheduled.nextRun": "下次运行",
+  "tasks.scheduled.lastStatus": "最近状态",
+  "tasks.scheduled.runHistory": "运行记录",
+  "tasks.scheduled.runHistoryDescription": "选择一次运行，集中查看其时间、结果与相关事件。",
+  "tasks.scheduled.noRuns": "暂无运行记录。",
+  "tasks.scheduled.selectedRun": "当前运行",
+  "tasks.scheduled.notification": "通知状态",
+  "tasks.executionStatus.queued": "排队中",
+  "tasks.executionStatus.running": "运行中",
+  "tasks.executionStatus.succeeded": "成功",
+  "tasks.executionStatus.failed": "失败",
+  "tasks.executionStatus.cancelled": "已取消",
+  "tasks.executionStatus.skipped": "已跳过",
+  "tasks.trigger.scheduled": "计划触发",
+  "tasks.trigger.manual": "手动触发",
+  "tasks.notificationStatus.queued": "等待发送",
+  "tasks.notificationStatus.skipped": "未发送",
   "tasks.searchPlaceholder": "搜索任务或工作流 ID",
+  "tasks.filters.status": "按状态筛选",
+  "tasks.filters.statusLabel": "状态",
+  "tasks.filters.clear": "清除状态筛选",
+  "tasks.filters.selected": "已选状态筛选",
+  "tasks.filters.removeStatus": "移除“{{status}}”筛选",
+  "tasks.action.openMenu": "打开任务操作菜单",
   "tasks.action.share": "分享任务",
   "deployments.action.share": "分享部署",
   "tasks.sandbox.pending": "等待中",
@@ -887,6 +912,27 @@
   "tasks.cancelConfirmDesc": "后端会停止调度新的工作，释放沙盒，并在清理完成后关闭任务。",
   "tasks.runningCount": "{{count}} 个运行中",
   "taskDetail.title": "任务",
+  "taskDetail.tabsLabel": "任务详情分区",
+  "taskDetail.tab.overview": "执行概览",
+  "taskDetail.tab.logs": "执行日志",
+  "logs.timeRange": "时间范围",
+  "logs.range.1h": "最近 1 小时",
+  "logs.range.24h": "最近 24 小时",
+  "logs.range.7d": "最近 7 天",
+  "logs.range.30d": "最近 30 天",
+  "logs.range.all": "全部时间",
+  "logs.range.custom": "自定义范围",
+  "logs.from": "开始时间",
+  "logs.to": "结束时间",
+  "logs.sort": "排序",
+  "logs.sort.desc": "最新优先",
+  "logs.sort.asc": "最早优先",
+  "logs.loadedVisible": "显示 {{visible}} 条 · 已载入 {{loaded}} 条",
+  "logs.loadOlder": "加载更早记录",
+  "logs.loadNewer": "加载更新记录",
+  "logs.loadingMore": "正在加载…",
+  "logs.loadError": "日志加载失败",
+  "logs.loadErrorHint": "请检查连接后重试。",
   "taskDetail.backToList": "返回任务列表",
   "taskDetail.invalidId": "URL 中缺少任务 ID",
   "taskDetail.loadError": "加载任务失败。可能已被删除或您无权访问。",
@@ -894,16 +940,46 @@
   "taskDetail.startedAt": "开始时间",
   "taskDetail.finishedAt": "结束时间",
   "taskDetail.summary": "汇总",
+  "taskDetail.summaryDescription": "查看批量任务的执行结果和结果文件。",
   "taskDetail.rowsTotal": "总行数",
   "taskDetail.rowsOk": "成功行数",
   "taskDetail.rowsFailed": "失败行数",
   "taskDetail.rowsProgress": "已完成 {{done}} / {{total}} 行",
+  "taskDetail.setup": "任务配置",
+  "taskDetail.setupDescription": "查看提交批量任务时保存的输入和处理设置。",
+  "taskDetail.inputRows": "输入行数",
+  "taskDetail.mappedFields": "映射字段",
+  "taskDetail.parallelRows": "并发行数",
+  "taskDetail.output": "输出位置",
+  "taskDetail.outputManaged": "由 Skeinix 管理",
   "taskDetail.error": "错误",
+  "taskDetail.errorHint": "任务未能完成。请检查输入和工作流配置，然后重新运行。",
   "taskDetail.events": "事件",
+  "taskDetail.eventsDescription": "实时执行动态；仅在需要排查时展开技术详情。",
+  "taskDetail.progressDescription": "查看任务的实时完成进度和执行时间。",
+  "taskDetail.severity": "严重程度",
+  "taskDetail.eventType": "事件类型",
+  "taskDetail.visibleEvents": "当前显示 {{count}} 条事件",
+  "taskDetail.noMatchingEvents": "没有符合当前筛选条件的事件。",
+  "taskDetail.level.all": "全部级别",
+  "taskDetail.level.info": "信息",
+  "taskDetail.level.warning": "警告",
+  "taskDetail.level.error": "错误",
+  "taskDetail.level.debug": "调试",
+  "taskDetail.eventType.all": "全部事件",
+  "taskDetail.eventType.state": "状态",
+  "taskDetail.eventType.progress": "进度",
+  "taskDetail.eventType.log": "日志",
+  "taskDetail.eventType.result": "结果",
+  "taskDetail.eventType.terminal": "完成",
   "taskDetail.streamLive": "实时",
   "taskDetail.streamClosed": "流已关闭",
   "taskDetail.noEvents": "暂无事件。",
   "taskDetail.downloadCsv": "下载 CSV",
+  "taskDetail.download": "下载",
+  "taskDetail.viewInStorage": "在存储中查看",
+  "taskDetail.storageHint": "结果文件保存在该任务对应的存储目录中。可前往存储逐个预览，也可在此下载。",
+  "technicalDetails": "技术详情",
   "taskDetail.resume": "继续执行",
   "taskDetail.resumeRequested": "已请求继续执行",
   "taskDetail.resumeFailed": "继续执行失败",
@@ -997,11 +1073,11 @@
   "canvas.warn.danglingRefField": "某个输入引用了不存在的输出字段。",
   "nav.deployments": "工作流部署",
   "deployments.title": "工作流部署",
-  "deployments.subtitle": "将工作流发布为可调用的 API 或 Webhook。",
+  "deployments.subtitle": "将工作流发布为 API 或 Webhook。",
   "deployments.new": "新建部署",
   "deployments.empty": "暂无部署。",
   "deployments.emptyFiltered": "没有符合条件的部署。",
-  "deployments.emptyHint": "从工作流创建 API、Webhook 或定时部署后会显示在这里。",
+  "deployments.emptyHint": "从工作流创建 API 或 Webhook 部署后会显示在这里。",
   "deployments.load_error": "加载部署失败。",
   "deployments.deleted": "部署已删除",
   "deployments.filter.all": "全部",
@@ -1010,17 +1086,18 @@
   "deployments.search": "搜索部署、工作流或调用地址",
   "deployments.type.api": "API",
   "deployments.type.webhook": "Webhook",
-  "deployments.type.cron": "定时",
   "deployments.status.active": "启用中",
   "deployments.status.disabled": "已停用",
   "deployments.summary.active": "启用中",
   "deployments.summary.disabled": "已停用",
   "deployments.summary.invokes": "总调用",
   "deployments.summary.lastInvoked": "最近调用",
+  "deployments.summary.lastActivity": "最近运行",
   "deployments.summaryHint.active": "正在接收请求的部署。",
   "deployments.summaryHint.disabled": "已保留但不再接收流量的部署。",
-  "deployments.summaryHint.invokes": "已记录的 API、Webhook 和测试调用。",
+  "deployments.summaryHint.invokes": "已记录的 API、Webhook 和测试请求。",
   "deployments.summaryHint.lastInvoked": "所有部署中最近一次请求。",
+  "deployments.summaryHint.lastActivity": "最近一次 API、Webhook 或测试请求。",
   "deployments.col.name": "名称",
   "deployments.col.type": "触发方式",
   "deployments.col.status": "状态",
@@ -1028,6 +1105,7 @@
   "deployments.col.enabled": "已启用",
   "deployments.col.invokes": "调用次数",
   "deployments.col.lastInvoked": "最近一次调用",
+  "deployments.col.lastActivity": "最近运行",
   "deployments.col.actions": "操作",
   "deployments.actions.detail": "详情",
   "deployments.actions.delete": "删除",
@@ -1046,14 +1124,13 @@
   "deployments.delete.desc": "将进行软删除，slug 之后可被复用。此操作不可撤销。",
   "deployments.delete.cancel": "取消",
   "deployments.delete.confirm": "删除",
-  "deployments.detail.tabs.config": "配置",
-  "deployments.detail.tabs.code": "代码示例",
   "deployments.detail.tabs.overview": "概览",
-  "deployments.detail.tabs.runs": "运行 / 日志",
-  "deployments.detail.tabs.monitoring": "监控",
-  "deployments.detail.tabs.security": "安全",
-  "deployments.detail.tabs.history": "历史",
-  "deployments.detail.tabs.test": "测试",
+  "deployments.detail.tabs.usage": "使用",
+  "deployments.detail.tabs.activity": "运行情况",
+  "deployments.detail.tabs.settings": "设置",
+  "deployments.detail.testAction": "测试",
+  "deployments.detail.recentRuns": "最近运行",
+  "deployments.detail.runHistoryRegion": "部署运行历史",
   "deployments.code.title": "调用该部署",
   "deployments.code.placeholderHint": "示例仅使用环境变量占位符，绝不会包含真实密钥。",
   "deployments.code.copy": "复制代码示例",
@@ -1067,14 +1144,14 @@
   "deployments.detail.loadError": "加载部署失败。",
   "deployments.detail.save": "保存修改",
   "deployments.detail.saved": "已保存",
-  "deployments.detail.rotateKey": "轮换 API Key",
-  "deployments.detail.rotateTitle": "新的 API Key",
+  "deployments.detail.rotateKey": "轮换 API 密钥",
+  "deployments.detail.rotateTitle": "新的 API 密钥",
   "deployments.detail.metricsWindow": "最近 24 小时，按小时聚合",
   "deployments.detail.metricsError": "加载监控数据失败。",
   "deployments.detail.noMetrics": "该时间窗内暂无调用。",
   "deployments.detail.status": "状态",
   "deployments.detail.statusHint": "该部署当前是否接收请求。",
-  "deployments.detail.totalCalls": "已记录的 API、Webhook 和测试调用总数。",
+  "deployments.detail.totalCalls": "已记录的 API、Webhook 和测试请求总数。",
   "deployments.detail.errorRate": "错误率",
   "deployments.detail.errorRateHint": "最近一个统计桶内错误数除以调用数。",
   "deployments.detail.p95Hint": "最近一个统计桶内的 95 分位延迟。",
@@ -1082,17 +1159,20 @@
   "deployments.detail.versionPolicy": "版本",
   "deployments.detail.lastInvoked": "最近调用",
   "deployments.detail.basic": "基础信息",
-  "deployments.detail.runtime": "运行限制",
-  "deployments.detail.capacityNote": "实例数、worker、内存和自动扩缩容等容量控制会由后续运行时后端提供；当前页面只展示已接入 API 的限制项。",
+  "deployments.detail.basicDescription": "此部署的身份信息与工作流路由。",
+  "deployments.detail.editBasic": "编辑",
+  "deployments.detail.operationalSummary": "部署运行摘要",
+  "deployments.detail.lastInvokedHint": "此部署最近处理的一次请求。",
+  "deployments.detail.saveBasic": "保存基础信息",
+  "deployments.detail.trafficControl": "流量与运行控制",
+  "deployments.detail.trafficControlHelp": "控制部署是否接收流量及每秒允许的请求数；超出限制的请求将返回 HTTP 429。",
+  "deployments.detail.endpointHelp": "在应用程序或下方调用示例中使用此地址。",
   "deployments.detail.requestId": "请求 ID",
   "deployments.detail.source": "来源",
   "deployments.detail.latency": "延迟",
   "deployments.detail.noHistoryHint": "调用成功或失败后会在这里出现。",
-  "deployments.detail.qpsChart": "QPS 趋势",
-  "deployments.detail.rateLimitPolicy": "限流策略",
-  "deployments.detail.rateLimitHint": "超过 QPS 限制的请求会被拒绝，以保护沙盒资源。",
-  "deployments.detail.securityModel": "安全模型",
-  "deployments.detail.apiKeyHint": "API 部署使用 Bearer API Key 认证。Key 仅在创建或轮换时显示一次。",
+  "deployments.detail.securityModel": "访问控制",
+  "deployments.detail.apiKeyHint": "API 部署使用 Bearer API 密钥认证。密钥仅在创建或轮换时显示一次。",
   "deployments.detail.webhookHint": "Webhook 部署使用 HMAC 签名校验请求体。",
   "deployments.detail.bucket": "时段",
   "deployments.detail.calls": "调用",
@@ -1101,17 +1181,42 @@
   "deployments.detail.noHistory": "暂无调用历史。",
   "deployments.detail.finished": "结束时间",
   "deployments.detail.errorCol": "错误信息",
-  "deployments.detail.loadMore": "加载更多",
   "deployments.detail.testInputs": "输入（JSON）",
-  "deployments.detail.testOutput": "输出",
+  "common.all": "全部",
+  "deployments.detail.callsUnit": "次调用",
+  "deployments.detail.errorsUnit": "个错误",
+  "deployments.detail.historyErrorHint": "请检查连接，然后重新加载最近的请求。",
+  "deployments.detail.metricsChart": "请求、错误与延迟",
+  "deployments.detail.metricsErrorHint": "请检查连接，然后重新加载最近 24 小时的监控数据。",
+  "deployments.detail.noMatchingRuns": "没有符合当前筛选条件的运行记录。",
+  "deployments.detail.noMetricsHint": "API、Webhook 或测试请求执行后会产生监控数据。可先运行一次测试，验证部署并生成首个数据点。",
+  "deployments.detail.noTestResponse": "暂无响应",
+  "deployments.detail.p95Latency": "P95 延迟",
+  "deployments.detail.requests": "请求数",
+  "deployments.detail.rotateConfirmDescription": "当前 API 密钥将立即失效。轮换后，请为所有调用方更新新密钥。",
+  "deployments.detail.rotateConfirmTitle": "轮换 API 密钥？",
+  "deployments.detail.rotatingKey": "正在轮换…",
+  "deployments.detail.runTest": "运行测试",
+  "deployments.detail.searchRuns": "搜索运行记录",
+  "deployments.detail.searchRunsPlaceholder": "请求 ID、来源或错误信息",
+  "deployments.detail.secretSavedConfirmation": "我已将新的 API 密钥保存在安全位置。",
+  "deployments.detail.testRequest": "请求",
+  "deployments.detail.testRequestHelp": "编辑根据工作流开始节点生成的示例输入，然后发送到当前部署。",
+  "deployments.detail.testResponse": "响应",
+  "deployments.detail.testResponseError": "请求失败。请检查下方信息，调整请求或部署配置后重试。",
+  "deployments.detail.testResponsePending": "运行请求后，此处将显示 HTTP 响应和工作流输出。",
+  "deployments.detail.testResponseSuccess": "部署已成功接收该请求。",
+  "deployments.source.test": "测试",
+  "deployments.source.sync_api": "同步 API",
+  "deployments.source.webhook": "Webhook",
   "deployments.detail.testInvalidJson": "输入不是合法的 JSON。",
   "deployments.testInvoke.run": "运行",
   "deployments.create.title": "新建部署",
-  "deployments.create.desc": "把工作流绑定到一种触发方式（HTTP API、Webhook 或定时）。",
+  "deployments.create.desc": "通过 HTTP API 或 Webhook 发布工作流。",
   "deployments.create.createdHeader": "部署已创建",
   "deployments.create.oneTimeSecret": "该密钥只会显示一次，请立即复制保存——之后将无法再次查看。",
   "deployments.create.id": "部署 ID",
-  "deployments.create.apiKey": "API Key",
+  "deployments.create.apiKey": "API 密钥",
   "deployments.create.hmacSecret": "HMAC 密钥",
   "deployments.create.endpoint": "调用地址",
   "deployments.create.copy": "复制",
@@ -1120,6 +1225,10 @@
   "deployments.create.close": "关闭",
   "deployments.create.cancel": "取消",
   "deployments.create.submit": "创建",
+  "deployments.create.creating": "正在创建…",
+  "tasks.scheduled.schedulePreview": "计划预览：{{schedule}}",
+  "deployments.create.triggerHelp.api": "供应用主动调用",
+  "deployments.create.triggerHelp.webhook": "接收签名事件",
   "deployments.create.slugError": "Slug 必须匹配 ^[a-z0-9][a-z0-9-]{0,62}$",
   "deployments.create.fields.name": "名称",
   "deployments.create.fields.slug": "Slug",
@@ -1127,8 +1236,6 @@
   "deployments.create.fields.workflow": "工作流",
   "deployments.create.fields.triggerType": "触发方式",
   "deployments.create.fields.versionPin": "版本锁定",
-  "deployments.create.fields.cronExpr": "Cron 表达式",
-  "deployments.create.fields.cronTz": "时区",
   "deployments.create.fields.rateLimitQps": "QPS 限速",
   "deployments.create.currentWorkflow": "当前工作流",
   "deployments.create.selectWorkflow": "选择工作流",
@@ -1432,7 +1539,7 @@
   "credentials.add": "添加密钥",
   "credentials.loading": "加载中…",
   "credentials.load_error": "加载凭据失败。",
-  "credentials.empty": "还没有 API 密钥。点击“添加密钥”来保存一个。",
+  "credentials.empty": "还没有 API 密钥",
   "credentials.emptyHint": "保存后的模型会出现在 Chat 和工作流节点的可选配置中。",
   "credentials.col.name": "名称",
   "credentials.col.provider": "提供商",
@@ -1476,6 +1583,22 @@
   "credentials.delete_title": "删除此凭据？",
   "credentials.delete_confirm": "这将删除已存储的 API 密钥。使用它的工作流将停止工作。此操作无法撤销。",
   "credentials.deleted": "凭据已删除",
+  "credentials.load_error_hint": "请检查网络连接，然后重新加载密钥列表。",
+  "credentials.section.identity": "基本信息",
+  "credentials.section.identityHelp": "设置一个便于工作空间成员识别的连接名称。",
+  "credentials.section.model": "提供商与模型",
+  "credentials.section.modelHelp": "选择 API 提供商，并填写该提供商接受的准确模型标识。",
+  "credentials.section.connection": "连接设置",
+  "credentials.section.connectionHelp": "可按需配置自定义服务地址或网络代理。",
+  "credentials.section.secret": "密钥",
+  "credentials.section.secretHelp": "密钥保存后会被加密，且不会再次显示。",
+  "credentials.testConnection": "测试连接",
+  "credentials.connected": "连接成功",
+  "credentials.test.credentials_rejected": "密钥验证失败",
+  "credentials.test.endpoint_rejected": "服务地址拒绝请求",
+  "credentials.test.unreachable": "无法连接到提供商",
+  "credentials.createdNextStep": "凭据已保存。创建新对话时即可选择该模型。",
+  "credentials.updatedNextStep": "凭据已更新。创建新对话时即可选择该模型。",
   "prompt_node.model_label": "模型",
   "prompt_node.select_model": "选择一个模型",
   "prompt_node.saved_api": "已保存的 API",
@@ -1497,7 +1620,7 @@
   "prompt_history.none": "没有可对比的历史版本。",
   "prompt_history.load_error": "加载版本历史失败。",
   "agent_settings.title": "Agent 设置",
-  "agent_settings.subtitle": "设置新对话的默认参数；首次发送后，每个对话会保留自己的 Runtime 配置。",
+  "agent_settings.subtitle": "设置新对话的默认参数；首次发送后，每个对话会保留自己的智能体运行时配置。",
   "agent_settings.api": "API 凭据",
   "agent_settings.inline_model": "模型",
   "agent_settings.codex_account_models": "OpenAI 账号",
@@ -1510,7 +1633,7 @@
   "approval_mode.scope_hint": "仅控制工具执行前授权；需要用户交互的内容仍会等待你提交。",
   "reasoning_effort.label": "思考强度",
   "reasoning_effort.hint": "新对话默认使用的思考强度",
-  "reasoning_effort.default": "Runtime 默认",
+  "reasoning_effort.default": "智能体运行时默认",
   "reasoning_effort.none": "不启用",
   "reasoning_effort.minimal": "最低",
   "reasoning_effort.low": "较低",
@@ -1518,18 +1641,19 @@
   "reasoning_effort.high": "较高",
   "reasoning_effort.xhigh": "最高",
   "reasoning_effort.max": "极高",
-  "reasoning_effort.ultra": "Ultra",
-  "settings_tab_runtime": "Agent Runtime",
-  "settings_runtime_subtitle": "选择新对话在沙盒中使用的 Agent SDK。",
-  "settings_runtime_default": "默认 Agent Runtime",
-  "settings_runtime_desc": "仅用于新建对话；已有对话会继续使用创建时绑定的 Runtime。",
-  "settings_runtime_loading": "正在加载 Runtime…",
+  "reasoning_effort.ultra": "极限",
+  "settings_tab_runtime": "智能体运行时",
+  "settings_runtime_subtitle": "选择新对话在沙盒中使用的智能体运行环境。",
+  "settings_runtime_default": "默认智能体运行时",
+  "settings_runtime_desc": "仅用于新建对话；已有对话会继续使用创建时绑定的智能体运行时。",
+  "settings_runtime_loading": "正在加载智能体运行时…",
   "settings_runtime_saving": "正在保存…",
-  "settings_runtime_saved": "默认 Runtime 已更新",
-  "settings_runtime_codex_unavailable": "Codex — Adapter 尚未安装",
+  "settings_runtime_saved": "默认智能体运行时已更新",
+  "settings_runtime_codex_unavailable": "Codex — 适配器尚未安装",
   "settings_codex_connection": "Codex 账号",
-  "settings_codex_connection_desc": "连接 Codex 使用的 OpenAI 账号。API Key 在独立页面管理，模型在新建对话时选择。",
-  "settings_codex_account_disabled": "当前部署未启用 OpenAI 账号登录。你仍可使用在 API Key 页面配置的 Codex API 模型。",
+  "settings_codex_connection_desc": "连接 Codex 使用的 OpenAI 账号。模型服务商的 API 密钥可在设置中的“API 凭据”页面管理，模型则在新建对话时选择。",
+  "settings_tab_api_keys": "API 凭据",
+  "settings_codex_account_disabled": "当前部署未启用 OpenAI 账号登录。你仍可使用在“API 凭据”页面配置的 Codex API 模型。",
   "settings_codex_account_tab": "OpenAI 账号",
   "settings_codex_api_tab": "OpenAI API",
   "settings_codex_account_help": "使用一次性设备码登录，无需配置公网回调地址。",
@@ -1584,17 +1708,44 @@
   "settings_codex_usage_used": "已用 {{used}}%",
   "settings_codex_usage_resets": "{{time}} 重置",
   "settings_codex_usage_limit_reached": "当前额度周期已用尽。",
-  "settings_codex_usage_unlimited_credits": "Credits 不限量",
-  "settings_codex_usage_credit_balance": "剩余 {{balance}} Credits",
-  "settings_codex_usage_credits_available": "有可用 Credits",
-  "settings_codex_usage_no_credits": "无额外 Credits",
+  "settings_codex_usage_unlimited_credits": "额外额度不限量",
+  "settings_codex_usage_credit_balance": "剩余 {{balance}} 点额度",
+  "settings_codex_usage_credits_available": "有可用额度",
+  "settings_codex_usage_no_credits": "无额外额度",
   "settings_codex_usage_updated": "更新于 {{time}} · 每分钟自动刷新",
+  "security.loadingPasskeys": "正在加载通行密钥…",
+  "security.passkeys": "通行密钥与安全密钥",
+  "security.passkeysDescription": "分享资源、管理凭据、管理组织及执行其他高风险变更时需要使用。",
+  "security.addPasskey": "添加通行密钥",
+  "security.passkeyAdded": "通行密钥已添加",
+  "security.passkeyRemoved": "通行密钥已移除",
+  "security.syncedPasskey": "已同步的通行密钥",
+  "security.devicePasskey": "仅限当前设备的凭据",
+  "security.removePasskey": "移除通行密钥",
+  "security.noPasskeys": "尚未注册通行密钥。执行高风险操作前需要先添加一个通行密钥。",
+  "security.addPasskeyDescription": "确认当前密码，然后按照浏览器的安全提示完成操作。",
+  "security.passkeyName": "通行密钥名称",
+  "security.defaultPasskeyName": "通行密钥",
+  "security.currentPassword": "当前密码",
+  "security.addingPasskey": "正在添加…",
+  "security.removePasskeyDescription": "使用已注册的通行密钥验证并确认当前密码。此操作不会提升其他会话的权限。",
+  "security.remove": "移除",
+  "security.stepUpTitle": "确认此高风险操作",
+  "security.stepUpDescription": "请使用通行密钥或安全密钥验证。验证仅对当前站点有效，并在 10 分钟内保持有效。",
+  "security.checkingPasskeys": "正在检查已注册的通行密钥…",
+  "security.passkeyPrompt": "浏览器将要求验证设备 PIN、生物识别信息或与此账号关联的安全密钥。",
+  "security.passkeyRequired": "当前尚未注册通行密钥。请确认密码并添加一个通行密钥后继续。",
+  "security.verifying": "正在验证…",
+  "security.usePasskey": "使用通行密钥",
+  "security.addPasskeyContinue": "添加通行密钥并继续",
+  "security.passkeyCancelled": "通行密钥创建已取消或超时。",
+  "security.passkeyVerificationCancelled": "通行密钥验证已取消或超时。",
   "agent_settings.default_api": "默认（平台）",
   "agent_settings.unavailable": "不可用",
   "agent_settings.api_hint": "在 API 管理中维护凭据。密钥不会离开服务器。",
   "agent_settings.loading": "正在加载凭据…",
   "agent_settings.loading_models": "正在加载模型…",
-  "agent_settings.runtime_default_model": "Runtime 默认 · {{model}}",
+  "agent_settings.runtime_default_model": "智能体运行时默认 · {{model}}",
   "agent_settings.temperature": "温度",
   "agent_settings.max_tokens": "最大 token 数",
   "agent_settings.timeout": "超时（秒）",
@@ -1629,54 +1780,10 @@
   "nav.storage": "存储",
   "mcp.title": "MCP 服务",
   "mcp.subtitle": "发现并管理 Agent 可按需加载的外部工具。",
-  "mcp.platform.heading": "平台服务",
-  "mcp.platform.hint": "内置只读配置；每次仅授权给当前对话和当前 Agent 轮次。",
-  "mcp.platform.builtin": "内置 Platform MCP",
-  "mcp.platform.activation": "仅在对应命令激活时加载",
-  "mcp.platform.always_available": "始终可用",
-  "mcp.platform.loading": "正在加载平台能力…",
-  "mcp.platform.load_error": "无法加载平台 MCP 能力。",
-  "mcp.platform.no_match": "没有符合当前筛选条件的平台能力。",
-  "mcp.platform.config.name": "配置",
-  "mcp.platform.config.description": "读取安全的平台、模型、当前对话及工作流配置。",
-  "mcp.platform.interactive.name": "交互式渲染",
-  "mcp.platform.interactive.description": "渲染可持久化的富内容，并可通过明确的“继续”操作暂停当前对话。",
-  "mcp.platform.workflow.name": "工作流",
-  "mcp.platform.workflow.description": "列出并查看当前用户有权访问的工作流。",
-  "mcp.platform.task.name": "任务",
-  "mcp.platform.task.description": "查看和管理任务中心、定时运行、取消及恢复操作。",
-  "mcp.platform.deployment.name": "部署",
-  "mcp.platform.deployment.description": "列出、查看、新建、更新及删除有权访问的工作流部署。",
-  "mcp.platform.knowledge.name": "知识库",
-  "mcp.platform.knowledge.description": "发现并语义搜索当前用户有权访问的知识库。",
-  "mcp.platform.build.name": "构建与运行",
-  "mcp.platform.build.description": "在当前对话中创建、校验、版本化、更新和执行工作流。",
-  "mcp.platform.browser.name": "浏览器",
-  "mcp.platform.browser.description": "从侧边栏控制用户已连接的浏览器、标签页、页面和需登录访问的资源。",
-  "mcp.platform.plan.name": "执行计划",
-  "mcp.platform.plan.description": "为 LangChain 子 Agent 校验并提交可持久化的动态执行计划。",
-  "mcp.platform.not_found": "未找到平台 MCP",
-  "mcp.platform.not_found_hint": "当前平台版本未注册这项内置能力。",
-  "mcp.platform.detail.activation": "激活方式",
-  "mcp.platform.detail.base_hint": "每个符合条件的对话轮次都会向 Runtime 提供此能力。",
-  "mcp.platform.detail.command_hint": "在当前对话中激活对应命令后，Runtime 才会获得此能力。",
-  "mcp.platform.detail.runtimes": "支持的 Runtime",
-  "mcp.platform.detail.runtime_hint": "列出的 Runtime 使用同一套 MCP 协议及工具结构。",
-  "mcp.platform.detail.security": "安全边界",
-  "mcp.platform.detail.security_hint": "调用使用绑定当前轮次的短期凭证，并针对当前用户和对话重新鉴权；内部地址和令牌不会在这里显示。",
-  "mcp.platform.detail.tools": "已注册工具",
-  "mcp.platform.detail.tools_hint": "该只读清单直接由后端工具定义生成。",
-  "mcp.platform.detail.search_tools": "搜索工具",
-  "mcp.platform.detail.read_only": "只读",
-  "mcp.platform.detail.mutates": "会修改数据",
-  "mcp.platform.detail.external": "外部访问",
-  "mcp.platform.detail.parameters": "参数：{{names}}",
-  "mcp.platform.detail.no_parameters": "无用户参数",
-  "mcp.platform.detail.no_tool_match": "没有匹配的工具。",
   "mcp.tools_count": "{{count}} 个工具",
   "mcp.no_description": "暂无工具说明。",
   "mcp.custom.heading": "自定义服务",
-  "mcp.custom.hint": "由用户管理，并在所选 Agent Runtime 内加载的 MCP 连接。",
+  "mcp.custom.hint": "由用户管理，并在所选智能体运行时内加载的 MCP 连接。",
   "mcp.status.available": "可用",
   "mcp.add": "添加自定义服务",
   "mcp.search_ph": "按名称或地址搜索",
@@ -1745,7 +1852,6 @@
   "skills.subtitle": "发现和管理 Agent 可按需加载的可复用指令包。",
   "skills.search_ph": "搜索已安装技能",
   "skills.open_menu": "打开 {{name}} 的操作菜单",
-  "skills.share": "分享技能",
   "skills.delete": "卸载",
   "skills.deleted": "技能已卸载",
   "skills.loading": "加载中…",
@@ -1770,13 +1876,22 @@
   "tool.output": "输出",
   "tool.no_result": "(未捕获到结果)",
   "tool.cancelled_by_user": "用户已中断该工具调用。",
-  "composer.cmd.build": "构建 / 修改画布上的工作流",
+  "composer.cmd.workflow": "创建、修改、验证或运行工作流",
   "composer.cmd.browser": "接管浏览器执行任务",
   "composer.cmd.task": "查看或管理任务中心中的持久任务",
   "composer.cmd.deployment": "查看或管理工作流部署",
   "composer.cmd.knowledge": "搜索已授权的知识库",
-  "composer.cmd.plan": "创建并预览持久化执行计划",
   "composer.cmd.diagram": "创建并复核语义化无限画布图",
+  "composer.cmd.document": "创建并复核专业办公文档",
+  "preview.inline.lightweightDescription": "打开后加载完整预览",
+  "preview.inline.openFile": "在预览中打开 {{name}}",
+  "preview.action.edit": "编辑",
+  "preview.action.save": "保存",
+  "preview.action.exitEditing": "退出编辑",
+  "preview.exitEditing.title": "放弃未保存的修改？",
+  "preview.exitEditing.description": "当前修改尚未保存。是否放弃修改并退出编辑模式？",
+  "preview.exitEditing.keepEditing": "继续编辑",
+  "preview.exitEditing.discard": "放弃并退出",
   "composer.remove_attachment": "移除附件",
   "composer.add_attachment": "添加附件",
   "composer.attach_file": "文件",
@@ -1840,6 +1955,11 @@
   "tool.interactive.resource_failed": "资源加载失败。",
   "tool.interactive.offloaded": "完整交互内容已存储在 {{path}}",
   "tool.interactive.open_preview": "在预览区打开",
+  "tool.interactive.open_preview_tab": "在新标签页中打开预览",
+  "preview.standalone.title": "预览",
+  "preview.standalone.close": "关闭预览标签页",
+  "preview.standalone.invalidTitle": "无法打开预览",
+  "preview.standalone.invalidDescription": "预览链接不完整或无效，请返回对话并重新打开该文件。",
   "tool.interactive.no_file_path": "未提供文件路径。",
   "error.generic": "工具执行失败。",
   "error.category.timeout": "执行耗时过长，已超时。",
@@ -1906,6 +2026,58 @@
   "chat.title": "对话",
   "chat.chatIdLabel": "ID",
   "chat.empty.title": "与 Agent 一起探索",
+  "chat.examples.label": "从示例开始",
+  "chat.examples.use": "使用这个示例",
+  "chat.examples.tab.office": "办公",
+  "chat.examples.tab.diagram": "绘图",
+  "chat.examples.tab.workflow": "工作流",
+  "chat.examples.tab.operations": "任务和部署",
+  "chat.examples.tab.knowledge": "知识库",
+  "chat.examples.office.presentation.title": "创建演示文稿",
+  "chat.examples.office.presentation.description": "调研指定主题，并整理成专业、精美的演示文稿。",
+  "chat.examples.office.presentation.prompt": "/document 请调研最新的 Agent 框架，并创建一份精美的演示文稿，分别介绍背景、代表性框架、各自的特点与局限、横向对比和核心结论。",
+  "chat.examples.office.report.title": "撰写商业报告",
+  "chat.examples.office.report.description": "将事实依据、分析结论和建议整理成专业报告。",
+  "chat.examples.office.report.prompt": "/document 请创建一份关于企业级 AI 助手的专业市场分析报告，包含执行摘要、市场格局、用户需求、竞品对比、风险、建议和引用来源。",
+  "chat.examples.office.spreadsheet.title": "创建分析工作簿",
+  "chat.examples.office.spreadsheet.description": "制作包含公式、汇总和图表的清晰电子表格。",
+  "chat.examples.office.spreadsheet.prompt": "/document 请创建一份可编辑的季度销售分析工作簿，包含各区域示例数据、经过校验的公式、汇总页、条件格式，以及收入、增长率和目标达成率图表。",
+  "chat.examples.diagram.architecture.title": "绘制系统架构图",
+  "chat.examples.diagram.architecture.description": "清晰展示系统边界、核心组件和数据流向。",
+  "chat.examples.diagram.architecture.prompt": "/diagram 请为一个 AI 客户服务平台绘制专业的系统架构图，包含 Web 应用、API 网关、Agent 服务、模型提供商、知识检索、任务队列、数据库、对象存储和可观测性服务，并标明主要数据流与信任边界。",
+  "chat.examples.diagram.process.title": "梳理业务流程",
+  "chat.examples.diagram.process.description": "将角色、决策和异常分支整理成易于理解的流程。",
+  "chat.examples.diagram.process.prompt": "/diagram 请为员工费用报销绘制专业的业务流程图，覆盖提交、主管审批、财务复核、制度例外、驳回与重新提交、付款和员工通知，并清晰区分各角色的责任。",
+  "chat.examples.diagram.sequence.title": "说明交互时序",
+  "chat.examples.diagram.sequence.description": "呈现各参与方之间的请求、响应和失败分支。",
+  "chat.examples.diagram.sequence.prompt": "/diagram 请为电商结算流程绘制专业的时序图，包含顾客、商城前台、订单服务、库存服务、支付提供商和通知服务，展示正常路径以及支付失败和库存不足分支。",
+  "chat.examples.workflow.feedback.title": "处理客户反馈",
+  "chat.examples.workflow.feedback.description": "识别反馈类型和紧急程度，并安排后续处理。",
+  "chat.examples.workflow.feedback.prompt": "/workflow 请构建一个客户反馈处理工作流：接收反馈，识别语言和情绪，判断主题与紧急程度，起草回复，并将严重问题交给人工复核。",
+  "chat.examples.workflow.research.title": "生成研究简报",
+  "chat.examples.workflow.research.description": "收集来源、提取结论，并发布简洁的研究简报。",
+  "chat.examples.workflow.research.prompt": "/workflow 请构建一个可复用的研究工作流：根据主题搜索可信来源、去除重复内容、提取带引用的核心发现，并生成简洁的 Markdown 简报。",
+  "chat.examples.workflow.invoices.title": "处理收到的发票",
+  "chat.examples.workflow.invoices.description": "提取字段、校验金额，并标记需要人工检查的异常。",
+  "chat.examples.workflow.invoices.prompt": "/workflow 请构建一个发票处理工作流：读取上传的发票，提取供应商和明细数据，校验总额及必填字段，并将异常项交给人工复核。",
+  "chat.examples.operations.batch.title": "运行批量任务",
+  "chat.examples.operations.batch.description": "对多条数据运行工作流，并收集结构化结果。",
+  "chat.examples.operations.batch.prompt": "/task 请创建一个批量任务，对 CSV 文件中的每一行运行我的客户反馈工作流，保留逐行错误，并分别导出成功和失败结果。",
+  "chat.examples.operations.schedule.title": "安排周期任务",
+  "chat.examples.operations.schedule.description": "按计划运行工作流，并保留每次执行记录。",
+  "chat.examples.operations.schedule.prompt": "/task 请将我的研究简报工作流设置为每个工作日上午 09:00 按当前时区运行，并保留每次运行结果供后续查看。",
+  "chat.examples.operations.deploy.title": "发布工作流 API",
+  "chat.examples.operations.deploy.description": "通过受控的部署端点对外提供工作流能力。",
+  "chat.examples.operations.deploy.prompt": "/deployment 请将我的客户反馈工作流部署成需要认证的 API 端点，使用最新工作流版本，并配置较为保守的请求速率限制。",
+  "chat.examples.knowledge.create.title": "创建知识包",
+  "chat.examples.knowledge.create.description": "将可复用的研究成果整理成结构清晰的文件集合。",
+  "chat.examples.knowledge.create.prompt": "/knowledge 请调研 Agent 系统的实用评估方法，将结果整理成一个新的知识包，包含清晰的 README 和来源文件，并发布到我的知识库。",
+  "chat.examples.knowledge.explore.title": "查阅已有知识",
+  "chat.examples.knowledge.explore.description": "找到合适的知识包，并逐步查看相关文件。",
+  "chat.examples.knowledge.explore.prompt": "/knowledge 请找到我关于 Agent 评估的知识，先阅读 README，再总结推荐的评估流程，并引用相关的本地文件。",
+  "chat.examples.knowledge.update.title": "更新知识包",
+  "chat.examples.knowledge.update.description": "补充新的事实依据，同时保持原有目录结构。",
+  "chat.examples.knowledge.update.prompt": "/knowledge 请打开我的 Agent 评估知识包，补充近期发现和来源，更新 README 与目录说明，校验整个知识包后发布新版本。",
   "chat.empty.desc": "先探索，需要时再构建。",
   "chat.composer.placeholder": "给 Skeinix 发送消息...",
   "chat.explorer": "Explorer",
@@ -2093,6 +2265,13 @@
   "mcp.detail.never_probed": "尚未探测",
   "mcp.detail.tools.name": "名称",
   "mcp.detail.tools.description": "描述",
+  "mcp.detail.tools.search": "搜索工具",
+  "mcp.detail.tools.no_match": "没有匹配的工具。",
+  "mcp.detail.tools.read_only": "只读",
+  "mcp.detail.tools.mutates": "会修改数据",
+  "mcp.detail.tools.idempotent": "幂等",
+  "mcp.detail.tools.external": "外部访问",
+  "mcp.detail.tools.no_parameters": "无用户参数",
   "mcp.detail.security.title": "使用前请审查外部访问",
   "mcp.detail.security.body": "MCP 服务可能暴露读取、写入或调用外部服务的工具。此页面展示最近一次探测到的工具；审计日志应记录安装、探测、加载和工具调用事件。",
   "skills.tab.installed": "已安装",
@@ -2267,7 +2446,10 @@
   ,"preview.error.permission_denied": "你没有查看该文件的权限。"
   ,"preview.error.render_failed": "文件渲染器无法展示该文件。"
   ,"preview.action.download": "下载"
+  ,"preview.action.openInNewPage": "在新页面打开"
   ,"preview.action.refresh": "刷新预览"
+  ,"preview.drawio.continueEditing": "在 draw.io 中继续编辑"
+  ,"preview.drawio.openFailed": "无法打开 draw.io"
   ,"preview.media.zoomControls": "图片缩放控件"
   ,"preview.media.zoomOut": "缩小"
   ,"preview.media.zoomIn": "放大"
@@ -2280,12 +2462,10 @@
   ,"preview.openError.title": "无法打开该文件"
   ,"preview.openError.action": "重试"
   ,"preview.renderer.loading": "正在加载渲染器…"
-  ,"preview.leave.title": "放弃未保存的更改？"
-  ,"preview.leave.description": "该文件有尚未保存的修改。请先保存，或放弃修改后离开此标签页。"
-  ,"preview.leave.keepEditing": "继续编辑"
-  ,"preview.leave.discard": "放弃修改"
   ,"preview.table.loading": "正在加载表格…"
   ,"preview.table.readOnly": "只读"
+  ,"preview.spreadsheet.formattedView": "格式化预览"
+  ,"preview.spreadsheet.dataView": "数据视图"
   ,"preview.table.save": "保存"
   ,"preview.table.conflict.description": "源文件已发生变化。请重新加载，或明确覆盖最新版本。"
   ,"preview.table.conflict.reload": "重新加载"
@@ -2297,11 +2477,11 @@
   ,"chat.toolbar.sandbox": "沙盒页"
   ,"tool.interactive.file_preview_load_failed": "文件预览资源暂时无法加载。"
   ,"agent.startup.preparing_environment": "正在准备沙盒环境"
-  ,"agent.startup.initializing_runtime": "正在启动 Agent Runtime"
+  ,"agent.startup.initializing_runtime": "正在启动智能体运行时"
   ,"agent.startup.connecting_model": "正在连接模型"
   ,"chat.debug.codex_summary": "{{count}} 个输入条目 · {{outputCount}} 个本轮输出"
   ,"chat.debug.langchain_summary": "{{count}} 条输入消息 · {{tokens}} tokens · {{outputCount}} 个本轮输出"
-  ,"chat.debug.snapshot_truncated": "该 Runtime 快照过大，已为浏览器安全展示进行截断。"
+  ,"chat.debug.snapshot_truncated": "该智能体运行时快照过大，已为浏览器安全展示进行截断。"
   ,"chat.debug.codex_history_incomplete": "Codex 对部分原生线程历史返回了摘要视图。"
   ,"chat.debug.turnOutputBadge": "本轮输出"
   ,"chat.debug.turnOutputDivider": "当前 Turn 输出 · 尚未进入本次模型输入"
@@ -2398,11 +2578,11 @@
   ,"organization.slug": "唯一标识"
   ,"organization.type": "类型"
   ,"organization.serviceAccounts": "服务账号"
-  ,"organization.serviceAccountsDescription": "非交互身份仅绑定一个任务或部署。轮换会撤销尚未结束的 Runtime 租约，平台不会签发可复用的长期密钥。"
+  ,"organization.serviceAccountsDescription": "非交互身份仅绑定一个任务或部署。轮换会撤销尚未结束的智能体运行时租约，平台不会签发可复用的长期密钥。"
   ,"organization.serviceAccountsRestricted": "仅组织管理员和审计员可以查看服务账号。"
   ,"organization.serviceAccountsLoadFailed": "无法加载服务账号。"
   ,"organization.serviceAccountUpdated": "服务账号已更新"
-  ,"organization.serviceAccountRotated": "尚未结束的 Runtime 租约已撤销"
+  ,"organization.serviceAccountRotated": "尚未结束的智能体运行时租约已撤销"
   ,"organization.generation": "代次"
   ,"organization.boundCredentials": "已绑定 {{count}} 个凭证"
   ,"organization.rotateServiceAccount": "轮换运行身份"
@@ -2412,18 +2592,31 @@
   ,"organization.noServiceAccounts": "暂无服务账号。创建定时任务或部署时会自动生成。"
   ,"share.title": "分享工作流"
   ,"share.resourceTitle": "分享资源"
-  ,"share.description": "管理“{{name}}”的直接访问权限。"
+  ,"share.description": "管理“{{name}}”的访问权限。"
   ,"share.effectiveAccess": "你的有效权限"
   ,"share.customAccess": "自定义权限"
-  ,"share.inheritedHint": "继承权限在这里仅供查看；请前往其来源群组或组织进行修改。"
-  ,"share.addDirect": "添加直接权限"
-  ,"share.everyone": "当前工作空间的所有成员"
+  ,"share.computed": "系统计算"
+  ,"share.privacyHint": "请输入完整邮箱或部门/团队路径，并主动搜索。这里不会展示账号目录。"
+  ,"share.inheritedHint": "继承权限由对应的部门、团队或组织统一管理。"
+  ,"share.addDirect": "添加访问权限"
   ,"share.user": "用户"
-  ,"share.group": "群组"
-  ,"share.workspace": "工作空间"
-  ,"share.chooseTarget": "请选择…"
-  ,"share.search": "筛选用户或群组…"
-  ,"share.grant": "授予权限"
+  ,"share.departmentTeam": "部门/团队"
+  ,"share.entireOrganization": "整个组织"
+  ,"share.serviceAccount": "服务账号"
+  ,"share.targetType": "分享对象"
+  ,"share.emailAddress": "完整邮箱地址"
+  ,"share.emailPlaceholder": "name@example.com"
+  ,"share.departmentPath": "准确的部门/团队路径"
+  ,"share.groupPlaceholder": "产品部 / 平台团队"
+  ,"share.currentOrganization": "当前组织"
+  ,"share.businessTargetHint": "可通过完整邮箱搜索组织成员，通过准确路径搜索部门/团队，或选择整个组织。"
+  ,"share.personalTargetHint": "请输入对方的完整邮箱地址进行搜索。"
+  ,"share.searchAction": "搜索"
+  ,"share.searching": "正在搜索…"
+  ,"share.searchFailed": "暂时无法搜索该分享对象。"
+  ,"share.targetNotFound": "未找到与该信息完全匹配且可分享的账号或部门/团队。"
+  ,"share.confirmAdd": "添加"
+  ,"share.adding": "正在添加…"
   ,"share.granted": "权限已授予"
   ,"share.revoked": "权限已撤销"
   ,"share.changeFailed": "权限变更失败"
@@ -2435,6 +2628,25 @@
   ,"share.role.editor": "编辑者"
   ,"share.role.operator": "执行者"
   ,"share.role.manager": "管理员"
+  ,"resourceScope.label": "资源范围"
+  ,"resourceScope.mine": "我的资源"
+  ,"resourceScope.organization": "组织资源"
+  ,"resourceScope.shared": "与我共享"
+  ,"resourceScope.loading": "正在加载共享资源"
+  ,"resourceScope.loadFailed": "无法加载共享资源"
+  ,"resourceScope.loadFailedHint": "请检查网络连接后重试。"
+  ,"resourceScope.empty": "暂时没有与你共享的资源"
+  ,"resourceScope.emptyHint": "其他用户直接分享给你的资源会显示在这里。"
+  ,"resourceScope.noMatch": "没有符合搜索条件的共享资源"
+  ,"resourceScope.noMatchHint": "请尝试搜索其他名称或拥有者。"
+  ,"resourceScope.sharedBy": "由 {{owner}} 共享"
+  ,"resourceScope.updatedAt": "更新于 {{time}}"
+  ,"resourceScope.loadMore": "加载更多"
+  ,"resourceScope.loadingMore": "正在加载…"
+  ,"workspace.searchShared": "搜索共享工作流…"
+  ,"tasks.searchShared": "搜索共享任务"
+  ,"deployments.searchShared": "搜索共享部署"
+  ,"knowledge.searchShared": "搜索共享知识"
   ,"inspector.executeUnavailable": "你可以查看这个工作流，但当前权限不包含运行能力。"
   ,"privilegedSupport.title": "特权支持模式"
   ,"privilegedSupport.organizationScope": "组织元数据"
@@ -2484,8 +2696,8 @@
   ,"storage.loadErrorHint": "请检查连接，然后重新加载此文件夹。"
   ,"storage.previewLoadErrorHint": "文件可能已变化或连接已中断，请重新加载。"
   ,"canvas.loadErrorDescription": "请检查连接，然后重新加载此 Workflow。"
-  ,"settings_runtime_error": "无法更新 Agent Runtime 设置"
-  ,"settings_runtime_error_hint": "请检查连接和 Runtime 配置，然后重试。"
+  ,"settings_runtime_error": "无法更新智能体运行时设置"
+  ,"settings_runtime_error_hint": "请检查连接和智能体运行时配置，然后重试。"
   ,"settings_codex_connection_error": "无法更新 Codex 连接"
   ,"settings_codex_connection_error_hint": "请检查 OpenAI 账号连接，然后重试。"
   ,"tasks.load_error_hint": "请检查网络连接，然后重新加载任务列表。"
@@ -2499,11 +2711,11 @@
   ,"skills.version_load_error_hint": "请选择其他版本，或重新尝试加载此版本。"
   ,"skills.catalog.load_error_hint": "请检查目录连接，然后重新加载此 Skill。"
   ,"mcp.load_error_hint": "请检查连接，然后重新加载此服务。"
-  ,"mcp.platform.load_error_hint": "请检查平台服务，然后重新加载其能力。"
   ,"mcp.catalog.source": "选择 MCP 目录"
+  ,"mcp.catalog.detail_source": "目录"
+  ,"skills.detail.file_count": "文件"
   ,"mcp.catalog.load_error_hint": "请检查所选注册表，然后重新加载目录。"
   ,"mcp.catalog.detail_error_hint": "请检查所选注册表，然后重新加载此服务。"
-  ,"mcp.platform.detail.load_error_hint": "请检查平台服务，然后重新加载工具目录。"
   ,"embed.binding_timeout": "浏览器连接耗时超出预期"
   ,"embed.binding_timeout_hint": "请确认浏览器侧边栏已打开，然后重新连接。"
   ,"embed.open_main_app": "打开主应用"
@@ -2540,27 +2752,35 @@
   ,"preview.diagram.incoming": "入向关系"
   ,"preview.diagram.outgoing": "出向关系"
   ,"preview.diagram.noProblems": "没有结构或视觉问题。"
+  ,"preview.leave.title": "放弃未保存的修改？"
+  ,"preview.leave.description": "该文件仍有未保存的修改。请先保存，或放弃修改后离开当前标签页。"
+  ,"preview.leave.keepEditing": "继续编辑"
+  ,"preview.leave.discard": "放弃修改"
+  ,"preview.mode.source": "源文件"
+  ,"preview.mode.preview": "预览"
+  ,"preview.mode.split": "分栏"
+  ,"preview.conflict.description": "开始编辑后，该文件已在其他位置发生变化。请重新加载最新版本，或明确覆盖它。"
+  ,"preview.conflict.reload": "加载最新版本"
+  ,"preview.conflict.overwrite": "覆盖"
+  ,"preview.conflict.overwriteTitle": "覆盖最新版本？"
+  ,"preview.conflict.overwriteDescription": "是否使用当前编辑内容覆盖该文件的最新版本？"
+  ,"preview.url.address": "网页地址"
+  ,"preview.url.go": "前往"
+  ,"preview.url.reload": "重新加载网页"
+  ,"preview.url.openNewTab": "在新标签页中打开"
+  ,"preview.url.invalid": "请输入完整的 HTTP(S) 地址。"
+  ,"preview.url.loading": "正在加载 {{host}}…"
+  ,"preview.url.timeout": "网页未能完成加载，或该网站禁止嵌入。可以重新加载，或在新标签页中打开。"
+  ,"preview.url.isolation": "此网页与 Skeinix 隔离。如果网站禁止嵌入，"
   ,"knowledge.tabs.overview": "概览"
-  ,"knowledge.tabs.sources": "来源"
-  ,"knowledge.tabs.retrieval": "检索"
-  ,"knowledge.howItWorks": "这个知识库如何被使用"
-  ,"knowledge.howItWorks.sourceTitle": "1. 添加来源"
-  ,"knowledge.howItWorks.sourceBody": "上传包含事实内容的文档，供 Agent 或工作流后续检索。"
-  ,"knowledge.howItWorks.indexTitle": "2. 构建索引"
-  ,"knowledge.howItWorks.indexBody": "服务会在后台解析文件、拆分为可检索的知识块，并生成向量表示。"
-  ,"knowledge.howItWorks.retrieveTitle": "3. 检索证据"
-  ,"knowledge.howItWorks.retrieveBody": "可以在此测试文件检索，也可以在 Chat 中使用 /knowledge，让 Agent 按需浏览、搜索和读取来源。"
-  ,"knowledge.agenticFiles": "Agent 文件库"
-  ,"knowledge.matchKind.exact_phrase": "精确短语"
-  ,"knowledge.matchKind.all_terms": "全部词元"
-  ,"knowledge.matchKind.partial_terms": "部分词元"
+  ,"knowledge.tabs.sources": "文件"
   ,"knowledge.filterHealth": "按状态筛选"
   ,"knowledge.filter.all": "全部状态"
   ,"knowledge.filter.ready": "可用"
   ,"knowledge.filter.indexing": "索引中"
   ,"knowledge.filter.attention": "需要处理"
   ,"knowledge.filter.empty": "空知识库"
-  ,"knowledge.sort": "知识库排序"
+  ,"knowledge.sort": "知识资料包排序"
   ,"knowledge.sort.updated": "最近更新"
   ,"knowledge.sort.created": "最新创建"
   ,"knowledge.sort.name": "名称"
@@ -2574,9 +2794,550 @@
   ,"knowledge.fileStatus.indexing": "索引中"
   ,"knowledge.fileStatus.indexed": "已索引"
   ,"knowledge.fileStatus.failed": "失败"
+  ,"knowledge.fileStatus.stored": "已保存"
+  ,"knowledge.description": "将可复用的笔记、文档和多媒体资料整理成文件包，供 Agent 渐进式查阅。"
+  ,"knowledge.emptyHint": "创建一个笔记资料包，先用 README.md 说明内容，再添加相关文件。"
+  ,"knowledge.sourceFiles": "文件"
+  ,"knowledge.sourceFilesHint": "README.md 用于说明资料包；其它目录可包含文档、源码、图片、音频、视频或任意相关文件。"
+  ,"knowledge.version": "版本 {{version}}"
+  ,"knowledge.updated": "知识资料已更新"
+  ,"knowledge.editTitle": "编辑知识资料"
+  ,"knowledge.editHint": "标题和描述应保持简洁，方便用户与 Agent 识别这个资料包。"
+  ,"knowledge.preview.loading": "正在载入预览…"
+  ,"knowledge.preview.failed": "无法预览此文件。"
+  ,"knowledge.preview.unsupported": "暂不支持预览此文件类型"
   ,"knowledge.noSourceSearchHint": "请尝试其他文件名，或清除搜索条件。"
   ,"knowledge.delete": "删除"
-  ,"knowledge.deleted": "知识库已删除"
-  ,"knowledge.deleteTitle": "删除此知识库？"
-  ,"knowledge.deleteDescription": "{{name}} 及其全部源文件将从当前检索范围中移除。"
+  ,"knowledge.deleted": "知识资料包已删除"
+  ,"knowledge.deleteTitle": "删除此知识资料包？"
+  ,"knowledge.deleteDescription": "{{name}} 及资料包内的全部文件都将被删除。"
+  ,"provenance.scope.personal": "个人"
+  ,"provenance.scope.organization": "组织"
+  ,"provenance.scope.platform": "平台"
+  ,"provenance.origin.created": "已创建"
+  ,"provenance.origin.uploaded": "已上传"
+  ,"provenance.origin.imported": "已导入"
+  ,"provenance.origin.catalogInstall": "从目录安装"
+  ,"provenance.origin.derived": "已生成"
+  ,"provenance.origin.system": "平台内置"
+  ,"provenance.by": "创建者：{{name}}"
+  ,"credentials.openrouter.connect": "连接 OpenRouter"
+  ,"credentials.openrouter.reconnect": "重新连接 OpenRouter"
+  ,"credentials.openrouter.connected": "已连接"
+  ,"credentials.openrouter.connectedToast": "OpenRouter 已连接"
+  ,"credentials.openrouter.description": "连接你的 OpenRouter 账户，使用符合提供商偏好和隐私设置的模型。此操作不会用于登录 Skeinix。"
+  ,"credentials.openrouter.catalogReady": "Chat 中可使用 {{count}} 个模型"
+  ,"credentials.openrouter.catalogSummary": "其中 {{freeCount}} 个免费模型。开始对话时，请在 Chat 编辑框中选择模型和思考强度。"
+  ,"credentials.openrouter.refresh": "刷新模型"
+  ,"credentials.openrouter.disconnect": "断开连接"
+  ,"credentials.openrouter.confirmDisconnect": "确认断开"
+  ,"credentials.openrouter.disconnected": "已断开 OpenRouter"
+  ,"credentials.openrouter.unavailable": "当前不可用"
+  ,"credentials.openrouter.context": "上下文"
+  ,"credentials.openrouter.contextUnknown": "未提供上下文长度"
+  ,"credentials.openrouter.tools": "支持工具调用"
+  ,"credentials.openrouter.pricing": "OpenRouter 价格（输入 / 输出）"
+  ,"credentials.openrouter.emptyModels": "当前没有兼容的文本与工具调用模型。更新 OpenRouter 偏好后可重新刷新。"
+  ,"credentials.openrouter.rejected": "OpenRouter 已拒绝此密钥，请重新连接账户。"
+  ,"credentials.openrouter.refreshError": "模型目录暂时无法刷新，已保留之前的目录。"
+  ,"credentials.openrouter.boundary": "模型和价格由 OpenRouter 提供并可能变化；Skeinix 不控制其计费或可用性。兼容模型会进入 Settings 所选 Runtime 的候选列表，Codex 通过 OpenRouter Responses API 调用。"
+  ,"agent_settings.source_platform": "平台模型"
+  ,"agent_settings.source_openai_account": "OpenAI 账户"
+  ,"agent_settings.source_manual": "我的 API 连接"
+  ,"agent_settings.source_other": "其它来源"
+  ,"agent_settings.choose_source": "选择模型来源"
+  ,"agent_settings.choose_source_hint": "模型来源已按 Settings 中选择的 Runtime 进行过滤。"
+  ,"agent_settings.source_model_count": "{{count}} 个模型"
+  ,"agent_settings.source_free_count": "{{count}} 个免费模型"
+  ,"agent_settings.search_models": "搜索模型、Provider 或免费模型…"
+  ,"agent_settings.no_matching_models": "没有匹配的模型"
+  ,"agent_settings.free_model": "免费"
+  ,"agent_settings.model_context": "{{value}} 上下文"
+  ,"agent_settings.model_price_compact": "{{input}} / {{output}}"
+  ,"agent_settings.tool_capable": "工具调用"
+  ,"credentials.openrouter.callbackFailed": "OpenRouter 未完成连接，请重新开始。"
+  ,"credentials.openrouter.callbackUnreachable": "Skeinix 无法连接 OpenRouter，请检查部署网络或代理后重新开始。"
+  ,"credentials.openrouter.callbackRejected": "OpenRouter 已拒绝此授权或授权已过期，请重新开始。"
+  ,"credentials.openrouter.callbackExpired": "本次连接请求已过期或已使用，请重新开始。"
+  ,"credentials.openrouter.startFailed": "无法启动 OpenRouter 连接。"
+  ,"tasks.scheduleProgress.paused": "已暂停"
+  ,"tasks.scheduleProgress.running": "运行中"
+  ,"tasks.scheduleProgress.runningWithLast": "运行中 · 上次状态：{{status}}"
+  ,"tasks.scheduleProgress.next": "下次运行：{{time}}"
+  ,"tasks.scheduleProgress.none": "暂无下次运行时间"
+  ,"all": "全部"
+  ,"edit": "编辑"
+  ,"delete": "删除"
+  ,"deleting": "正在删除…"
+  ,"share.share": "分享"
+  ,"knowledge.title": "知识库"
+  ,"knowledge.back": "知识库"
+  ,"knowledge.create": "新建知识资料"
+  ,"knowledge.createHint": "请根据这组资料能够解答的问题来命名。"
+  ,"knowledge.created": "知识资料已创建"
+  ,"knowledge.loading": "正在载入知识资料…"
+  ,"knowledge.loadingDetail": "正在载入知识资料…"
+  ,"knowledge.loadingFiles": "正在载入文件…"
+  ,"knowledge.loadFailed": "无法载入知识资料"
+  ,"knowledge.loadFailedHint": "请检查连接后重新载入。"
+  ,"knowledge.detailFailed": "无法载入此知识资料"
+  ,"knowledge.forbidden": "你无权访问知识库"
+  ,"knowledge.forbiddenDetail": "你无权访问此知识资料"
+  ,"knowledge.filesForbidden": "你无权访问这些文件"
+  ,"knowledge.filesFailed": "无法加载文件"
+  ,"knowledge.empty": "暂无知识资料"
+  ,"knowledge.emptyIndex": "索引为空"
+  ,"knowledge.noMatch": "没有匹配的知识资料"
+  ,"knowledge.noMatchHint": "请尝试其他名称，或清除搜索条件。"
+  ,"knowledge.noDescription": "暂无描述"
+  ,"knowledge.noFiles": "暂无文件"
+  ,"knowledge.noFilesHint": "上传文件，将其添加到这个知识文件夹中。"
+  ,"knowledge.noFilesForFilter": "没有符合当前筛选条件的文件"
+  ,"knowledge.searchList": "搜索知识资料"
+  ,"knowledge.files": "个文件"
+  ,"knowledge.upload": "上传文件"
+  ,"knowledge.uploaded": "文件已上传"
+  ,"knowledge.import.action": "上传资料文件夹"
+  ,"knowledge.import.title": "上传知识文件夹"
+  ,"knowledge.import.hint": "选择一个完整文件夹或 ZIP 压缩包。根目录中的 README.md 用于说明资料包及其内容。"
+  ,"knowledge.import.folder": "选择文件夹"
+  ,"knowledge.import.folderHint": "保留文件夹层级"
+  ,"knowledge.import.zip": "选择 ZIP"
+  ,"knowledge.import.zipHint": "导入一个完整资料包"
+  ,"knowledge.import.folderSelected": "已选择 {{count}} 个文件"
+  ,"knowledge.import.readmeRequired": "所选文件夹的根目录必须包含 README.md。"
+  ,"knowledge.import.sourceRequired": "请选择文件夹或 ZIP 压缩包。"
+  ,"knowledge.import.submit": "导入知识"
+  ,"knowledge.import.importing": "正在导入…"
+  ,"knowledge.import.created": "知识文件夹已导入"
+  ,"knowledge.fileActions": "文件操作"
+  ,"knowledge.uploadFiles": "上传文件"
+  ,"knowledge.uploadFolder": "上传文件夹"
+  ,"knowledge.uploadFilesHere": "上传文件到此处"
+  ,"knowledge.uploadFolderHere": "上传文件夹到此处"
+  ,"knowledge.filesUploaded": "已上传 {{count}} 个文件"
+  ,"knowledge.filesDeleted": "已删除 {{count}} 个文件"
+  ,"knowledge.deleteFolder": "删除文件夹"
+  ,"knowledge.deleteFolderTitle": "删除文件夹？"
+  ,"knowledge.deleteFolderDescription": "将永久删除 {{name}} 及其中的 {{count}} 个文件。"
+  ,"knowledge.fileDeleted": "文件已删除"
+  ,"knowledge.deleteFile": "删除 {{name}}"
+  ,"knowledge.deleteFileTitle": "删除文件？"
+  ,"knowledge.deleteFileDescription": "将从这个知识文件夹中永久删除 {{name}}。"
+  ,"knowledge.resizeSources": "调整文件树宽度"
+  ,"agentSidebar.open": "打开 Agent 侧边栏"
+  ,"agentSidebar.close": "关闭 Agent 侧边栏"
+  ,"tool.diff.openFile": "打开文件"
+  ,"tool.diff.copy": "复制差异"
+  ,"tool.arguments.exactText": "精确文本详情"
+  ,"tool.result.imageTooLarge": "图像输出过大，无法在此处显示。"
+  ,"tool.result.unsafeLinkBlocked": "已阻止不安全的资源链接"
+  ,"tool.result.copyRawJson": "复制原始 JSON"
+  ,"tool.result.openDiagram": "打开图表"
+  ,"commandPalette.placeholder": "输入命令或搜索…"
+  ,"commandPalette.empty": "未找到结果。"
+  ,"commandPalette.group.navigate": "导航"
+  ,"commandPalette.group.workflow": "工作流"
+  ,"commandPalette.group.view": "视图"
+  ,"commandPalette.action.gotoWorkspace": "前往工作流"
+  ,"commandPalette.action.gotoTasks": "前往任务"
+  ,"commandPalette.action.gotoDeployments": "前往工作流部署"
+  ,"commandPalette.action.gotoSettings": "设置"
+  ,"commandPalette.action.saveWorkflow": "保存工作流"
+  ,"commandPalette.action.checkWorkflow": "检查工作流"
+  ,"commandPalette.action.undo": "撤销"
+  ,"commandPalette.action.redo": "重做"
+  ,"commandPalette.action.copyNode": "复制所选节点"
+  ,"commandPalette.action.pasteNode": "粘贴节点"
+  ,"commandPalette.action.duplicateNode": "复制所选节点副本"
+  ,"commandPalette.action.deleteSelection": "删除所选节点或连线"
+  ,"commandPalette.action.executeWorkflow": "执行工作流"
+  ,"commandPalette.action.cancelExecution": "取消执行"
+  ,"commandPalette.action.backToWorkspace": "返回工作流列表"
+  ,"workflowCheck.title": "工作流检查"
+  ,"workflowCheck.description": "在服务端验证当前草稿。"
+  ,"workflowCheck.copyError": "复制错误信息"
+  ,"workflowCheck.errorCopied": "错误信息已复制"
+  ,"workflowCheck.valid": "工作流有效"
+  ,"workflowCheck.whatToFix": "建议修复："
+  ,"workflow.save.accessChanged": "你的访问权限已变更。此草稿仍保存在本地，但无法保存。"
+  ,"workflow.version.majorCreated": "已创建新的主版本"
+  ,"workflow.toast.created": "工作流已创建"
+  ,"workflow.toast.deleted": "工作流已删除"
+  ,"workflow.toast.duplicated": "工作流已复制"
+  ,"workflow.toast.updated": "工作流已更新"
+  ,"table.empty": "暂无数据行。"
+  ,"canvas.http.headerNamePlaceholder": "请求头名称（例如 X-API-Key）"
+  ,"canvas.prompt.modelNameUnavailable": "模型名称（尚未配置模型）"
+  ,"chat.debug.toolCallCount_one": "{{count}} 次工具调用"
+  ,"chat.debug.toolCallCount_other": "{{count}} 次工具调用"
+  ,"chat.debug.toolCall": "工具调用"
+  ,"chat.debug.raw": "原始内容"
+  ,"chat.debug.preview": "预览"
+  ,"chat.debug.abstract": "摘要"
+  ,"chat.debug.compressed": "压缩内容"
+  ,"chat.preview.loadingBackgroundTasks": "正在载入后台任务…"
+  ,"preview.url.loading": "正在载入网页…"
+  ,"preview.drawio.loading": "正在载入 draw.io 预览…"
+  ,"preview.action.zoomOut": "缩小"
+  ,"preview.action.zoomIn": "放大"
+  ,"preview.drawio.fit": "适应图表"
+  ,"preview.drawio.export.native": "draw.io · 原生源文件"
+  ,"preview.drawio.export.svg": "SVG · 可缩放矢量图"
+  ,"preview.drawio.export.png": "PNG · 内嵌源文件的图像"
+  ,"preview.drawio.export.pdf": "PDF · 文档与打印"
+  ,"preview.drawio.export.jpg": "JPG · 紧凑位图"
+  ,"preview.pdf.previousPage": "上一页"
+  ,"preview.pdf.nextPage": "下一页"
+  ,"preview.pdf.fitWidth": "适应宽度"
+  ,"preview.pdf.loading": "正在载入 PDF…"
+  ,"preview.html.loading": "正在载入 HTML 预览…"
+  ,"preview.text.loading": "正在载入文本…"
+  ,"preview.text.mixedNewlines": "混合换行符将被统一"
+  ,"organization.identity.scimEndpoint": "SCIM 地址"
+  ,"organization.identity.callbackUrl": "回调地址"
+  ,"organization.identity.namePlaceholder": "企业身份"
+  ,"organization.serviceAccounts.generation": "密钥代次"
+  ,"deployments.actions.deployWorkflow": "部署"
+  ,"download": "下载"
+  ,"agent": "Agent"
+  ,"agent_changed_while_dirty": "你有未保存的编辑时，Agent 修改了此工作流。"
+  ,"agent_open_workflow": "打开工作流"
+  ,"agent_settings.no_model": "尚未配置模型"
+  ,"agent.startup.acquiring_sandbox": "正在连接沙盒"
+  ,"agent.startup.awaiting_first_output": "正在等待响应"
+  ,"agent.startup.finalizing": "正在整理响应"
+  ,"agent.startup.first_turn_hint": "首次使用时需要准备隔离环境，后续对话通常会更快。"
+  ,"agent.startup.mounting_workspace": "正在挂载对话文件"
+  ,"agent.startup.queueing": "正在等待可用资源"
+  ,"agent.startup.running_named_tool": "正在运行 {{tool}}"
+  ,"agent.startup.running_tool": "正在执行操作"
+  ,"auth_hide_password": "隐藏密码"
+  ,"auth_show_password": "显示密码"
+  ,"canvas.batch.colKindStatus": "状态"
+  ,"canvas.batch.dataPathHint": "支持读取 /data 或 /mount 目录下的 CSV、TSV 和 JSONL 文本文件。"
+  ,"canvas.batch.dataPathInvalid": "请输入 /data 或 /mount 目录下的文件路径。"
+  ,"canvas.batch.inputSheetPlaceholder": "选择工作表"
+  ,"canvas.batch.loadDataPath": "载入"
+  ,"canvas.batch.noColumnMatches": "没有与搜索条件匹配的列。"
+  ,"canvas.batch.noNodeOutputMatches": "没有与搜索条件匹配的节点输出。"
+  ,"canvas.batch.noSheetMatches": "没有与搜索条件匹配的工作表。"
+  ,"canvas.batch.searchColumn": "搜索列"
+  ,"canvas.batch.searchNodeOutput": "搜索节点输出"
+  ,"canvas.batch.searchSheet": "搜索工作表"
+  ,"canvas.runBatch.openPanel": "打开批处理面板"
+  ,"chat.attention.open": "打开 {{count}} 个需要处理的项目"
+  ,"chat.copyChatId": "复制对话 ID"
+  ,"chat.debug.contextDecisions": "上下文决策"
+  ,"chat.debug.contextManifest": "上下文清单"
+  ,"chat.debug.empty": "此对话尚未生成调试快照。"
+  ,"chat.debug.error": "无法载入调试快照。"
+  ,"chat.debug.loading": "正在载入调试快照..."
+  ,"chat.debug.memory": "会话记忆"
+  ,"chat.debug.memoryConfig": "记忆配置"
+  ,"chat.debug.no_snapshot": "暂无调试快照"
+  ,"chat.debug.noDecisions": "未记录上下文决策。"
+  ,"chat.debug.noToolActivity": "此快照中没有工具调用记录。"
+  ,"chat.debug.noTools": "未记录工具注册活动。"
+  ,"chat.debug.resizeFromChat": "调整对话与调试面板的宽度"
+  ,"chat.debug.resizeFromView": "调整预览与调试面板的宽度"
+  ,"chat.debug.runtimePolicy": "运行时策略"
+  ,"chat.debug.title": "Agent 调试"
+  ,"chat.debug.toolActivity": "工具活动"
+  ,"chat.debug.toolCallCount": "{{count}} 次工具调用"
+  ,"chat.debug.toolsAndMcp": "工具与 MCP"
+  ,"chat.debug.views": "调试视图"
+  ,"chat.error": "对话当前不可用。"
+  ,"chat.explorer.emptyDraft": "发送消息或启动沙盒后，即可创建此对话的工作空间。"
+  ,"chat.explorer.loadingWorkspace": "正在载入工作空间..."
+  ,"chat.loading": "正在准备对话工作空间..."
+  ,"chat.notifications.jobCancelled": "后台任务已取消"
+  ,"chat.notifications.jobCompleted": "后台任务已完成"
+  ,"chat.notifications.jobFailed": "后台任务需要处理"
+  ,"chat.preview.closeItem": "关闭预览项目"
+  ,"chat.preview.closePane": "关闭预览"
+  ,"chat.preview.empty": "打开工作流、产物或沙盒文件后，可在此处预览。"
+  ,"chat.preview.emptyTitle": "预览"
+  ,"chat.preview.loading": "正在载入预览..."
+  ,"chat.preview.loadingFile": "正在载入文件..."
+  ,"chat.preview.loadingWorkflow": "正在载入工作流..."
+  ,"chat.preview.noResources": "暂无可预览资源"
+  ,"chat.preview.resize": "调整对话与预览面板的宽度"
+  ,"chat.preview.resources": "预览资源"
+  ,"chat.preview.type.backgroundJobs": "后台任务"
+  ,"chat.preview.type.empty": "无资源"
+  ,"chat.preview.type.file": "文件"
+  ,"chat.preview.type.interactive": "交互内容"
+  ,"chat.preview.type.workflow": "工作流"
+  ,"chat.preview.workflowTitle": "工作流：{{id}}"
+  ,"chat.sandbox.hibernated": "沙盒已休眠"
+  ,"chat.sandbox.hibernating": "正在创建快照"
+  ,"chat.sandbox.releasing": "正在释放沙盒"
+  ,"chat.sandbox.restoring": "正在恢复沙盒"
+  ,"chat.sandbox.snapshot_failed": "快照创建失败"
+  ,"chat.sandbox.start_hint": "启动沙盒"
+  ,"chat.sandbox.title": "沙盒"
+  ,"chat.sandbox.ttl_paused": "生存时间计时已暂停"
+  ,"chat.viewWorkflow": "查看工作流"
+  ,"chat.workflowViewer.close": "关闭工作流查看器"
+  ,"chat.workflowViewer.error": "无法载入工作流。"
+  ,"chat.workflowViewer.loading": "正在载入工作流..."
+  ,"clear": "清除"
+  ,"common_save": "保存"
+  ,"common.copy": "复制"
+  ,"common.done": "完成"
+  ,"common.finish": "完成"
+  ,"common.loading": "正在载入…"
+  ,"common.no": "否"
+  ,"common.required": "必填"
+  ,"common.retry": "重试"
+  ,"common.yes": "是"
+  ,"composer.active_run_discovery_failed": "无法检查 Agent 的运行状态。请刷新页面或稍后重试。"
+  ,"composer.loading_history": "正在载入对话历史…"
+  ,"composer.runtime_unavailable": "发送消息前，请先为此运行时连接 API 或账户。"
+  ,"create": "创建"
+  ,"creating": "正在创建…"
+  ,"deployments.create.fields.majorVersion": "主版本"
+  ,"deployments.create.fields.subVersion": "子版本"
+  ,"deployments.create.noVersions": "此工作流没有可用的已保存版本。"
+  ,"deployments.create.selectMajor": "选择主版本"
+  ,"deployments.create.selectSub": "选择子版本"
+  ,"deployments.create.selectVersion": "选择工作流版本。"
+  ,"deployments.filter.status": "按部署状态筛选"
+  ,"deployments.filter.type": "按部署类型筛选"
+  ,"deployments.summary.label": "部署状态概览"
+  ,"description": "描述"
+  ,"done": "完成"
+  ,"embed.binding": "正在连接浏览器…"
+  ,"embed.browser.subtitle": "可结合当前页面使用"
+  ,"embed.browser.title": "浏览器助手"
+  ,"embed.establishing_extension_session": "正在建立安全的浏览器会话…"
+  ,"embed.execution.loadFailed": "无法载入此工作流。"
+  ,"embed.preparing_browser_chat": "正在准备浏览器对话…"
+  ,"embed.session_timeout": "无法建立插件会话"
+  ,"embed.session_timeout_hint": "请打开 Skeinix 侧边栏后重试。如果插件刚刚更新，请先重新载入插件。"
+  ,"embed.standalone_hint": "此安全对话页面由 Skeinix 浏览器插件打开。请打开侧边栏，或前往主应用继续操作。"
+  ,"execute.openRunPanel": "打开运行面板"
+  ,"explorer.resize": "调整资源管理器宽度"
+  ,"inspector.compact": "使用紧凑的检查器高度"
+  ,"inspector.config.expandEditor": "展开编辑器"
+  ,"inspector.config.http.authLabel": "认证（可选）"
+  ,"inspector.config.http.authNone": "无"
+  ,"inspector.config.http.bodyNone": "无"
+  ,"inspector.config.startNone": "StartNode 无需配置。请在上方字段中定义工作流输入。"
+  ,"inspector.expand": "展开检查器"
+  ,"inspector.fieldValue.editValue": "编辑值"
+  ,"inspector.fieldValue.editValueDesc": "关闭此编辑器时，修改会同步回输入字段。"
+  ,"inspector.fieldValue.expand": "展开编辑器"
+  ,"inspector.info.provenance": "来源"
+  ,"inspector.info.summary": "工作流详情"
+  ,"inspector.node.details": "节点详情"
+  ,"inspector.resize": "调整检查器宽度"
+  ,"inspector.run.inputCount": "{{count}} 个字段"
+  ,"inspector.run.inputs": "输入"
+  ,"inspector.run.nodeSummary": "{{count}} 个节点，{{completed}} 个已完成，{{failed}} 个失败"
+  ,"inspector.run.output": "输出"
+  ,"inspector.run.running": "正在运行…"
+  ,"inspector.run.starting": "正在启动..."
+  ,"inspector.run.viewNodeOutput": "查看节点输出"
+  ,"inspector.runNode.stopping": "正在停止…"
+  ,"keep_my_edits": "保留我的编辑"
+  ,"load_agent_version": "载入 Agent 版本（放弃我的编辑）"
+  ,"loading": "正在载入…"
+  ,"management.activeMembers": "活跃"
+  ,"management.adoption": "账户与工作空间"
+  ,"management.available": "可用"
+  ,"management.companies": "企业"
+  ,"management.companyDetail": "企业工作空间"
+  ,"management.controlPlane": "平台控制面"
+  ,"management.cpuCount": "{{count}} 个逻辑 CPU · 当前 API 主机"
+  ,"management.disk": "可用磁盘空间"
+  ,"management.hostLoad": "主机负载"
+  ,"management.identifier": "标识符"
+  ,"management.infrastructure": "基础设施"
+  ,"management.members": "成员"
+  ,"management.memory": "内存使用量"
+  ,"management.newUsers24h": "过去 24 小时新增 {{count}} 位"
+  ,"management.noCompanies": "暂无企业工作空间。"
+  ,"management.onlineUsers": "当前在线"
+  ,"management.onlineWindow": "过去 5 分钟内存在活跃 Web 会话"
+  ,"management.openOrganization": "打开组织设置"
+  ,"management.organizationDirectory": "组织目录"
+  ,"management.personalDetail": "个人工作空间"
+  ,"management.personalUsers": "个人用户"
+  ,"management.privacyBoundary": "客户隐私边界"
+  ,"management.privacyBoundaryDetail": "此页面仅展示汇总指标和身份生命周期元数据。访问特定客户资源需要单独提交有时限的支持请求，并经过独立审批、强身份验证、客户通知和完整审计。"
+  ,"management.registeredUsers": "注册用户"
+  ,"management.sandboxDetail": "{{busy}} 个忙碌中 · 当前 API Worker"
+  ,"management.sandboxes": "驻留沙盒"
+  ,"management.subtitle": "展示运行健康状况和身份生命周期元数据，不包含客户对话、文件、提示词、凭据或运行时内容。"
+  ,"management.title": "平台管理"
+  ,"management.total": "总计"
+  ,"management.unavailable": "此账户无法使用平台管理功能。"
+  ,"management.unavailableHint": "此区域仅限平台运维人员使用。工作空间所有者可在组织设置中管理成员、身份和服务账户。"
+  ,"mcp.args": "参数"
+  ,"mcp.args_invalid": "参数必须是有效的 JSON 数组。"
+  ,"mcp.catalog.details": "详情"
+  ,"mcp.command": "命令"
+  ,"mcp.command_ph": "npx"
+  ,"mcp.cwd": "工作目录"
+  ,"mcp.cwd_ph": "可选"
+  ,"mcp.detail.brief.saved": "简介已保存"
+  ,"mcp.detail.configHelp": "请通过格式化摘要进行检查。原始 JSON 可用于诊断或复制。"
+  ,"mcp.detail.configSummary": "生效配置"
+  ,"mcp.detail.connectionHealth": "连接状态"
+  ,"mcp.detail.exposedTools": "公开工具"
+  ,"mcp.detail.rawConfig": "原始 JSON"
+  ,"mcp.detail.secretEncrypted": "已加密，且不会以明文形式返回"
+  ,"mcp.detail.secretHandling": "密钥处理"
+  ,"mcp.detail.summary": "服务器概览"
+  ,"mcp.detail.tools.directory": "工具目录"
+  ,"mcp.detail.tools.discover": "发现工具"
+  ,"mcp.detail.tools.inputs": "输入参数"
+  ,"mcp.detail.tools.no_parameter_description": "未提供参数说明。"
+  ,"mcp.env": "环境变量"
+  ,"mcp.env_invalid": "环境变量必须是有效的 JSON 对象。"
+  ,"mcp.filter_status": "按服务器状态筛选"
+  ,"mcp.form.authentication": "身份验证"
+  ,"mcp.form.authenticationHelp": "凭据保存后会被加密，且不会再次显示。"
+  ,"mcp.form.connection": "连接"
+  ,"mcp.form.connectionHelp": "选择 Skeinix 连接此服务器的方式，并提供地址或命令。"
+  ,"mcp.form.identity": "标识"
+  ,"mcp.form.identityHelp": "为服务器命名，并定义 Agent 调用其工具时使用的前缀。"
+  ,"mcp.form.testHelp": "保存前验证端点，并检查其公开的工具数量。"
+  ,"mcp.form.testPending": "尚未使用当前配置进行连接测试。"
+  ,"mcp.transport_http_short": "HTTP"
+  ,"mcp.transport_stdio": "Stdio 命令"
+  ,"mcp.uninstall_confirm": "确定卸载此 MCP 服务器吗？卸载后，Agent 将无法再载入其工具。"
+  ,"mcp.verified": "已验证"
+  ,"name": "名称"
+  ,"nav.management": "平台管理"
+  ,"nav.mcp": "MCP 服务器"
+  ,"nav.workflow": "工作流"
+  ,"nav.workflows": "工作流"
+  ,"no_workflow.title": "暂无工作流"
+  ,"open": "打开"
+  ,"organization.disableServiceAccountDescription": "在重新启用前，使用此身份的任务、部署或集成将无法运行。"
+  ,"organization.disableServiceAccountTitle": "停用此服务账户？"
+  ,"organization.rotateServiceAccountDescription": "此服务账户的现有凭据将立即失效。使用这些凭据的任务、部署或集成必须同步更新。"
+  ,"organization.rotateServiceAccountTitle": "轮换此服务账户的凭据？"
+  ,"organization.rotating": "正在轮换…"
+  ,"organization.saved": "已保存"
+  ,"organization.saveFailed": "保存失败"
+  ,"organization.saving": "正在保存…"
+  ,"organization.switching": "正在切换工作空间…"
+  ,"prompt_node.custom_model_placeholder": "API 配置中的模型 ID"
+  ,"redo": "重做"
+  ,"rename": "重命名"
+  ,"saving": "正在保存…"
+  ,"settings_interface": "界面"
+  ,"settings_interface_desc": "选择 Skeinix 的外观以及信息的显示格式。"
+  ,"share.role": "访问权限"
+  ,"skills.custom.unsaved_body": "离开前请保存此 Skill 草稿，或放弃所做的修改。"
+  ,"skills.detail.about": "关于此 Skill"
+  ,"skills.detail.packageDetails": "包详情"
+  ,"skills.edit": "编辑"
+  ,"skills.filter_source": "按 Skill 来源筛选"
+  ,"skills.select_catalog": "选择 Skill 目录"
+  ,"storage.binaryPreview": "此文件无法以文本形式预览。"
+  ,"storage.closePreview": "关闭文件预览"
+  ,"storage.continueEditing": "继续编辑"
+  ,"storage.deleteConfirm": "确定删除此项目及其中的内容吗？"
+  ,"storage.deleteTitle": "删除项目"
+  ,"storage.discard": "放弃修改"
+  ,"storage.newFolder": "新建文件夹"
+  ,"storage.preview": "文件预览"
+  ,"storage.rename": "重命名"
+  ,"storage.resizePreview": "调整文件预览宽度"
+  ,"storage.saving": "正在保存…"
+  ,"storage.sort.label": "文件排序"
+  ,"storage.toast.deleted": "已删除"
+  ,"storage.toast.deleteFailed": "删除失败"
+  ,"storage.toast.downloadFailed": "下载失败"
+  ,"storage.toast.folderCreated": "文件夹已创建"
+  ,"storage.toast.folderCreateFailed": "创建失败"
+  ,"storage.toast.renamed": "已重命名"
+  ,"storage.toast.renameFailed": "重命名失败"
+  ,"storage.toast.saved": "已保存"
+  ,"storage.toast.saveFailed": "保存失败"
+  ,"storage.toast.uploaded": "已上传"
+  ,"storage.toast.uploadFailed": "上传失败"
+  ,"storage.truncated": "内容已截断"
+  ,"storage.unsavedDescription": "离开此文件前，请保存或放弃所做的修改。"
+  ,"storage.unsavedTitle": "文件有未保存的修改"
+  ,"subagent_node.task_history_subtitle": "比较此子 Agent 任务模板在不同工作流版本中的变化。"
+  ,"subagent_node.task_history_title": "任务模板历史"
+  ,"subagent_node.task_template": "任务模板"
+  ,"subagent_node.task_template_placeholder": "# 任务\n读取 {{file_path}} 并总结其中的要点。\n\n# 操作说明\n使用文件工具检查文件并提取重要信息。\n\n# 输出\n返回已声明的输出字段。"
+  ,"tasks.new.noWorkflowMatches": "没有与搜索条件匹配的工作流。"
+  ,"tasks.new.searchWorkflow": "搜索工作流名称、ID 或描述"
+  ,"tasks.scheduled.calendarSchedule": "在指定时间运行"
+  ,"tasks.scheduled.cronExpression": "Cron 表达式"
+  ,"tasks.scheduled.customCron": "自定义 Cron"
+  ,"tasks.scheduled.dayOfMonth": "每月第几天"
+  ,"tasks.scheduled.dayOfWeek": "星期几"
+  ,"tasks.scheduled.days": "天"
+  ,"tasks.scheduled.endAt": "结束时间（可选）"
+  ,"tasks.scheduled.frequency": "频率"
+  ,"tasks.scheduled.hours": "小时"
+  ,"tasks.scheduled.intervalSchedule": "按固定间隔运行"
+  ,"tasks.scheduled.intervalUnit": "间隔单位"
+  ,"tasks.scheduled.intervalValue": "间隔数值"
+  ,"tasks.scheduled.minuteOfHour": "每小时的第几分钟"
+  ,"tasks.scheduled.minutes": "分钟"
+  ,"tasks.scheduled.monthly": "每月"
+  ,"tasks.scheduled.overlapHint": "如果上一次运行仍未结束，将跳过下一次计划运行，且不会自动补跑。"
+  ,"tasks.scheduled.runTime": "运行时间"
+  ,"tasks.scheduled.startAt": "开始时间（可选）"
+  ,"tasks.scheduled.timeframe": "开始与结束时间"
+  ,"tasks.summary.label": "任务状态概览"
+  ,"theme_dark": "深色"
+  ,"theme_light": "浅色"
+  ,"theme_system": "跟随系统"
+  ,"toggle_theme": "切换主题"
+  ,"tool.copyOutput": "复制输出"
+  ,"tool.interactive.open_external_request": "打开请求的页面"
+  ,"tool.interactive.select_option": "选择一个选项"
+  ,"tool.retryable": "可重试"
+  ,"tool.status.done": "已完成"
+  ,"tool.status.error": "失败"
+  ,"tool.status.running": "运行中"
+  ,"undo": "撤销"
+  ,"unsaved_body": "此工作流有未保存的编辑。离开前请保存，或放弃所做的修改。"
+  ,"unsaved_cancel": "取消"
+  ,"unsaved_discard": "放弃修改"
+  ,"unsaved_save": "保存"
+  ,"unsaved_saving": "正在保存…"
+  ,"unsaved_title": "有未保存的修改"
+  ,"upload": "上传"
+  ,"vfs.destination": "目标位置"
+  ,"vfs.file": "文件"
+  ,"vfs.replace": "替换"
+  ,"vfs.resize_preview": "调整文件预览宽度"
+  ,"vfs.resize_run_preview": "调整运行文件预览宽度"
+  ,"vfs.sandbox": "沙盒"
+  ,"vfs.size": "大小"
+  ,"vfs.stale_file": "旧版本文件"
+  ,"vfs.stale_file_help": "此文件由较早的工作流版本生成。"
+  ,"vfs.upload_replace_title": "替换现有文件？"
+  ,"vfs.uploading": "正在上传…"
+  ,"view": "查看"
+  ,"workflow.backToWorkflows": "返回工作流列表"
+  ,"workflow.metadataOnly": "此角色只能查看元数据，无法打开工作流内容。"
+  ,"workflow.sandbox.close": "关闭工作流沙盒"
+  ,"workflow.sandbox.closeAction": "关闭沙盒"
+  ,"workflow.sandbox.closeDescription": "这将停止所有正在运行的执行，并释放“{{name}}”的活动沙盒。已存储的工作流文件仍会保留。"
+  ,"workflow.sandbox.closeTitle": "关闭沙盒？"
+  ,"workflow.sandbox.closing": "正在关闭…"
+  ,"workflow.sandbox.confirmClose": "关闭工作流沙盒？"
+  ,"workflow.sandbox.hibernated": "沙盒已休眠"
+  ,"workflow.sandbox.hibernating": "正在创建快照"
+  ,"workflow.sandbox.open": "打开工作流沙盒"
+  ,"workflow.sandbox.releasing": "正在释放沙盒"
+  ,"workflow.sandbox.restoring": "正在恢复沙盒"
+  ,"workflow.sandbox.snapshot_failed": "快照创建失败"
+  ,"workflow.sandbox.title": "沙盒"
+  ,"workflow.sandbox.ttl_paused": "生存时间计时已暂停"
+  ,"workspace_load_error_hint": "请检查连接，然后重新载入工作流列表。"
+  ,"workspace_loading": "正在载入工作流…"
 }

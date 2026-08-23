@@ -22,7 +22,10 @@
 // Contract — kept in sync with `routes/mcp_servers.py` (`_scrub` response).
 // ---------------------------------------------------------------------------
 
-import type { ResourceAccess } from '@/lib/api/organizations';
+import type {
+  ResourceAccess,
+  ResourceProvenance,
+} from '@/lib/api/organizations';
 
 /** A registered MCP server row (token scrubbed to `"***"`). */
 export interface McpServer {
@@ -68,6 +71,7 @@ export interface McpServer {
   created_at: string;
   updated_at: string;
   access?: ResourceAccess | null;
+  provenance: ResourceProvenance;
 }
 
 /** Body for create + test (same input shape). */
@@ -133,33 +137,6 @@ export interface McpCatalogResult {
   ranking: 'browse' | 'popular' | 'search';
   items: McpCatalogItem[];
   has_more: boolean;
-}
-
-export interface PlatformMcpTool {
-  name: string;
-  description: string;
-  input_schema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-    additionalProperties: boolean;
-  };
-  annotations: {
-    readOnlyHint?: boolean;
-    destructiveHint?: boolean;
-    idempotentHint?: boolean;
-    openWorldHint?: boolean;
-  };
-}
-
-export interface PlatformMcpService {
-  id: string;
-  name: string;
-  description: string;
-  activation: string;
-  activation_mode: 'base' | 'command';
-  runtime_types: Array<'langchain' | 'codex'>;
-  tools: PlatformMcpTool[];
 }
 
 // ---------------------------------------------------------------------------
@@ -241,15 +218,6 @@ export async function listMcpServers(): Promise<McpServer[]> {
   return body.items;
 }
 
-export async function listPlatformMcpServices(): Promise<PlatformMcpService[]> {
-  const resp = await authedFetch('/api/v1/mcp-servers/platform');
-  const body = await jsonOrThrow<{ items: PlatformMcpService[] }>(
-    resp,
-    'listPlatformMcpServices',
-  );
-  return body.items;
-}
-
 export async function searchMcpCatalog(
   source: McpCatalogSource,
   search = '',
@@ -265,8 +233,24 @@ export async function resolveMcpCatalogItem(
   sourceId: string,
 ): Promise<McpCatalogItem> {
   const params = new URLSearchParams({ source, source_id: sourceId });
-  const resp = await authedFetch(`/api/v1/mcp-servers/catalog/resolve?${params}`);
-  return jsonOrThrow<McpCatalogItem>(resp, 'resolveMcpCatalogItem');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 18_000);
+  try {
+    const resp = await authedFetch(`/api/v1/mcp-servers/catalog/resolve?${params}`, {
+      signal: controller.signal,
+    });
+    return await jsonOrThrow<McpCatalogItem>(resp, 'resolveMcpCatalogItem');
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        'The catalog did not respond in time. Check the network route and try again.',
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export async function getMcpServer(id: string): Promise<McpServer> {

@@ -1,7 +1,7 @@
 """Persistent built-in command registry.
 
 Commands are platform-owned capabilities activated by slash commands such as
-``/build``. Once activated, a command stays active for the chat: tools are gated
+``/workflow``. Once activated, a command stays active for the chat: tools are gated
 by the active command set, and command context is injected next to the latest
 activation message by ``CommandContextEdit``.
 """
@@ -11,12 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vibecanvas_api.agents.prompts.browser import BROWSER
-from vibecanvas_api.agents.prompts.build import BUILD
+from vibecanvas_api.agents.prompts.workflow import WORKFLOW
 from vibecanvas_api.agents.prompts.deployment import DEPLOYMENT
 from vibecanvas_api.agents.prompts.knowledge import KNOWLEDGE
-from vibecanvas_api.agents.prompts.plan import PLAN
 from vibecanvas_api.agents.prompts.task import TASK
-from vibecanvas_api.agents.prompts.diagram import DIAGRAM
+from vibecanvas_api.agents.prompts.diagram import DIAGRAM, DIAGRAM_MCP_TOOL_NAMES
+from vibecanvas_api.agents.prompts.document import DOCUMENT, DOCUMENT_MCP_TOOL_NAMES
 from vibecanvas_api.browser.playwright_contract import PLAYWRIGHT_AGENT_TOOLS
 
 
@@ -36,20 +36,6 @@ class CommandMode:
 
 
 COMMAND_MODES: dict[str, CommandMode] = {
-    "plan": CommandMode(
-        name="plan",
-        trigger="/plan",
-        kind="additive",
-        sticky=True,
-        context_prompt=PLAN,
-        tools=["create_execution_plan"],
-        activation_message=(
-            "This is the latest /plan activation. Follow the Dynamic Execution "
-            "Plan contract above, not Workflow node definitions. Decide whether "
-            "a durable graph adds value; if so, author and submit one strict Plan."
-        ),
-        external_control=None,
-    ),
     "task": CommandMode(
         name="task",
         trigger="/task",
@@ -97,24 +83,26 @@ COMMAND_MODES: dict[str, CommandMode] = {
         sticky=True,
         context_prompt=KNOWLEDGE,
         tools=[
-            "list_knowledge_bases",
-            "get_knowledge_base",
-            "list_knowledge_files",
-            "search_knowledge",
-            "read_knowledge_file",
+            "knowledge_list",
+            "knowledge_get",
+            "knowledge_create",
+            "knowledge_update",
+            "knowledge_delete",
+            "knowledge_search",
         ],
         activation_message=(
-            "This is the latest /knowledge activation. Discover authorized "
-            "knowledge bases before searching them."
+            "This is the latest /knowledge activation. Treat Knowledge as "
+            "versioned file packages, read README.md first, and publish only "
+            "after validating the complete local directory."
         ),
         external_control=None,
     ),
-    "build": CommandMode(
-        name="build",
-        trigger="/build",
+    "workflow": CommandMode(
+        name="workflow",
+        trigger="/workflow",
         kind="additive",
         sticky=True,
-        context_prompt=BUILD,
+        context_prompt=WORKFLOW,
         tools=[
             "list_workflows",
             "set_workflow",
@@ -129,7 +117,7 @@ COMMAND_MODES: dict[str, CommandMode] = {
             "new_version",
         ],
         activation_message=(
-            "This is the latest /build activation. Treat the user's message as "
+            "This is the latest /workflow activation. Treat the user's message as "
             "workflow construction or optimization work. If the user has not said "
             "what to build, ask what to build."
         ),
@@ -156,21 +144,25 @@ COMMAND_MODES: dict[str, CommandMode] = {
         kind="additive",
         sticky=True,
         context_prompt=DIAGRAM,
-        tools=[
-            "get_diagram_spec",
-            "search_diagram_assets",
-            "inspect_diagram",
-            "check_diagram",
-            "render_interactive",
-            "review_diagram",
-            "export_diagram",
-        ],
+        tools=[*DIAGRAM_MCP_TOOL_NAMES, "render_interactive"],
         activation_message=(
-            "This is the latest /diagram activation. Use the enabled Registry "
-            "catalog and complete the auto-save -> check -> render -> review chain. "
-            "A review edit_source action must be repaired and reviewed again; "
-            "do not stop until the latest review action is deliver or the bounded "
-            "review limit is reached."
+            "This is the latest /diagram activation. Use the official draw.io "
+            "MCP, persist one native .drawio file, publish its preview, and "
+            "inspect the rendered pixels before delivery."
+        ),
+        external_control=None,
+    ),
+    "document": CommandMode(
+        name="document",
+        trigger="/document",
+        kind="additive",
+        sticky=True,
+        context_prompt=DOCUMENT,
+        tools=[*DOCUMENT_MCP_TOOL_NAMES, "render_interactive"],
+        activation_message=(
+            "This is the latest /document activation. Produce the requested "
+            "professional native document, review its current structure and "
+            "rendered pixels, then publish that exact file in Preview."
         ),
         external_control=None,
     ),

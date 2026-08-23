@@ -95,7 +95,6 @@ describe('ChatComposer Stop', () => {
         }],
         default_model_id: modelId,
         error_code: null,
-        chat_configuration_locked: false,
         bound_agent_settings: null,
       })),
     );
@@ -113,7 +112,7 @@ describe('ChatComposer Stop', () => {
     expect(screen.queryByText(/Runtime default/i)).toBeNull();
   });
 
-  it('groups Codex account and API models in the composer picker', async () => {
+  it('navigates Codex account and API sources before choosing a model', async () => {
     const user = userEvent.setup();
     server.use(
       http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
@@ -144,22 +143,132 @@ describe('ChatComposer Stop', () => {
         ],
         default_model_id: 'codex:account:gpt-5.6-sol',
         error_code: null,
-        chat_configuration_locked: false,
         bound_agent_settings: null,
       })),
     );
 
     renderComposer('chat_codex_model_groups', true);
-    const picker = await screen.findByRole('combobox', { name: 'Model' });
+    const picker = await screen.findByRole('button', { name: 'Model' });
     await user.click(picker);
 
     expect(screen.getByText('OpenAI account')).toBeInTheDocument();
-    expect(screen.getByText('OpenAI API')).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /GPT-5.6-Sol/ })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /Production OpenAI/ })).toBeInTheDocument();
+    expect(screen.getByText('My API connections')).toBeInTheDocument();
+    await user.click(screen.getByText('OpenAI account'));
+    expect(screen.getByRole('button', { name: /GPT-5.6-Sol/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Production OpenAI/ })).toBeNull();
   });
 
-  it('locks the server-bound Runtime model and connection after the first turn', async () => {
+  it('searches an OpenRouter free model and exposes only its reasoning levels', async () => {
+    const user = userEvent.setup();
+    const accountModel = 'codex:account:gpt-5.6-sol';
+    const openRouterModel = 'codex:openrouter:11111111-1111-4111-8111-111111111111:b3gtYWxwaGE';
+    server.use(
+      http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
+        protocol_version: 2,
+        runtime_type: 'codex',
+        runtime_available: true,
+        authenticated: true,
+        source: 'test-openrouter-codex',
+        models: [
+          {
+            id: accountModel,
+            label: 'GPT-5.6-Sol',
+            description: 'Connected OpenAI account',
+            api_source: 'chatgpt_account',
+            api_protocol: 'codex_app_server',
+            provider: 'chatgpt',
+            provider_model_id: 'gpt-5.6-sol',
+            is_default: true,
+            supported_reasoning_efforts: [{ id: 'high', label: 'High', description: '' }],
+            default_reasoning_effort: null,
+          },
+          {
+            id: openRouterModel,
+            label: 'Ox Alpha',
+            description: 'Free agent model',
+            api_source: 'openrouter_oauth',
+            api_protocol: 'openai_responses',
+            provider: 'openrouter',
+            provider_model_id: 'stealth/ox-alpha',
+            context_length: 1048576,
+            supports_tools: true,
+            input_price: '0',
+            output_price: '0',
+            is_default: false,
+            supported_reasoning_efforts: [
+              { id: 'low', label: 'Low', description: '' },
+              { id: 'high', label: 'High', description: '' },
+              { id: 'max', label: 'Maximum', description: '' },
+            ],
+            default_reasoning_effort: 'max',
+          },
+        ],
+        default_model_id: accountModel,
+        error_code: null,
+        bound_agent_settings: null,
+      })),
+    );
+
+    renderComposer('chat_openrouter_model', true);
+    await user.click(await screen.findByRole('button', { name: 'Model' }));
+    expect(screen.getByText(/1 free/)).toBeInTheDocument();
+    await user.click(screen.getByText('OpenRouter'));
+    const search = screen.getByPlaceholderText(/Search models, providers, or free/i);
+    await user.type(search, 'free');
+    expect(await screen.findByRole('button', { name: /Ox Alpha/ })).toHaveTextContent('stealth/ox-alpha');
+    await user.click(screen.getByRole('button', { name: /Ox Alpha/ }));
+
+    expect(
+      useChatAgentSettingsStore.getState().entries.chat_openrouter_model?.settings.modelId,
+    ).toBe(openRouterModel);
+    await user.click(screen.getByRole('button', { name: 'Options' }));
+    const thinking = screen.getByRole('combobox', { name: 'Thinking' });
+    expect(thinking).toBeEnabled();
+    await user.click(thinking);
+    expect(screen.getByRole('option', { name: 'Low' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'High' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Maximum' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Medium' })).toBeNull();
+  });
+
+  it('does not infer free pricing from a manual connection model id', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
+        runtime_type: 'codex',
+        runtime_available: true,
+        authenticated: true,
+        source: 'test',
+        default_model_id: 'codex:credential:manual-free-looking',
+        models: [{
+          id: 'codex:credential:manual-free-looking',
+          label: 'My free-looking model',
+          api_source: 'manual',
+          api_protocol: 'openai_responses',
+          provider: 'openai',
+          provider_model_id: 'vendor/model:free',
+          input_price: '0',
+          output_price: '0',
+          available: true,
+          supported_reasoning_efforts: [],
+        }],
+      })),
+      http.get(
+        '*/api/v1/chat-scopes/wf_x/chats/chat_manual_free_looking/state',
+        () => HttpResponse.json({ todo_items: [], active_command_ids: [] }),
+      ),
+    );
+
+    renderComposer('chat_manual_free_looking', true);
+    await user.click(await screen.findByTestId('chat-model-select'));
+    await user.click(screen.getByRole('button', { name: /My API connections/i }));
+
+    expect(screen.getByRole('button', { name: /My free-looking model/ }))
+      .toBeInTheDocument();
+    expect(screen.queryByText('Free')).not.toBeInTheDocument();
+  });
+
+  it('hydrates the server-bound model and allows switching it for the next turn', async () => {
     const accountModelId = 'codex:account:gpt-5.6-sol';
     const apiModelId = 'codex:credential:11111111-1111-4111-8111-111111111111';
     server.use(
@@ -191,7 +300,6 @@ describe('ChatComposer Stop', () => {
         ],
         default_model_id: accountModelId,
         error_code: null,
-        chat_configuration_locked: true,
         bound_agent_settings: {
           model_id: accountModelId,
           temperature: null,
@@ -203,28 +311,26 @@ describe('ChatComposer Stop', () => {
     );
 
     const { container } = renderComposer('chat_bound_codex_model', true);
-    const picker = await screen.findByRole('combobox', { name: 'Model' });
+    const picker = await screen.findByRole('button', { name: 'Model' });
 
     await waitFor(() => {
-      expect(picker).toBeDisabled();
-      expect(picker).toHaveAttribute('title', expect.stringMatching(/Fixed for this chat/i));
+      expect(picker).toBeEnabled();
       expect(
         useChatAgentSettingsStore.getState().entries.chat_bound_codex_model,
       ).toMatchObject({
-        locked: true,
         settings: { modelId: accountModelId },
       });
     });
 
-    useChatAgentSettingsStore.getState().set('chat_bound_codex_model', {
-      modelId: apiModelId,
-    });
+    await userEvent.click(picker);
+    await userEvent.click(screen.getByText('My API connections'));
+    await userEvent.click(screen.getByRole('button', { name: /Production OpenAI/ }));
 
     expect(
       useChatAgentSettingsStore.getState().entries.chat_bound_codex_model?.settings.modelId,
-    ).toBe(accountModelId);
+    ).toBe(apiModelId);
     expect(container.querySelector('[data-role="chat-model-select"]'))
-      .toHaveTextContent('GPT-5.6-Sol');
+      .toHaveTextContent('Production OpenAI');
   });
 
   it('preserves an unavailable explicit API instead of switching to another one', async () => {
@@ -249,7 +355,6 @@ describe('ChatComposer Stop', () => {
         }],
         default_model_id: otherId,
         error_code: null,
-        chat_configuration_locked: false,
         bound_agent_settings: null,
       })),
     );
@@ -279,7 +384,6 @@ describe('ChatComposer Stop', () => {
         models: [],
         default_model_id: null,
         error_code: 'connection_required',
-        chat_configuration_locked: false,
         bound_agent_settings: null,
       })),
     );
@@ -626,7 +730,7 @@ describe('ChatComposer Stop', () => {
       http.get('*/api/v1/chats/bootstrap', () => HttpResponse.json({
         carrier_scope_id: 'wf_x',
         surface: 'chat',
-        available_commands: ['plan', 'knowledge'],
+        available_commands: ['workflow', 'knowledge'],
       })),
       http.get('*/api/v1/chat-scopes/wf_x/chats/chat_codex/state', () => HttpResponse.json({
         todo_items: [],
@@ -643,7 +747,6 @@ describe('ChatComposer Stop', () => {
         source: 'chat-binding',
         models: [],
         default_model_id: null,
-        chat_configuration_locked: false,
         bound_agent_settings: null,
         error_code: null,
       })),
@@ -653,7 +756,7 @@ describe('ChatComposer Stop', () => {
 
     await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled());
     expect(container.querySelector('[data-role="active-command-list"]')).not.toBeInTheDocument();
-    expect(container.querySelector('[data-command="plan"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-command="workflow"]')).not.toBeInTheDocument();
   });
 
 });

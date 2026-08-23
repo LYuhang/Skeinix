@@ -88,7 +88,7 @@ async def _seed_full(
     trigger="api", qps=10,
     api_key_plain=None,
     version_pin="specific", pinned_major=1, pinned_sub=0,
-    hmac_secret=None, cron_expr=None, cron_tz="UTC",
+    hmac_secret=None,
 ):
     """Returns (tenant_id, user_id, wf_id, dep_id, slug, api_key_plain | None, hmac_secret | None)."""
     tenant_id = uuid.uuid4()
@@ -116,6 +116,14 @@ async def _seed_full(
             ),
             {"u": user_id, "t": tenant_id,
              "e": f"g-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"test-{tenant_id.hex}"},
         )
     async with session_scope(tenant_id=str(tenant_id)) as session:
         await WorkflowRepo(session, str(user_id)).create_workflow(
@@ -151,8 +159,6 @@ async def _seed_full(
             api_key_hash=api_hash,
             hmac_secret_ref=secret_ref,
             hmac_secret_version=1,
-            cron_expr=cron_expr,
-            cron_tz=cron_tz,
             rate_limit_qps=qps,
         )
     return tenant_id, user_id, wf_id, dep_id, slug, plain, secret
@@ -232,6 +238,14 @@ async def test_g1_create_returns_plaintext_once(
             ),
             {"u": user_id, "t": tenant_id,
              "e": f"g1-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"test-{tenant_id.hex}"},
         )
     async with session_scope(tenant_id=str(tenant_id)) as session:
         await WorkflowRepo(session, str(user_id)).create_workflow(
@@ -389,30 +403,6 @@ async def test_g5_webhook_signature_branches(
     )
     resp = await webhook(slug=slug, request=good)
     assert "task_id" in resp
-
-
-# ---------- G6: cron CAS prevents double-fire ----------
-
-
-@pytest.mark.asyncio
-async def test_g6_cron_cas_prevents_double_fire(
-    pg_engine, app_engine, monkeypatch, pg_url,
-):
-    """Spec G6 — two simultaneous fires for the same next_fire_at → exactly
-    one wins (CAS guard in cron_dispatcher._attempt_fire)."""
-    import asyncio as _aio
-    from vibecanvas_api.celery_tasks.cron_dispatcher import _attempt_fire
-    from vibecanvas_api.storage import db as db_mod
-    monkeypatch.setattr(db_mod, "_admin_engine", None)
-    monkeypatch.setenv("ADMIN_DATABASE_URL", pg_url)
-
-    _, _, _, dep_id, _, _, _ = await _seed_full(
-        pg_engine, app_engine, trigger="cron", cron_expr="* * * * *",
-    )
-    nf = datetime.now(timezone.utc)
-    # Run two simultaneously; assert exactly one wins.
-    a, b = await _aio.gather(_attempt_fire(dep_id, nf), _attempt_fire(dep_id, nf))
-    assert {a, b} == {True, False}
 
 
 # ---------- G7: RLS isolates tenants ----------

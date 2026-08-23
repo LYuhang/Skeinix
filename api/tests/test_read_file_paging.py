@@ -30,7 +30,7 @@ def test_page_offset_zero_limit_zero_is_identity():
 def test_projection_reads_are_platform_mcp_only():
     from vibecanvas_api.agents.tools import build_tools
     base = {t.name for t in build_tools(set())}
-    build = {t.name for t in build_tools({"build"})}
+    build = {t.name for t in build_tools({"workflow"})}
     # Cross-Runtime build capabilities are supplied exclusively by Platform MCP,
     # never disguised as LangChain-private tools.
     assert "get_workflow" not in base and "get_template" not in base

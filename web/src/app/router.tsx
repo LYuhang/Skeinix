@@ -34,7 +34,6 @@ import {
   loadAppLayout,
   loadCanvasPage,
   loadChatPage,
-  loadCredentialsPage,
   loadDeploymentDetailPage,
   loadDeploymentsListPage,
   loadEmbedChatPage,
@@ -44,11 +43,11 @@ import {
   loadMcpCatalogDetailPage,
   loadMcpServerDetailPage,
   loadMcpServersPage,
-  loadPlatformMcpDetailPage,
   loadPlatformManagementPage,
   loadResetPasswordPage,
   loadSettingsPage,
   loadSignupPage,
+  loadStandalonePreviewPage,
   loadSkillCatalogDetailPage,
   loadSkillDetailPage,
   loadSkillsPage,
@@ -73,6 +72,9 @@ const ChatPage = lazy(() =>
 const EmbedChatPage = lazy(() =>
   loadEmbedChatPage().then((m) => ({ default: m.EmbedChatPage })),
 );
+const StandalonePreviewPage = lazy(() =>
+  loadStandalonePreviewPage().then((m) => ({ default: m.StandalonePreviewPage })),
+);
 const SettingsPage = lazy(() =>
   loadSettingsPage().then((m) => ({
     default: m.SettingsPage,
@@ -94,12 +96,8 @@ const DeploymentsListPage = lazy(() =>
   loadDeploymentsListPage().then((m) => ({ default: m.DeploymentsListPage })));
 const DeploymentDetailPage = lazy(() =>
   loadDeploymentDetailPage().then((m) => ({ default: m.DeploymentDetailPage })));
-const CredentialsPage = lazy(() =>
-  loadCredentialsPage().then((m) => ({ default: m.CredentialsPage })));
 const McpServersPage = lazy(() =>
   loadMcpServersPage().then((m) => ({ default: m.McpServersPage })));
-const PlatformMcpDetailPage = lazy(() =>
-  loadPlatformMcpDetailPage().then((m) => ({ default: m.PlatformMcpDetailPage })));
 const McpServerDetailPage = lazy(() =>
   loadMcpServerDetailPage().then((m) => ({ default: m.McpServerDetailPage })));
 const McpCatalogDetailPage = lazy(() =>
@@ -188,6 +186,10 @@ export const router = createBrowserRouter([
     element: <RequireAuth />,
     children: [
       {
+        path: 'preview',
+        element: routeElement(StandalonePreviewPage),
+      },
+      {
         element: routeElement(AppLayout),
         children: [
           {
@@ -229,9 +231,8 @@ export const router = createBrowserRouter([
             element: routeElement(DeploymentDetailPage),
           },
           {
-            // Owner-only management of tenant-scoped LLM API credentials.
             path: 'credentials',
-            element: routeElement(CredentialsPage),
+            element: <Navigate to="/settings?tab=api-keys" replace />,
           },
           {
             // Tenant-scoped MCP server management.
@@ -241,10 +242,6 @@ export const router = createBrowserRouter([
           {
             path: 'mcp-servers/discover/:source',
             element: routeElement(McpCatalogDetailPage),
-          },
-          {
-            path: 'mcp-servers/platform/:platformId',
-            element: routeElement(PlatformMcpDetailPage),
           },
           {
             // Per-server detail (read-only config and probed tools).
@@ -290,6 +287,13 @@ export const router = createBrowserRouter([
           {
             // Per-device user preferences such as language and theme.
             path: 'settings',
+            element: routeElement(SettingsPage),
+          },
+          {
+            // OpenRouter appends only `code` reliably. The one-time PKCE
+            // state therefore lives in this callback path, not in a callback
+            // query string that the provider may replace.
+            path: 'settings/openrouter/callback/:openrouterState',
             element: routeElement(SettingsPage),
           },
         ],

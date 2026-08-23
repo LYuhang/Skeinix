@@ -92,8 +92,8 @@ export function McpToolDirectory({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="h-8 bg-surface-raised pl-8 text-sm"
-              placeholder={t('mcp.platform.detail.search_tools', 'Search tools')}
-              aria-label={t('mcp.platform.detail.search_tools', 'Search tools')}
+              placeholder={t('mcp.detail.tools.search', 'Search tools')}
+              aria-label={t('mcp.detail.tools.search', 'Search tools')}
             />
           </div>
         </div>
@@ -122,7 +122,7 @@ export function McpToolDirectory({
           ))}
           {filteredTools.length === 0 ? (
             <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-              {t('mcp.platform.detail.no_tool_match', 'No tools match your search.')}
+              {t('mcp.detail.tools.no_match', 'No tools match your search.')}
             </div>
           ) : null}
         </div>
@@ -145,10 +145,10 @@ export function McpToolDirectory({
 
             {selectedTool.annotations ? (
               <div className="mt-4 flex flex-wrap gap-1.5 text-xs">
-                {selectedTool.annotations.readOnlyHint ? <span className="rounded-full bg-state-success/10 px-2.5 py-1 text-state-success">{t('mcp.platform.detail.read_only', 'Read only')}</span> : null}
-                {selectedTool.annotations.destructiveHint ? <span className="rounded-full bg-state-danger/10 px-2.5 py-1 text-state-danger">{t('mcp.platform.detail.mutates', 'Changes data')}</span> : null}
-                {selectedTool.annotations.idempotentHint ? <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">{t('mcp.platform.detail.idempotent', 'Idempotent')}</span> : null}
-                {selectedTool.annotations.openWorldHint ? <span className="rounded-full bg-state-warning/10 px-2.5 py-1 text-state-warning">{t('mcp.platform.detail.external', 'External access')}</span> : null}
+                {selectedTool.annotations.readOnlyHint ? <span className="rounded-full bg-state-success/10 px-2.5 py-1 text-state-success">{t('mcp.detail.tools.read_only', 'Read only')}</span> : null}
+                {selectedTool.annotations.destructiveHint ? <span className="rounded-full bg-state-danger/10 px-2.5 py-1 text-state-danger">{t('mcp.detail.tools.mutates', 'Changes data')}</span> : null}
+                {selectedTool.annotations.idempotentHint ? <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">{t('mcp.detail.tools.idempotent', 'Idempotent')}</span> : null}
+                {selectedTool.annotations.openWorldHint ? <span className="rounded-full bg-state-warning/10 px-2.5 py-1 text-state-warning">{t('mcp.detail.tools.external', 'External access')}</span> : null}
               </div>
             ) : null}
 
@@ -188,7 +188,7 @@ export function McpToolDirectory({
               </div>
             ) : (
               <div className="mt-3 rounded-lg border border-dashed border-edge-subtle px-4 py-5 text-sm text-muted-foreground">
-                {t('mcp.platform.detail.no_parameters', 'No user parameters')}
+                {t('mcp.detail.tools.no_parameters', 'No user parameters')}
               </div>
             )}
           </div>

@@ -20,9 +20,9 @@ from vibecanvas_api.services.agent_runtime.custom_mcp_capability import (
     mint_runtime_custom_mcp_capability,
     verify_runtime_custom_mcp_capability,
 )
-from vibecanvas_api.services.agent_runtime.mcp import (
+from vibecanvas_api.services.agent_runtime.mcp_host_resolution import (
     McpSelectionError,
-    custom_mcp_descriptors,
+    resolve_custom_mcp_authority,
 )
 from vibecanvas_api.services.public_url import PublicUrlTarget
 
@@ -254,7 +254,7 @@ async def test_stdio_mcp_allows_only_secretless_chat_sandbox_descriptor(
         "session_generation": 1,
         "membership_id": str(uuid.uuid4()),
     }
-    safe = await custom_mcp_descriptors(
+    safe = await resolve_custom_mcp_authority(
         me["tenant_id"],
         **claims,
         server_ids=[str(safe_server_id)],
@@ -266,7 +266,7 @@ async def test_stdio_mcp_allows_only_secretless_chat_sandbox_descriptor(
         "args": ["--stdio"],
     }
     with pytest.raises(McpSelectionError, match="cannot be exposed"):
-        await custom_mcp_descriptors(
+        await resolve_custom_mcp_authority(
             me["tenant_id"],
             **claims,
             server_ids=[str(secret_server_id)],
@@ -282,7 +282,9 @@ async def test_chat_custom_mcp_broker_keeps_remote_secrets_on_host(
     from vibecanvas_api.routes import chats as chats_route
     from vibecanvas_api.routes import mcp_servers as mcp_servers_route
     from vibecanvas_api.routes import runtime_mcp_broker as broker_route
-    from vibecanvas_api.services.agent_runtime import mcp as runtime_mcp
+    from vibecanvas_api.services.agent_runtime import (
+        mcp_host_resolution,
+    )
 
     upstream_request: dict[str, object] = {}
 
@@ -334,7 +336,7 @@ async def test_chat_custom_mcp_broker_keeps_remote_secrets_on_host(
         )
 
     monkeypatch.setattr(
-        runtime_mcp,
+        mcp_host_resolution,
         "validate_mcp_connection_destination",
         allow_structural_destination,
     )
@@ -438,7 +440,9 @@ async def test_chat_custom_mcp_broker_keeps_remote_secrets_on_host(
     assert sent.status_code == 200, sent.text
     assert len(dispatched_turns) == 1
     turn = dispatched_turns[0]
-    custom = next(server for server in turn.mcp_servers if server.source == "custom")
+    custom = next(
+        server for server in turn.mcp_host_servers if server.source == "custom"
+    )
     capability = custom.connection["headers"]["Authorization"].removeprefix(
         "Bearer "
     )

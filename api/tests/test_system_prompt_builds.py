@@ -32,7 +32,7 @@ def test_build_system_prompt_does_not_raise():
     assert isinstance(out, str) and len(out) > 100
     # Active commands no longer alter the system prompt; command context is
     # injected near the latest command activation message.
-    built = build_system_prompt({"build"})
+    built = build_system_prompt({"workflow"})
     assert built == out
     assert "Node catalog" not in built
     assert "prompt_template" not in built

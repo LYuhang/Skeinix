@@ -72,25 +72,16 @@ vi.mock('@/lib/api/agent-runtime', () => ({
   disconnectCodexAccount: vi.fn(),
 }));
 
-vi.mock('@/lib/api/mfa', () => ({
+vi.mock('@/lib/api/passkeys', () => ({
   getWebAuthnStatus: vi.fn(async () => ({
     enabled: false,
     credentials: [],
     authentication_strength: 'password',
     step_up_expires_at: null,
   })),
-  getTotpStatus: vi.fn(async () => ({
-    enabled: false,
-    pending: false,
-    authentication_strength: 'password',
-    step_up_expires_at: null,
-  })),
   beginWebAuthnRegistration: vi.fn(),
   finishWebAuthnRegistration: vi.fn(),
   deleteWebAuthnCredential: vi.fn(),
-  beginTotpEnrollment: vi.fn(),
-  confirmTotpEnrollment: vi.fn(),
-  disableTotp: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/webauthn-browser', () => ({
@@ -118,6 +109,10 @@ function renderAt(url: string) {
         <MemoryRouter initialEntries={[url]}>
           <Routes>
             <Route path="/settings" element={<SettingsPage />} />
+            <Route
+              path="/settings/openrouter/callback/:openrouterState"
+              element={<SettingsPage />}
+            />
           </Routes>
         </MemoryRouter>
       </I18nextProvider>
@@ -131,11 +126,12 @@ describe('<SettingsPage> tab shell', () => {
     const tablist = screen.getByRole('tablist');
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(4);
+    expect(tabs).toHaveLength(5);
     expect(tabs[0]).toHaveTextContent(/preferences/i);
     expect(tabs[1]).toHaveTextContent(/agent runtime/i);
-    expect(tabs[2]).toHaveTextContent(/extensions/i);
-    expect(tabs[3]).toHaveTextContent(/account/i);
+    expect(tabs[2]).toHaveTextContent(/api keys/i);
+    expect(tabs[3]).toHaveTextContent(/extensions/i);
+    expect(tabs[4]).toHaveTextContent(/account/i);
     expect(screen.queryByText(/^organization$/i)).toBeNull();
     expect(
       screen.getByTestId('settings-tab-preferences'),
@@ -169,6 +165,14 @@ describe('<SettingsPage> tab shell', () => {
     expect(trigger).toHaveAttribute('data-state', 'active');
   });
 
+  it('opens API keys for the provider callback path', () => {
+    renderAt('/settings/openrouter/callback/fixture-state?code=fixture-code');
+    expect(screen.getByRole('tab', { name: /api keys/i })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
   it('offers the packaged Chrome extension and installation steps', () => {
     renderAt('/settings?tab=extensions');
 
@@ -186,15 +190,14 @@ describe('<SettingsPage> tab shell', () => {
     expect(trigger).toHaveAttribute('data-state', 'active');
   });
 
-  it('keeps Codex account login in Settings and moves API setup elsewhere', async () => {
+  it('keeps Codex account login and provider API keys in separate Settings sections', async () => {
     renderAt('/settings?tab=runtime');
 
     expect(await screen.findByText('Codex')).toBeInTheDocument();
     expect(await screen.findByText('Codex account')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in with openai/i })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: /openai api/i })).toBeNull();
-    expect(screen.queryByLabelText(/api key/i)).toBeNull();
-    expect(screen.getByText(/api keys are managed separately/i)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /api keys/i })).toBeInTheDocument();
+    expect(screen.getByText(/api keys are available in the api keys section/i)).toBeInTheDocument();
   });
 
   it('shows polled account activity and remaining rate-limit capacity after connection', async () => {
@@ -285,14 +288,14 @@ describe('<SettingsPage> tab shell', () => {
     expect(screen.queryByText('Codex connection')).toBeNull();
   });
 
-  it('shows passkey and authenticator management in Account settings', async () => {
+  it('shows passkey security without initial-release authenticator MFA', async () => {
     renderAt('/settings?tab=account');
 
-    expect(await screen.findByTestId('mfa-security-card')).toBeInTheDocument();
+    expect(await screen.findByTestId('passkey-security-section')).toBeInTheDocument();
     expect(await screen.findByText(/passkeys and security keys/i)).toBeInTheDocument();
-    expect(screen.getByText(/authenticator app/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add passkey/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /set up/i })).toBeInTheDocument();
+    expect(screen.queryByText(/multi-factor authentication/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/authenticator app/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /delete account/i })).toBeInTheDocument();
   });
 

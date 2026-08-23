@@ -19,12 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AuthLayout } from '@/pages/auth/AuthLayout';
-import { LoginMfaForm } from '@/components/auth/LoginMfaForm';
-import {
-  AuthApiError,
-  type LoginMfaRequired,
-  useAuthStore,
-} from '@/stores/auth';
+import { AuthApiError, useAuthStore } from '@/stores/auth';
 import { getApiBase } from '@/lib/base-path';
 
 const schema = z.object({
@@ -50,7 +45,6 @@ export function LoginPage() {
   const [enterpriseSsoEnabled, setEnterpriseSsoEnabled] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'email' | 'sso'>('email');
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [pendingMfa, setPendingMfa] = useState<LoginMfaRequired | null>(null);
   const [accountDeletionMode, setAccountDeletionMode] = useState<'immediate' | 'delayed'>('immediate');
   const [deletionCanBeCancelled, setDeletionCanBeCancelled] = useState(false);
   const [cancellingDeletion, setCancellingDeletion] = useState(false);
@@ -102,12 +96,8 @@ export function LoginPage() {
     setSubmitError(null);
     setDeletionCanBeCancelled(false);
     try {
-      const pending = await login(values.email, values.password);
-      if (pending) {
-        setPendingMfa(pending);
-      } else {
-        navigate('/chat', { replace: true });
-      }
+      await login(values.email, values.password);
+      navigate('/chat', { replace: true });
     } catch (err) {
       if (err instanceof AuthApiError) {
         // Backend `detail` strings are already the localized Chinese
@@ -130,13 +120,9 @@ export function LoginPage() {
     setSubmitError(null);
     try {
       await cancelAccountDeletion(values.email, values.password);
-      const pending = await login(values.email, values.password);
+      await login(values.email, values.password);
       setDeletionCanBeCancelled(false);
-      if (pending) {
-        setPendingMfa(pending);
-      } else {
-        navigate('/chat', { replace: true });
-      }
+      navigate('/chat', { replace: true });
     } catch (err) {
       setSubmitError(
         err instanceof AuthApiError
@@ -266,17 +252,7 @@ export function LoginPage() {
       title={t('auth_login_title', 'Sign in')}
       subtitle={t('auth_login_subtitle', 'Sign in to your workspace.')}
     >
-      {pendingMfa ? (
-        <LoginMfaForm
-          pending={pendingMfa}
-          onAuthenticated={() => navigate('/chat', { replace: true })}
-          onBack={() => {
-            setPendingMfa(null);
-            form.setValue('password', '');
-          }}
-        />
-      ) : (
-        enterpriseSsoEnabled ? (
+      {enterpriseSsoEnabled ? (
           <Tabs
             value={loginMethod}
             onValueChange={(value) => setLoginMethod(value as 'email' | 'sso')}
@@ -298,8 +274,7 @@ export function LoginPage() {
               </Suspense>
             </TabsContent>
           </Tabs>
-        ) : emailLogin
-      )}
+        ) : emailLogin}
     </AuthLayout>
   );
 }

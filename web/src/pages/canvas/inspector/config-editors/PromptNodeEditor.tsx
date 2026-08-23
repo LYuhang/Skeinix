@@ -309,7 +309,7 @@ export function PromptNodeEditor({
             value={modelName}
             onCommit={(next) => onChange({ ...config, model_name: next })}
             disabled={readOnly}
-            placeholder="Model name (no models configured)"
+            placeholder={t('canvas.prompt.modelNameUnavailable', 'Model name (no models configured)')}
             className="h-8 text-xs"
             data-testid="cfg-prompt-model-input"
           />

@@ -506,7 +506,7 @@ async def stream_workflow_job(
         if clear_run:
             clear_owned_run = getattr(session, "clear_workflow_run", None)
             if clear_owned_run is not None:
-                await clear_owned_run()
+                await clear_owned_run(loc.workflow_run_id)
             else:
                 await clear_run_contents(loc.workflow_run_id, tenant_id)
         stream = session.submit_workflow_stream(

@@ -3,9 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import {
-  ArrowRight,
   BadgeCheck,
-  Blocks,
   BookOpen,
   ChevronDown,
   Loader2,
@@ -16,13 +14,6 @@ import {
   Search,
   ServerCog,
   Trash2,
-  MonitorUp,
-  ClipboardList,
-  Hammer,
-  MousePointerClick,
-  Rocket,
-  Route,
-  Settings2,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -54,7 +45,6 @@ import {
   useDeleteMcpServer,
   useMcpCatalog,
   useMcpServers,
-  usePlatformMcpServices,
   useRefreshMcpServer,
   useUpdateMcpServer,
 } from '@/lib/api/queries/mcp-servers';
@@ -63,73 +53,16 @@ import type {
   McpCatalogSource,
   McpServer,
 } from '@/lib/api/mcp-servers';
-import type { PlatformMcpService } from '@/lib/api/mcp-servers';
 import { McpServerFormDialog } from '@/pages/mcp-servers/McpServerFormDialog';
 import { ManagementPageShell, ManagementToolbar } from '@/components/layout/management-page-shell';
 import { StatusBadge, type SemanticStatus } from '@/components/ui/status';
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
+import { AsyncState } from '@/components/ui/async-state';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
 
 type StatusFilter = 'all' | 'enabled' | 'failed';
 type PageTab = 'installed' | 'discover';
-
-const PLATFORM_ICONS: Record<string, typeof Blocks> = {
-  config: Settings2,
-  interactive: MousePointerClick,
-  workflow: Blocks,
-  task: ClipboardList,
-  deployment: Rocket,
-  knowledge: BookOpen,
-  build: Hammer,
-  browser: MonitorUp,
-  plan: Route,
-};
-
-function PlatformMcpCard({ service }: { service: PlatformMcpService }) {
-  const { t } = useTranslation();
-  const Icon = PLATFORM_ICONS[service.id] ?? Blocks;
-  const localizedName = t(`mcp.platform.${service.id}.name`, service.name);
-  const localizedDescription = t(`mcp.platform.${service.id}.description`, service.description);
-  const activationLabel = service.activation_mode === 'base'
-    ? t('mcp.platform.always_available', 'Always available')
-    : service.activation;
-
-  return (
-    <Link
-      to={`/mcp-servers/platform/${service.id}`}
-      data-testid={`platform-mcp-${service.id}`}
-      className="group flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/[0.035] p-4 text-left transition-[border-color,background-color,box-shadow,transform] duration-feedback hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/[0.06] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <Icon className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 truncate font-medium">
-              <span className="truncate">{localizedName}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-            </div>
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              {t('mcp.platform.builtin', 'Built-in Platform MCP')}
-            </div>
-          </div>
-        </div>
-        <StatusBadge status="success">{t('mcp.status.available', 'Available')}</StatusBadge>
-      </div>
-      <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">{localizedDescription}</p>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded bg-secondary px-2 py-0.5 font-mono text-secondary-foreground">{activationLabel}</span>
-        <span className="rounded-full bg-secondary px-2 py-0.5 text-secondary-foreground">
-          {t('mcp.tools_count', { count: service.tools.length, defaultValue: '{{count}} Tools' })}
-        </span>
-        <span className="text-muted-foreground">
-          {service.runtime_types.map((runtime) => runtime === 'langchain' ? 'LangChain' : 'Codex').join(' · ')}
-        </span>
-      </div>
-    </Link>
-  );
-}
 
 function isHandshakeFailed(server: McpServer): boolean {
   return server.connection_status === 'connection_failed'
@@ -275,6 +208,7 @@ function McpServerCard({
       <div className="truncate text-xs text-muted-foreground" title={server.endpoint}>
         {server.endpoint}
       </div>
+      <ResourceProvenanceLine provenance={server.provenance} />
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={status.status}>
           {statusText}
@@ -333,7 +267,6 @@ export function McpServersPage() {
   const { t } = useTranslation();
   const [urlParams, setUrlParams] = useSearchParams();
   const query = useMcpServers();
-  const platformQuery = usePlatformMcpServices();
   const deleteMutation = useDeleteMcpServer();
   const tab: PageTab = urlParams.get('tab') === 'discover' ? 'discover' : 'installed';
   const source: McpCatalogSource = urlParams.get('source') === 'smithery' ? 'smithery' : 'official';
@@ -368,17 +301,6 @@ export function McpServersPage() {
       return !text || server.name.toLowerCase().includes(text) || server.endpoint.toLowerCase().includes(text) || (server.description ?? '').toLowerCase().includes(text);
     });
   }, [items, search, statusFilter]);
-  const filteredPlatform = useMemo(() => {
-    if (statusFilter === 'failed') return [];
-    const text = search.trim().toLowerCase();
-    return (platformQuery.data ?? []).filter((service) =>
-      !text
-      || service.name.toLowerCase().includes(text)
-      || service.description.toLowerCase().includes(text)
-      || service.tools.some((tool) => tool.name.toLowerCase().includes(text)),
-    );
-  }, [platformQuery.data, search, statusFilter]);
-
   const installedForCandidate = (candidate: McpCatalogItem) =>
     items.find(
       (server) =>
@@ -451,7 +373,7 @@ export function McpServersPage() {
           <TabsList variant="underline" className="w-fit shrink-0">
             <TabsTrigger value="installed">
               {t('mcp.tab.installed', 'Installed')}
-              <span className="ml-1.5 rounded bg-background/80 px-1.5 py-0.5 text-xs tabular-nums">{items.length + (platformQuery.data?.length ?? 0)}</span>
+              <span className="ml-1.5 rounded bg-background/80 px-1.5 py-0.5 text-xs tabular-nums">{items.length}</span>
             </TabsTrigger>
             <TabsTrigger value="discover">{t('mcp.tab.discover', 'Discover')}</TabsTrigger>
           </TabsList>
@@ -478,41 +400,6 @@ export function McpServersPage() {
             </ManagementToolbar>
 
             <div className="page-scroll-region flex-1 pr-1">
-              <section className="mb-6 space-y-3" aria-labelledby="platform-mcp-heading">
-                <div>
-                  <h2 id="platform-mcp-heading" className="text-sm font-semibold">
-                    {t('mcp.platform.heading', 'Platform')}
-                  </h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {t('mcp.platform.hint', 'Built-in, read-only services are scoped to the active Chat and Agent Turn.')}
-                  </p>
-                </div>
-                {platformQuery.isLoading ? (
-                  <div className="rounded-lg border border-edge-subtle bg-surface-work p-4 text-sm text-muted-foreground">
-                    {t('mcp.platform.loading', 'Loading platform capabilities…')}
-                  </div>
-                ) : platformQuery.isError ? (
-                  <ActionableError
-                    title={t('mcp.platform.load_error', 'Could not load platform MCP capabilities.')}
-                    description={t('mcp.platform.load_error_hint', 'Check the platform service, then reload its capabilities.')}
-                    actionLabel={t('retry', 'Retry')}
-                    onAction={() => void platformQuery.refetch()}
-                    technicalDetails={platformQuery.error instanceof Error ? platformQuery.error.message : String(platformQuery.error)}
-                    technicalDetailsLabel={t('common.technicalDetails', 'Technical details')}
-                  />
-                ) : filteredPlatform.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {filteredPlatform.map((service) => (
-                      <PlatformMcpCard key={service.id} service={service} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-edge-subtle p-4 text-sm text-muted-foreground">
-                    {t('mcp.platform.no_match', 'No platform capabilities match this filter.')}
-                  </div>
-                )}
-              </section>
-
               <section className="space-y-3" aria-labelledby="custom-mcp-heading">
                 <div>
                   <h2 id="custom-mcp-heading" className="text-sm font-semibold">
@@ -522,7 +409,7 @@ export function McpServersPage() {
                     {t('mcp.custom.hint', 'User-managed MCP connections loaded inside the selected Agent Runtime.')}
                   </p>
                 </div>
-            {query.isLoading ? <div className="empty-state">{t('mcp.loading', 'Loading…')}</div> : query.isError ? (
+            {query.isLoading ? <AsyncState kind="loading" title={t('mcp.loading', 'Loading…')} /> : query.isError ? (
               <ActionableError
                 title={t('mcp.load_error', 'Failed To Load MCP Servers.')}
                 description={t('mcp.load_error_hint', 'Check your connection, then reload the installed servers.')}
@@ -628,7 +515,7 @@ export function McpServersPage() {
             </div> : null}
 
             <div className="page-scroll-region flex-1 pr-1">
-            {catalogQuery.isLoading ? <div className="empty-state">{t('mcp.catalog.loading', 'Loading Catalog…')}</div> : catalogQuery.isError ? (
+            {catalogQuery.isLoading ? <AsyncState kind="loading" title={t('mcp.catalog.loading', 'Loading Catalog…')} /> : catalogQuery.isError ? (
               <ActionableError
                 title={t('mcp.catalog.load_error', 'This MCP catalog is temporarily unavailable.')}
                 description={t('mcp.catalog.load_error_hint', 'Check the selected registry and try loading the catalog again.')}

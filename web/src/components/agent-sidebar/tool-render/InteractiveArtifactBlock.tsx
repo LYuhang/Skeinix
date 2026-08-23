@@ -1,5 +1,23 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, MessageSquareWarning, RefreshCw, XCircle } from 'lucide-react';
+import {
+  Archive,
+  AudioLines,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  File,
+  FileCode2,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  Film,
+  Loader2,
+  MessageSquareWarning,
+  Network,
+  Presentation,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { MessageAvatar } from '@/components/agent-sidebar/MessageItem';
@@ -18,19 +36,16 @@ import {
 import { CopyButton } from '@/components/agent-sidebar/tool-render/CopyButton';
 import { useChatRenderIdentity } from '@/components/agent-sidebar/chat-render-context';
 import { AsyncState } from '@/components/ui/async-state';
-import { usePreviewDescriptor } from '@/lib/api/queries/previews';
 import { CHAT_RECONCILED_EVENT } from '@/lib/api/sse/chat-reconcile';
 import type { HitlContinueControl } from '@/lib/api/sse/agent-stream';
 import { getApiBase } from '@/lib/base-path';
 import {
   createInteractiveResourceSession,
   InteractiveArtifactRequestError,
-  resolveInteractiveResourceUrl,
   saveInteractiveDraft,
   writeInteractiveVfsFile,
 } from '@/lib/api/interactive-artifacts';
 import { cn } from '@/lib/utils';
-import type { FileRefV1 } from '@/lib/preview/protocol';
 import {
   isPreviewSandboxLoaderMessage,
   loadPreviewSandboxDocument,
@@ -45,9 +60,9 @@ export type SubmitInteractiveAsNewTurn = (
   control?: HitlContinueControl,
 ) => Promise<void> | void;
 
-const DiagramPreviewRenderer = lazy(() =>
-  import('@/pages/chat/preview/DiagramPreviewRenderer').then((module) => ({
-    default: module.DiagramPreviewRenderer,
+const UrlPreviewRenderer = lazy(() =>
+  import('@/pages/chat/preview/UrlPreviewRenderer').then((module) => ({
+    default: module.UrlPreviewRenderer,
   })),
 );
 
@@ -95,6 +110,52 @@ function numberFrom(value: unknown, fallback: number): number {
 
 function stringFrom(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function filePreviewName(path: string): string {
+  return path.split('/').filter(Boolean).at(-1) || 'File';
+}
+
+function filePreviewType(path: string, explicitType = 'auto'): string {
+  if (explicitType && explicitType !== 'auto') return explicitType.toLowerCase();
+  const name = filePreviewName(path);
+  const extension = name.includes('.') ? name.split('.').at(-1) : '';
+  return extension?.toLowerCase() || 'file';
+}
+
+function filePreviewAppearance(path: string, explicitType = 'auto') {
+  const type = filePreviewType(path, explicitType);
+  if (['document', 'text', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'markdown'].includes(type)) {
+    return { Icon: FileText, type, tone: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' };
+  }
+  if (type === 'pdf') {
+    return { Icon: FileText, type, tone: 'bg-red-500/10 text-red-600 dark:text-red-400' };
+  }
+  if (['spreadsheet', 'xls', 'xlsx', 'ods', 'csv', 'tsv'].includes(type)) {
+    return { Icon: FileSpreadsheet, type, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' };
+  }
+  if (['presentation', 'ppt', 'pptx', 'odp'].includes(type)) {
+    return { Icon: Presentation, type, tone: 'bg-orange-500/10 text-orange-600 dark:text-orange-400' };
+  }
+  if (['image', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'].includes(type)) {
+    return { Icon: FileImage, type, tone: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' };
+  }
+  if (['audio', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(type)) {
+    return { Icon: AudioLines, type, tone: 'bg-pink-500/10 text-pink-600 dark:text-pink-400' };
+  }
+  if (['video', 'mp4', 'webm', 'mov', 'mkv', 'avi'].includes(type)) {
+    return { Icon: Film, type, tone: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' };
+  }
+  if (['diagram', 'drawio', 'mermaid', 'mmd', 'plantuml', 'puml'].includes(type)) {
+    return { Icon: Network, type, tone: 'bg-purple-500/10 text-purple-600 dark:text-purple-400' };
+  }
+  if (['zip', 'tar', 'gz', 'tgz', '7z', 'rar'].includes(type)) {
+    return { Icon: Archive, type, tone: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' };
+  }
+  if (['code', 'html', 'htm', 'xml', 'py', 'js', 'jsx', 'ts', 'tsx', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'css', 'scss', 'sql', 'sh', 'yaml', 'yml', 'json', 'toml'].includes(type)) {
+    return { Icon: FileCode2, type, tone: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' };
+  }
+  return { Icon: File, type, tone: 'bg-slate-500/10 text-slate-600 dark:text-slate-400' };
 }
 
 function asArray(value: unknown): unknown[] {
@@ -882,314 +943,50 @@ function HtmlPreviewRenderer({
   );
 }
 
-type FilePreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'unknown';
-
-function filePreviewKind(path: string, mimeHint: string): FilePreviewKind {
-  const mime = mimeHint.split(';', 1)[0].trim().toLowerCase();
-  const extension = (path.split(/[?#]/, 1)[0] ?? '').split('.').pop()?.toLowerCase() ?? '';
-  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(extension)) return 'image';
-  if (mime.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(extension)) return 'video';
-  if (mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(extension)) return 'audio';
-  if (mime === 'application/pdf' || extension === 'pdf') return 'pdf';
-  if (
-    mime.startsWith('text/')
-    || mime === 'application/json'
-    || ['txt', 'md', 'json', 'jsonl', 'csv', 'tsv', 'html', 'htm', 'py', 'js', 'ts', 'css', 'xml', 'yaml', 'yml'].includes(extension)
-  ) return 'text';
-  return 'unknown';
-}
-
-function isHtmlPreviewFile(path: string, mimeHint: string): boolean {
-  const mime = mimeHint.split(';', 1)[0].trim().toLowerCase();
-  const extension = (path.split(/[?#]/, 1)[0] ?? '').split('.').pop()?.toLowerCase() ?? '';
-  return mime === 'text/html' || extension === 'html' || extension === 'htm';
-}
-
-function isDiagramPreviewFile(path: string, mimeHint: string): boolean {
-  return path.toLowerCase().endsWith('.vdiagram.json')
-    || mimeHint.split(';', 1)[0].trim().toLowerCase() === 'application/vnd.vibecanvas.diagram+json';
-}
-
-function DiagramInteractiveFilePreview({ path }: { path: string }) {
-  const { t } = useTranslation();
-  const identity = useChatRenderIdentity();
-  const fileRef = useMemo<FileRefV1>(() => ({
-    schemaVersion: 1,
-    scope: 'chat',
-    chatId: identity?.chatId ?? '',
-    path: path as Extract<FileRefV1, { scope: 'chat' }>['path'],
-  }), [identity?.chatId, path]);
-  const descriptorQuery = usePreviewDescriptor(fileRef);
-  const descriptor = descriptorQuery.data;
-
-  if (!identity?.chatId || descriptorQuery.isError) {
-    return (
-      <AsyncState
-        kind="error"
-        title={t('preview.diagram.inlineUnavailable', 'Diagram preview is unavailable')}
-        description={descriptorQuery.error?.message}
-        className="h-full min-h-56 rounded-none border-0"
-      />
-    );
-  }
-  if (descriptorQuery.isLoading || !descriptor) {
-    return (
-      <AsyncState
-        kind="loading"
-        title={t('preview.resolving', 'Resolving file preview…')}
-        className="h-full min-h-56 rounded-none border-0"
-      />
-    );
-  }
-  if (descriptor.renderer !== 'diagram') {
-    return (
-      <AsyncState
-        kind="error"
-        title={t('preview.diagram.inlineUnavailable', 'Diagram preview is unavailable')}
-        className="h-full min-h-56 rounded-none border-0"
-      />
-    );
-  }
-  return (
-    <div
-      className="diagram-inline-preview pointer-events-none h-64 overflow-hidden [&_[data-action]]:hidden"
-      aria-label={t('preview.diagram.inlinePreview', 'Diagram preview')}
-    >
-      <Suspense
-        fallback={(
-          <AsyncState
-            kind="loading"
-            title={t('preview.resolving', 'Resolving file preview…')}
-            className="h-full rounded-none border-0"
-          />
-        )}
-      >
-        <DiagramPreviewRenderer
-          descriptor={descriptor}
-          loadAllowed
-          onDirtyChange={() => undefined}
-        />
-      </Suspense>
-    </div>
-  );
-}
-
-function FilePreviewRenderer({
-  artifactId,
-  props,
-  height,
-  initialState,
-  frozen,
-  onWidgetStateChange,
+function ResolvedInteractiveFilePreview({
+  path,
+  fileType,
   onOpenFilePreview,
-  feedbackContext,
-  stableSession = false,
 }: {
-  artifactId: string;
-  props: Record<string, unknown>;
-  height: number;
-  initialState: Record<string, unknown>;
-  frozen: boolean;
-  onWidgetStateChange?: (state: Record<string, unknown>) => void;
+  path: string;
+  fileType: string;
   onOpenFilePreview?: (path: string) => void;
-  feedbackContext?: InteractiveFeedbackContext;
-  stableSession?: boolean;
 }) {
   const { t } = useTranslation();
-  const path = stringFrom(props.path || props.file_path || props.ref);
-  const title = stringFrom(props.title || props.name, path.split('/').pop() || 'File');
-  const mime = stringFrom(props.mime || props.content_type);
-  const description = stringFrom(props.description || props.summary);
-  const kind = filePreviewKind(path, mime);
-  const renderAsHtml = isHtmlPreviewFile(path, mime);
-  const resourceKey = `${artifactId}:${path}:${kind}`;
-  const reconcileEpoch = useServerReconcileEpoch();
-  const resourceRefreshEpoch = stableSession ? 0 : reconcileEpoch;
-  const [reloadRevision, setReloadRevision] = useState(0);
-  const [mediaFailureCount, setMediaFailureCount] = useState(0);
-  const mediaRetryTimerRef = useRef<number | null>(null);
-  const [resource, setResource] = useState<{
-    key: string;
-    status: 'loading' | 'ready' | 'failed';
-    url: string;
-    text: string;
-  }>({ key: resourceKey, status: 'loading', url: '', text: '' });
-  const activeResource = resource.key === resourceKey
-    ? resource
-    : { key: resourceKey, status: 'loading' as const, url: '', text: '' };
+  const name = filePreviewName(path);
+  const appearance = filePreviewAppearance(path, fileType);
+  const { Icon } = appearance;
+  const body = (
+    <>
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${appearance.tone}`}>
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1 text-left">
+        <span className="block truncate text-sm font-medium text-foreground">{name}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          {appearance.type.toUpperCase()} · {t(
+            'preview.inline.lightweightDescription',
+            'Open to load the full preview',
+          )}
+        </span>
+      </span>
+    </>
+  );
+  const className = 'flex min-h-24 w-full items-center gap-3 px-4 py-3 transition-colors';
 
-  useEffect(() => {
-    if (!artifactId || !path || kind === 'unknown') return;
-    let cancelled = false;
-    const controller = new AbortController();
-    const retryDelays = [0, 500, 1_000, 2_000, 3_500];
-    void (async () => {
-      // Let the effect finish before publishing its request state. The render
-      // path already derives an immediate loading state when the key changes,
-      // while this asynchronous update covers same-key retries without a
-      // synchronous effect -> render cascade.
-      await Promise.resolve();
-      if (cancelled) return;
-      setResource({ key: resourceKey, status: 'loading', url: '', text: '' });
-      for (const delay of retryDelays) {
-        if (delay > 0) {
-          await new Promise<void>((resolve) => {
-            const timer = window.setTimeout(resolve, delay);
-            controller.signal.addEventListener(
-              'abort',
-              () => {
-                window.clearTimeout(timer);
-                resolve();
-              },
-              { once: true },
-            );
-          });
-        }
-        if (cancelled) return;
-        try {
-          const session = await createInteractiveResourceSession(artifactId);
-          if (cancelled) return;
-          const url = resolveInteractiveResourceUrl(path, session);
-          if (kind === 'text') {
-            const response = await fetch(url, {
-              signal: controller.signal,
-              cache: 'no-store',
-            });
-            if (!response.ok) throw new Error(`file preview failed: ${response.status}`);
-            const textValue = await response.text();
-            if (!cancelled) {
-              setResource({ key: resourceKey, status: 'ready', url, text: textValue });
-            }
-          } else {
-            setResource({ key: resourceKey, status: 'ready', url, text: '' });
-          }
-          return;
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-        }
-      }
-      if (!cancelled) {
-        setResource({ key: resourceKey, status: 'failed', url: '', text: '' });
-      }
-    })();
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (mediaRetryTimerRef.current !== null) {
-        window.clearTimeout(mediaRetryTimerRef.current);
-        mediaRetryTimerRef.current = null;
-      }
-    };
-  }, [artifactId, kind, path, reloadRevision, resourceKey, resourceRefreshEpoch]);
-
-  const retryMediaResource = () => {
-    const nextFailureCount = mediaFailureCount + 1;
-    setMediaFailureCount(nextFailureCount);
-    if (nextFailureCount >= 5) {
-      setResource({ key: resourceKey, status: 'failed', url: '', text: '' });
-      return;
-    }
-    setResource({ key: resourceKey, status: 'loading', url: '', text: '' });
-    mediaRetryTimerRef.current = window.setTimeout(
-      () => setReloadRevision((value) => value + 1),
-      [500, 1_000, 2_000, 3_500][nextFailureCount - 1] ?? 3_500,
-    );
-  };
-  const retryResource = () => {
-    if (mediaRetryTimerRef.current !== null) {
-      window.clearTimeout(mediaRetryTimerRef.current);
-      mediaRetryTimerRef.current = null;
-    }
-    setMediaFailureCount(0);
-    setReloadRevision((value) => value + 1);
-  };
-
-  if (activeResource.status === 'failed') {
-    return (
-      <InteractiveRenderFailure
-        detail={t(
-          'tool.interactive.file_preview_load_failed',
-          'The file preview resource could not be loaded.',
-        )}
-        onRetry={retryResource}
-        feedbackContext={feedbackContext}
-      />
-    );
-  }
-  if (kind !== 'unknown' && activeResource.status === 'loading') {
-    return <div className="h-32 animate-pulse bg-muted/40" />;
-  }
-  if (renderAsHtml) {
-    return (
-      <HtmlPreviewRenderer
-        artifactId={artifactId}
-        props={{ html: activeResource.text, title }}
-        height={height}
-        initialState={initialState}
-        frozen={frozen}
-        onWidgetStateChange={onWidgetStateChange}
-        onOpenFilePreview={onOpenFilePreview}
-        feedbackContext={feedbackContext}
-        stableSession={stableSession}
-      />
-    );
-  }
-  return (
-    <div className="space-y-2 p-3" data-role="interactive-file-preview">
-      {kind === 'image' ? (
-        <img
-          src={activeResource.url}
-          alt={title}
-          className="mx-auto max-h-72 max-w-full rounded-lg object-contain"
-          onLoad={() => setMediaFailureCount(0)}
-          onError={retryMediaResource}
-        />
-      ) : kind === 'video' ? (
-        <video
-          src={activeResource.url}
-          controls
-          className="max-h-72 w-full rounded-lg bg-black"
-          onLoadedData={() => setMediaFailureCount(0)}
-          onError={retryMediaResource}
-        />
-      ) : kind === 'audio' ? (
-        <audio
-          src={activeResource.url}
-          controls
-          className="w-full"
-          onLoadedData={() => setMediaFailureCount(0)}
-          onError={retryMediaResource}
-        />
-      ) : kind === 'pdf' ? (
-        <div
-          className="flex h-48 flex-col items-center justify-center gap-2 rounded-lg border border-edge-subtle bg-background text-center"
-          data-role="interactive-pdf-summary"
-        >
-          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
-            <FileText className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <div className="max-w-full truncate px-4 text-sm font-medium text-content-primary">{title}</div>
-          <div className="text-xs text-content-tertiary">
-            {t('tool.interactive.pdf_open_preview', 'Open in Preview to view pages and zoom.')}
-          </div>
-        </div>
-      ) : kind === 'text' ? (
-        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/20 p-3 font-mono text-xs">
-          {activeResource.text}
-        </pre>
-      ) : null}
-      <div className="rounded-lg border bg-muted/20 p-3">
-        <div className="truncate text-sm font-medium">{title}</div>
-        {path ? (
-          <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{path}</div>
-        ) : (
-          <div className="mt-1 text-xs text-muted-foreground">
-            {t('tool.interactive.no_file_path', 'No file path provided.')}
-          </div>
-        )}
-        {mime ? <div className="mt-1 text-xs text-muted-foreground">{mime}</div> : null}
-        {description ? <div className="mt-2 text-xs text-muted-foreground">{description}</div> : null}
-      </div>
+  return onOpenFilePreview ? (
+    <button
+      type="button"
+      className={`${className} hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
+      aria-label={t('preview.inline.openFile', 'Open {{name}} in Preview', { name })}
+      data-preview-render-state="summary"
+      onClick={() => onOpenFilePreview(path)}
+    >
+      {body}
+    </button>
+  ) : (
+    <div className={className} data-preview-render-state="summary">
+      {body}
     </div>
   );
 }
@@ -1380,6 +1177,7 @@ function ArtifactRenderer({
   feedbackContext?: InteractiveFeedbackContext;
   stableSession?: boolean;
 }) {
+  const { t } = useTranslation();
   const props = artifact.props ?? {};
   const height = heightOverride ?? numberFrom(artifact.height, 320);
   if (previewOnly) {
@@ -1407,24 +1205,24 @@ function ArtifactRenderer({
       );
     case 'file_preview': {
       const path = stringFrom(props.path || props.file_path || props.ref);
-      const mime = stringFrom(props.mime || props.content_type);
-      if (isDiagramPreviewFile(path, mime)) {
-        return <DiagramInteractiveFilePreview path={path} />;
-      }
       return (
-        <FilePreviewRenderer
-          artifactId={artifact.artifact_id ?? ''}
-          props={{ ...props, title: props.title ?? artifact.title }}
-          height={height}
-          initialState={artifact.widget_state ?? {}}
-          frozen={frozen}
-          onWidgetStateChange={onWidgetStateChange}
+        <ResolvedInteractiveFilePreview
+          path={path}
+          fileType={stringFrom(props.file_type || props.fileType, 'auto')}
           onOpenFilePreview={onOpenFilePreview}
-          feedbackContext={feedbackContext}
-          stableSession={stableSession}
         />
       );
     }
+    case 'url_preview':
+      return (
+        <Suspense fallback={<AsyncState kind="loading" title={t('preview.url.loading', 'Loading web page…')} />}>
+          <UrlPreviewRenderer
+            url={stringFrom(props.url)}
+            title={artifact.title ?? 'Web page'}
+            description={stringFrom(props.description)}
+          />
+        </Suspense>
+      );
     case 'user_input':
       return (
         <UserInputRenderer
@@ -1446,11 +1244,13 @@ function ArtifactRenderer({
 export function InteractiveArtifactPreview({
   artifact,
   maxHeight,
+  fillAvailableHeight = false,
   onSubmitAsNewMessage,
   onOpenFilePreview,
 }: {
   artifact: InteractiveArtifact;
   maxHeight?: number | string;
+  fillAvailableHeight?: boolean;
   onSubmitAsNewMessage?: SubmitInteractiveAsNewTurn;
   onOpenFilePreview?: (path: string) => void;
 }) {
@@ -1515,7 +1315,11 @@ export function InteractiveArtifactPreview({
       effectiveArtifact.interaction_state.status !== 'none',
   );
   return (
-    <div className="overflow-auto" style={{ maxHeight }} data-role="interactive-artifact-preview-surface">
+    <div
+      className={fillAvailableHeight ? 'h-full min-h-0 overflow-hidden' : 'overflow-auto'}
+      style={fillAvailableHeight ? undefined : { maxHeight }}
+      data-role="interactive-artifact-preview-surface"
+    >
       {renderError ? (
         <InteractiveRenderFailure detail={renderError} feedbackContext={feedbackContext} />
       ) : (
@@ -1678,7 +1482,14 @@ export function InteractiveArtifactBlock({
     artifact?.component_type === 'file_preview'
       ? stringFrom(artifact.props?.path || artifact.props?.file_path || artifact.props?.ref)
       : '';
-  const canOpenFilePreview = !renderError && !!filePreviewPath && !!onOpenFilePreview && !compact;
+  const filePreviewExplicitType = artifact?.component_type === 'file_preview'
+    ? stringFrom(artifact.props?.file_type || artifact.props?.fileType, 'auto')
+    : 'auto';
+  const isFilePreviewSummary = !renderError && !!filePreviewPath && artifact?.component_type === 'file_preview';
+  const fileSummaryName = filePreviewName(filePreviewPath);
+  const fileSummaryAppearance = filePreviewAppearance(filePreviewPath, filePreviewExplicitType);
+  const FileSummaryIcon = fileSummaryAppearance.Icon;
+  const canOpenFilePreview = !renderError && !!filePreviewPath && !!onOpenFilePreview;
   const canOpenInteractivePreview = Boolean(
     !renderError &&
       artifact?.component_type === 'html_preview' &&
@@ -1757,17 +1568,40 @@ export function InteractiveArtifactBlock({
       data-message-role="assistant"
       data-tool-name="render_interactive"
       data-role="interactive-artifact"
+      data-preview-render-state={isFilePreviewSummary ? 'summary' : undefined}
+      data-file-preview-type={isFilePreviewSummary ? fileSummaryAppearance.type : undefined}
     >
       {!compact && (showAvatar ? <MessageAvatar label="A" tone="agent" /> : <div className="h-9 w-9 shrink-0" />)}
       <div
-        className={cn('w-full min-w-0', compact ? 'max-w-[94%]' : 'max-w-[82%]')}
+        className={cn(
+          'w-full min-w-0',
+          isFilePreviewSummary
+            ? compact
+              ? 'max-w-[94%]'
+              : 'max-w-[30rem]'
+            : compact
+              ? 'max-w-[94%]'
+              : 'max-w-[82%]',
+        )}
         data-message-content-rail="assistant"
       >
         <div className="overflow-hidden rounded-xl border border-edge-structural bg-surface-raised shadow-sm">
-          <div className="flex items-center gap-3 border-b border-edge-subtle bg-surface-sunken/45 px-4 py-3">
+          <div className={cn(
+            'flex items-center gap-3 px-4 py-3',
+            isFilePreviewSummary
+              ? 'bg-surface-raised'
+              : 'border-b border-edge-subtle bg-surface-sunken/45',
+          )}>
+            {isFilePreviewSummary ? (
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${fileSummaryAppearance.tone}`}>
+                <FileSummaryIcon className="h-5 w-5" aria-hidden="true" />
+              </span>
+            ) : null}
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold leading-5 text-content-primary">
-                {isPreToolApproval && artifact
+                {isFilePreviewSummary
+                  ? fileSummaryName
+                  : isPreToolApproval && artifact
                   ? t('hitl.approval_title', 'Approve {{tool}}', {
                       tool: stringFrom(
                         asArray(artifact.props?.fields)
@@ -1778,7 +1612,13 @@ export function InteractiveArtifactBlock({
                     })
                   : artifact?.title || t('tool.interactive.untitled', 'Interactive artifact')}
               </div>
-              <div className="mt-0.5"><StatusLine call={call} /></div>
+              <div className="mt-0.5">
+                {isFilePreviewSummary ? (
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {fileSummaryAppearance.type}
+                  </span>
+                ) : <StatusLine call={call} />}
+              </div>
             </div>
             {canOpenInteractivePreview ? (
               <button
@@ -1796,41 +1636,51 @@ export function InteractiveArtifactBlock({
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-edge-structural bg-background/85 text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 data-action="interactive-open-file-preview"
-                title={t('tool.interactive.open_preview', 'Open in preview')}
-                aria-label={t('tool.interactive.open_preview', 'Open in preview')}
+                title={compact
+                  ? t('tool.interactive.open_preview_tab', 'Open in a new Preview tab')
+                  : t('tool.interactive.open_preview', 'Open in preview')}
+                aria-label={compact
+                  ? t('tool.interactive.open_preview_tab', 'Open in a new Preview tab')
+                  : t('tool.interactive.open_preview', 'Open in preview')}
                 onClick={() => onOpenFilePreview?.(filePreviewPath)}
               >
                 <PreviewCornerIcon />
               </button>
             ) : null}
           </div>
-          <div className="overflow-auto bg-surface-work" style={{ maxHeight: height }}>
-            {renderError ? (
-              <InteractiveRenderFailure detail={renderError} feedbackContext={feedbackContext} />
-            ) : artifact ? (
-              isPreToolApproval ? (
-                <PreToolApprovalBody artifact={artifact} />
+          {!isFilePreviewSummary ? (
+            <div
+              className="overflow-auto bg-surface-work"
+              style={{ maxHeight: height }}
+              data-role="interactive-artifact-body"
+            >
+              {renderError ? (
+                <InteractiveRenderFailure detail={renderError} feedbackContext={feedbackContext} />
+              ) : artifact ? (
+                isPreToolApproval ? (
+                  <PreToolApprovalBody artifact={artifact} />
+                ) : (
+                  <InteractiveRenderBoundary
+                    key={JSON.stringify(artifact.widget_state ?? {})}
+                    fallback={(detail) => <InteractiveRenderFailure detail={detail} feedbackContext={feedbackContext} />}
+                  >
+                    <ArtifactRenderer
+                      artifact={artifact}
+                      previewOnly={previewOnly}
+                      onWidgetStateChange={setWidgetState}
+                      onOpenFilePreview={onOpenFilePreview}
+                      frozen={frozen}
+                      feedbackContext={feedbackContext}
+                      stableSession={isStableRenderOnly}
+                    />
+                  </InteractiveRenderBoundary>
+                )
               ) : (
-                <InteractiveRenderBoundary
-                  key={JSON.stringify(artifact.widget_state ?? {})}
-                  fallback={(detail) => <InteractiveRenderFailure detail={detail} feedbackContext={feedbackContext} />}
-                >
-                  <ArtifactRenderer
-                    artifact={artifact}
-                    previewOnly={previewOnly}
-                    onWidgetStateChange={setWidgetState}
-                    onOpenFilePreview={onOpenFilePreview}
-                    frozen={frozen}
-                    feedbackContext={feedbackContext}
-                    stableSession={isStableRenderOnly}
-                  />
-                </InteractiveRenderBoundary>
-              )
-            ) : (
-              <InteractiveRenderFailure detail="Artifact data is missing." feedbackContext={feedbackContext} />
-            )}
-          </div>
-          {artifact && !renderError && (
+                <InteractiveRenderFailure detail="Artifact data is missing." feedbackContext={feedbackContext} />
+              )}
+            </div>
+          ) : null}
+          {artifact && !renderError && !isFilePreviewSummary && (
             <SubmitControls
               completionMode={artifact.completion_mode ?? 'render_only'}
               schema={

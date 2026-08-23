@@ -369,7 +369,11 @@ def build_codex_debug_snapshot(
             "history_complete": history_complete,
             "history_mode": thread.get("historyMode"),
             "prior_turn_count": len(prior_turns),
-            "mcp_server_count": len(request.mcp_servers),
+            "mcp_server_count": len(
+                request.mcp_desired_state.servers
+                if request.mcp_desired_state is not None
+                else []
+            ),
             "skill_count": len(request.skills),
             "reasoning_effort": request.reasoning_effort,
             "snapshot_truncated": truncated,
@@ -390,9 +394,13 @@ def build_codex_debug_snapshot(
         "tool_registry": [{
             "name": server.name,
             "origin": server.source,
-            "config_revision": server.config_revision,
+            "config_revision": server.configuration_revision,
             "required": server.required,
-        } for server in request.mcp_servers],
+        } for server in (
+            request.mcp_desired_state.servers
+            if request.mcp_desired_state is not None
+            else []
+        )],
         "runtime_policy": {
             "approval_mode": request.approval_mode,
             "session_memory_scope": "codex_thread",

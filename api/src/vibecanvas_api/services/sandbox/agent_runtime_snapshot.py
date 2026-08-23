@@ -53,7 +53,11 @@ def _source_hashes() -> dict[str, str]:
         Path(__file__).with_name("manager.py").resolve(),
         api_root / "services" / "agent_runtime" / "sandbox_entry.py",
         api_root / "services" / "agent_runtime" / "codex.py",
-        api_root / "services" / "agent_runtime" / "codex_mcp_gateway.py",
+        api_root / "services" / "agent_runtime" / "codex_mcp_hub_gateway.py",
+        api_root / "services" / "agent_runtime" / "mcp_hub.py",
+        api_root / "services" / "agent_runtime" / "mcp_hub_adapter.py",
+        api_root / "services" / "agent_runtime" / "mcp_browser_transport.py",
+        api_root / "services" / "agent_runtime" / "mcp_runtime_protocol.py",
         api_root / "services" / "agent_runtime" / "mcp.py",
         api_root / "agent.py",
     )

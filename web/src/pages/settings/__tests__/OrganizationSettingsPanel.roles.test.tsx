@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import i18n from 'i18next';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
@@ -7,6 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OrganizationSettingsPanel } from '@/pages/settings/OrganizationSettingsPanel';
 import { useAuthStore } from '@/stores/auth';
+import {
+  rotateServiceAccountGeneration,
+  updateOrganizationMember,
+} from '@/lib/api/organizations';
 
 const roleState = vi.hoisted(() => ({
   role: 'member' as 'owner' | 'admin' | 'member' | 'guest' | 'auditor',
@@ -158,6 +162,10 @@ describe('organization role surface', () => {
   beforeEach(() => {
     roleState.role = 'member';
     roleState.capabilities = [];
+    vi.mocked(updateOrganizationMember).mockReset();
+    vi.mocked(updateOrganizationMember).mockResolvedValue({} as never);
+    vi.mocked(rotateServiceAccountGeneration).mockReset();
+    vi.mocked(rotateServiceAccountGeneration).mockResolvedValue({} as never);
   });
 
   for (const role of ['member', 'guest'] as const) {
@@ -201,5 +209,37 @@ describe('organization role surface', () => {
     expect(await screen.findByText('Scheduled workflow runner')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /rotate|disable/i })).toBeNull();
     expect(screen.queryByRole('tab', { name: /security & identity/i })).toBeNull();
+  });
+
+  it('shows row-local member save feedback', async () => {
+    const user = userEvent.setup();
+    renderRole('admin', ['view_audit', 'manage_members', 'manage_policy']);
+    await user.click(await screen.findByRole('tab', { name: /^people$/i }));
+    await user.click((await screen.findAllByRole('combobox'))[0]);
+    await user.click(screen.getByRole('option', { name: 'admin' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(updateOrganizationMember).toHaveBeenCalledWith(
+      'organization-roles',
+      'other-user',
+      { role: 'admin', status: 'active' },
+    );
+  });
+
+  it('confirms service-account rotation before making a request', async () => {
+    const user = userEvent.setup();
+    renderRole('admin', ['view_audit', 'manage_members', 'manage_policy']);
+    await user.click(await screen.findByRole('tab', { name: /operations/i }));
+    await user.click(await screen.findByRole('button', { name: /^Rotate$/i }));
+    expect(screen.getByText(/Existing credentials.*will stop working/i)).toBeInTheDocument();
+    expect(rotateServiceAccountGeneration).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /^Cancel$/i }));
+    expect(rotateServiceAccountGeneration).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /^Rotate$/i }));
+    await user.click(screen.getAllByRole('button', { name: /^Rotate$/i }).at(-1)!);
+    await waitFor(() => expect(rotateServiceAccountGeneration).toHaveBeenCalledWith(
+      'organization-roles',
+      'service-account-one',
+    ));
   });
 });

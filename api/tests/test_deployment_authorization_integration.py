@@ -296,6 +296,11 @@ async def test_deployment_roles_secret_action_and_revoke(
         assert deployment["api_key"]
         assert deployment["access"]["effective_role"] == "manager"
         assert "manage_secret" in deployment["access"]["capabilities"]
+        assert deployment["provenance"]["ownership_scope"] == "personal"
+        assert deployment["provenance"]["origin_type"] == "created"
+        assert deployment["provenance"]["owner"]["display_name"] == (
+            "deployment_owner"
+        )
         assert OpenFgaTuple(
             f"organization:{owner['tenant_id']}",
             "organization",
@@ -343,29 +348,51 @@ async def test_deployment_roles_secret_action_and_revoke(
             )
         ).status_code == 404
 
-        async def grant(relation: str, subject_id: str) -> None:
+        async def grant(relation: str, subject: dict) -> None:
+            resolved = await client.post(
+                f"/api/v1/resource-access/deployment/{deployment_id}/resolve-target",
+                json={
+                    "target_type": "user",
+                    "identifier": subject["email"],
+                },
+                headers=_headers(owner_token),
+            )
+            assert resolved.status_code == 200, resolved.text
+            target = resolved.json()["target"]
+            assert target is not None
             response = await client.post(
                 f"/api/v1/deployments/{deployment_id}/access",
                 json={
                     "relation": relation,
-                    "subject_type": "user",
-                    "subject_id": subject_id,
-                    "subject_relation": None,
+                    "resolution_token": target["resolution_token"],
                 },
                 headers=_headers(
                     owner_token,
                     **{
                         "Idempotency-Key": (
-                            f"grant-deployment-{relation}-{subject_id}"
+                            f"grant-deployment-{relation}-{subject['user_id']}"
                         )
                     },
                 ),
             )
             assert response.status_code == 201, response.text
 
-        await grant("viewer", viewer["user_id"])
-        await grant("editor", editor["user_id"])
-        await grant("operator", operator["user_id"])
+        await grant("viewer", viewer)
+        await grant("editor", editor)
+        await grant("operator", operator)
+
+        shared = await client.get(
+            "/api/v1/resource-access/shared?resource_type=deployment",
+            headers=_headers(viewer_token),
+        )
+        assert shared.status_code == 200, shared.text
+        assert [item["resource_id"] for item in shared.json()["items"]] == [
+            deployment_id
+        ]
+        assert shared.json()["items"][0]["name"] == "Private deployment"
+        assert shared.json()["items"][0]["access"]["effective_role"] == (
+            "viewer"
+        )
 
         visible = await client.get(
             "/api/v1/deployments",

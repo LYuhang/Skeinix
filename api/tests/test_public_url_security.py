@@ -190,6 +190,36 @@ async def test_pinned_request_supports_operator_trusted_proxy_dns(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pinned_request_forwards_explicit_operator_proxy(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: _answers("198.18.0.9"),
+    )
+    transport_arguments = []
+
+    def transport_factory(*, addresses, proxy=None, **_kwargs):
+        transport_arguments.append((addresses, proxy))
+        return httpx.MockTransport(
+            lambda _request: httpx.Response(200, content=b"ok")
+        )
+
+    monkeypatch.setattr(pinned_http, "PinnedAsyncHTTPTransport", transport_factory)
+    response = await request_pinned_public_url(
+        "GET",
+        "https://catalog.example/servers",
+        trusted_proxy_cidrs=("198.18.0.0/15",),
+        proxy="http://proxy.internal:7897",
+    )
+
+    assert response.content == b"ok"
+    assert transport_arguments == [(
+        {"catalog.example": ("198.18.0.9",)},
+        "http://proxy.internal:7897",
+    )]
+
+
+@pytest.mark.asyncio
 async def test_pinned_request_rejects_private_redirect_hop(monkeypatch):
     def resolve(host, *_args, **_kwargs):
         address = "93.184.216.34" if host == "origin.example" else "169.254.169.254"

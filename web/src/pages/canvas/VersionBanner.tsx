@@ -56,7 +56,7 @@ export function VersionBanner({ wfId, vKey }: VersionBannerProps) {
       <span className="font-medium text-state-warning">
         {t('version_banner.editing', {
           vKey,
-          defaultValue: 'Editing {{vKey}} — saving adds a new sub-version under it',
+          defaultValue: 'Historical {{vKey}} · Save creates a new sub-version here and makes it current; Fork creates a new major instead.',
         })}
       </span>
       <div className="flex-1" />
@@ -67,7 +67,7 @@ export function VersionBanner({ wfId, vKey }: VersionBannerProps) {
         disabled={!draft || newMajor.isPending}
         onClick={() => void onFork()}
       >
-        {t('version_banner.fork', 'Fork from this version')}
+        {t('version_banner.fork', 'Fork as new major')}
       </Button>
       <Button
         variant="ghost"

@@ -8,6 +8,8 @@ MCP capability, while PostgreSQL RLS remains the authoritative tenant boundary.
 from __future__ import annotations
 
 import json
+import posixpath
+import re
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
@@ -32,6 +34,14 @@ from vibecanvas_api.routes import deployments as deployment_routes
 from vibecanvas_api.routes import tasks as task_routes
 from vibecanvas_api.storage.db import session_scope
 from vibecanvas_api.storage.repo_kb import KbRepo
+from vibecanvas_api.services.knowledge_packages import (
+    PackageFile,
+    enqueue_package_indexing,
+    package_snapshot,
+    replace_package,
+    validate_package,
+)
+from vibecanvas_api.services.file_format import content_type_for
 
 
 def _auth(runtime: ToolRuntime) -> AuthContext:
@@ -49,7 +59,7 @@ def _request(runtime: ToolRuntime) -> Request:
     return Request({
         "type": "http",
         "method": "MCP",
-        "path": "/api/internal/mcp/resource",
+        "path": "/internal/platform-capability/resource",
         "headers": [],
         "query_string": b"",
         "app": app,
@@ -95,185 +105,234 @@ async def _route_call(awaitable):
         raise RuntimeError(str(exc.detail)) from exc
 
 
-@tool(response_format="content_and_artifact")
-async def list_knowledge_bases(
-    *,
-    runtime: ToolRuntime,
-) -> str:
-    """List knowledge bases visible to the current user.
+def _knowledge_destination(value: str, fallback: str) -> str:
+    path = str(value or fallback).rstrip("/")
+    if not (path.startswith("/data/") or path.startswith("/mount/")):
+        raise ValueError("destination/source path must be under /data or /mount")
+    if any(part in {"", ".", ".."} for part in path[1:].split("/")):
+        raise ValueError("destination/source path contains an invalid segment")
+    return path
 
-    Results include a bounded discovery summary and backend-computed
-    capabilities. Use the returned id with get_knowledge_base or
-    search_knowledge; never guess an id.
-    """
-    context = runtime.context
-    async with session_scope(tenant_id=str(context.tenant_id)) as session:
-        result = await _route_call(
-            kb_routes.list_kbs(
-                request=_request(runtime),
-                ctx=_auth(runtime),
-                session=session,
-                service=_service(runtime, session),
+
+async def _collect_package(runtime: ToolRuntime, source_path: str) -> list[PackageFile]:
+    root = _knowledge_destination(source_path, "/data/knowledge-package")
+    sandbox = await runtime.context.sandbox_session()
+    pending = [(root, "")]
+    result: list[PackageFile] = []
+    while pending:
+        absolute, relative = pending.pop()
+        listing = await sandbox.list_dir(absolute)
+        if not listing.get("ok"):
+            raise RuntimeError(
+                f"could not list Knowledge package path {absolute!r}: "
+                f"{listing.get('error') or 'unknown error'}"
             )
-        )
-    catalog = []
-    for item in result:
-        value = item.model_dump() if hasattr(item, "model_dump") else dict(item)
-        value["virtual_root"] = f"/knowledge/{value['id']}"
-        catalog.append(value)
-    return _tool_result("list_knowledge_bases", catalog)
+        for entry in listing.get("entries") or []:
+            name = str(entry.get("name") or "")
+            if not name or "/" in name or name in {".", ".."}:
+                raise RuntimeError("sandbox returned an invalid package entry")
+            child_absolute = posixpath.join(absolute, name)
+            child_relative = posixpath.join(relative, name) if relative else name
+            if entry.get("is_dir"):
+                pending.append((child_absolute, child_relative))
+                continue
+            loaded = await sandbox.read_bytes(child_absolute)
+            if not loaded.get("ok") or not isinstance(loaded.get("data"), bytes):
+                raise RuntimeError(
+                    f"could not read Knowledge package file {child_absolute!r}: "
+                    f"{loaded.get('error') or 'unknown error'}"
+                )
+            result.append(PackageFile(
+                path=child_relative,
+                data=loaded["data"],
+                content_type=content_type_for(child_relative, loaded["data"]),
+            ))
+    # Validate the complete snapshot before a create route can commit a
+    # Knowledge resource.  ``replace_package`` validates again at the storage
+    # boundary, but doing it here prevents an invalid sandbox directory from
+    # leaving behind a committed, half-created package.
+    return validate_package(result)
 
 
-@tool(response_format="content_and_artifact")
-async def get_knowledge_base(
-    kb_id: str,
-    *,
-    runtime: ToolRuntime,
-) -> str:
-    """Get one visible knowledge base and its current file/chunk counts."""
-    try:
-        parsed_id = uuid.UUID(kb_id)
-    except ValueError as exc:
-        raise ValueError(
-            "kb_id must be a UUID returned by list_knowledge_bases"
-        ) from exc
+@tool("knowledge_list", response_format="content_and_artifact")
+async def knowledge_list(*, runtime: ToolRuntime) -> str:
+    """List authorized Knowledge packages and their current package versions."""
     context = runtime.context
     async with session_scope(tenant_id=str(context.tenant_id)) as session:
-        result = await _route_call(
-            kb_routes.get_kb(
-                parsed_id,
-                request=_request(runtime),
-                ctx=_auth(runtime),
-                session=session,
-                service=_service(runtime, session),
-            )
-        )
-    return _tool_result("get_knowledge_base", result)
-
-
-@tool(response_format="content_and_artifact")
-async def list_knowledge_files(
-    kb_id: str,
-    *,
-    runtime: ToolRuntime,
-) -> str:
-    """List the files in one authorized virtual Knowledge folder.
-
-    Use the returned file_id and virtual_path with read_knowledge_file, or
-    grep the folder with search_knowledge. Only metadata is disclosed here.
-    """
-    try:
-        parsed_id = uuid.UUID(kb_id)
-    except ValueError as exc:
-        raise ValueError("kb_id must come from list_knowledge_bases") from exc
-    context = runtime.context
-    async with session_scope(tenant_id=str(context.tenant_id)) as session:
-        result = await _route_call(kb_routes.list_files(
-            parsed_id,
+        rows = await _route_call(kb_routes.list_kbs(
             request=_request(runtime),
-            file_status=None,
             ctx=_auth(runtime),
             session=session,
             service=_service(runtime, session),
         ))
-    files = []
-    for item in result:
-        value = item.model_dump() if hasattr(item, "model_dump") else dict(item)
-        value["virtual_path"] = (
-            f"/knowledge/{kb_id}/{value['id']}/{value['name']}"
-        )
-        files.append(value)
-    return _tool_result("list_knowledge_files", {
-        "virtual_root": f"/knowledge/{kb_id}",
-        "files": files,
-    })
+    return _tool_result("knowledge_list", rows)
 
 
-@tool(response_format="content_and_artifact")
-async def read_knowledge_file(
+@tool("knowledge_get", response_format="content_and_artifact")
+async def knowledge_get(
     kb_id: str,
-    file_id: str,
-    start_chunk: int = 0,
-    max_chunks: int = 6,
+    destination_path: str = "",
     *,
     runtime: ToolRuntime,
 ) -> str:
-    """Read a bounded page from a file's normalized text representation.
+    """Materialize an authorized Knowledge package into this Chat sandbox.
 
-    Binary PDF and Office sources are exposed as parsed, read-only text. Call
-    again with next_start_chunk when has_more is true. This avoids injecting an
-    entire source into model context.
+    Returns its local directory, package version, and README entry point. Read
+    and search the local files with ordinary Agent filesystem tools.
     """
-    if start_chunk < 0:
-        raise ValueError("start_chunk must be non-negative")
-    if not 1 <= max_chunks <= 12:
-        raise ValueError("max_chunks must be between 1 and 12")
-    try:
-        parsed_kb_id = uuid.UUID(kb_id)
-        parsed_file_id = uuid.UUID(file_id)
-    except ValueError as exc:
-        raise ValueError("kb_id and file_id must come from Knowledge tools") from exc
-
+    parsed_id = uuid.UUID(kb_id)
     context = runtime.context
     async with session_scope(tenant_id=str(context.tenant_id)) as session:
-        file, chunks = await KbRepo(session).read_file_chunks(
-            kb_id=parsed_kb_id,
-            file_id=parsed_file_id,
-            offset=start_chunk,
-            limit=max_chunks + 1,
+        await kb_routes._authorize_knowledge_base(
+            request=_request(runtime), ctx=_auth(runtime),
+            service=_service(runtime, session), knowledge_base_id=parsed_id,
+            action=kb_routes.Action.USE,
         )
-    if file is None:
-        raise RuntimeError("knowledge_file_not_found_or_not_indexed")
-    has_more = len(chunks) > max_chunks
-    page = chunks[:max_chunks]
-    next_start = start_chunk + len(page) if has_more else None
-    return _tool_result("read_knowledge_file", {
-        "virtual_path": f"/knowledge/{kb_id}/{file_id}/{file.name}",
-        "file_id": file_id,
-        "start_chunk": start_chunk,
-        "next_start_chunk": next_start,
-        "has_more": has_more,
-        "chunks": [
-            {
-                "chunk_index": chunk.chunk_index,
-                "text": chunk.text,
-                "metadata": chunk.chunk_metadata or {},
-            }
-            for chunk in page
-        ],
+        repo = KbRepo(session)
+        kb = await repo.get_active(parsed_id)
+        if kb is None:
+            raise RuntimeError("knowledge_not_found")
+        files = await package_snapshot(session, parsed_id)
+        package_version = kb.package_version
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", kb.name).strip("-.") or kb_id
+    root = _knowledge_destination(
+        destination_path,
+        f"/data/knowledge/{safe_name}-v{package_version}",
+    )
+    sandbox = await context.sandbox_session()
+    for item in files:
+        written = await sandbox.write_bytes(posixpath.join(root, item.path), item.data)
+        if not written.get("ok"):
+            raise RuntimeError(
+                f"could not materialize {item.path!r}: "
+                f"{written.get('error') or 'unknown error'}"
+            )
+    return _tool_result("knowledge_get", {
+        "id": kb_id,
+        "local_directory": root,
+        "package_version": package_version,
+        "readme": f"{root}/README.md",
+        "file_count": len(files),
     })
 
 
-@tool(response_format="content_and_artifact")
-async def search_knowledge(
-    kb_ids: list[str],
-    query: str,
-    top_k: int = 5,
+@tool("knowledge_create", response_format="content_and_artifact")
+async def knowledge_create(
+    name: str,
+    source_path: str,
+    description: str = "",
     *,
     runtime: ToolRuntime,
 ) -> str:
-    """Grep normalized source text in one or more authorized Knowledge folders.
+    """Publish an Agent-prepared local directory as a Knowledge package.
 
-    Obtain every kb_id from list_knowledge_bases first. The call fails closed
-    if any requested knowledge base is unavailable or lacks use permission.
+    The directory must contain a root README.md. Validate the complete local
+    package before calling this persistent mutation.
     """
-    body = kb_routes.SearchRequest(
-        kb_ids=kb_ids,
-        query=query,
-        top_k=top_k,
-    )
+    files = await _collect_package(runtime, source_path)
     context = runtime.context
     async with session_scope(tenant_id=str(context.tenant_id)) as session:
-        result = await _route_call(
-            kb_routes.search(
-                body,
-                request=_request(runtime),
-                ctx=_auth(runtime),
-                session=session,
-                service=_service(runtime, session),
-            )
+        created = await _route_call(kb_routes.create_kb(
+            kb_routes.KbCreate(name=name, description=description or None),
+            request=_request(runtime), ctx=_auth(runtime), session=session,
+            service=_service(runtime, session),
+        ))
+        kb_id = uuid.UUID(created.id)
+        version, pending = await replace_package(
+            session, kb_id=kb_id, actor_user_id=uuid.UUID(_auth(runtime).user_id),
+            expected_version=created.package_version, files=files,
+            increment_version=False,
         )
-    return _tool_result("search_knowledge", result)
+        await session.commit()
+    await enqueue_package_indexing(
+        tenant_id=str(context.tenant_id), user_id=_auth(runtime).user_id,
+        file_ids=pending,
+    )
+    return _tool_result("knowledge_create", {
+        "id": str(kb_id), "name": name, "package_version": version,
+        "file_count": len(files), "source_path": source_path,
+    })
+
+
+@tool("knowledge_update", response_format="content_and_artifact")
+async def knowledge_update(
+    kb_id: str,
+    source_path: str,
+    expected_version: int,
+    *,
+    runtime: ToolRuntime,
+) -> str:
+    """Publish a validated local directory as a new package version.
+
+    ``expected_version`` must be the value returned by knowledge_get. A stale
+    version fails without overwriting another user's newer changes.
+    """
+    files = await _collect_package(runtime, source_path)
+    parsed_id = uuid.UUID(kb_id)
+    context = runtime.context
+    async with session_scope(tenant_id=str(context.tenant_id)) as session:
+        await kb_routes._authorize_knowledge_base(
+            request=_request(runtime), ctx=_auth(runtime),
+            service=_service(runtime, session), knowledge_base_id=parsed_id,
+            action=kb_routes.Action.UPDATE,
+        )
+        try:
+            version, pending = await replace_package(
+                session, kb_id=parsed_id,
+                actor_user_id=uuid.UUID(_auth(runtime).user_id),
+                expected_version=expected_version, files=files,
+            )
+        except RuntimeError as exc:
+            if str(exc).startswith("knowledge_version_conflict:"):
+                current = str(exc).split(":", 1)[1]
+                raise RuntimeError(
+                    f"knowledge_version_conflict: expected {expected_version}, "
+                    f"current {current}; call knowledge_get and reconcile first"
+                ) from exc
+            raise
+        await session.commit()
+    await enqueue_package_indexing(
+        tenant_id=str(context.tenant_id), user_id=_auth(runtime).user_id,
+        file_ids=pending,
+    )
+    return _tool_result("knowledge_update", {
+        "id": kb_id, "package_version": version,
+        "file_count": len(files), "source_path": source_path,
+    })
+
+
+@tool("knowledge_delete", response_format="content_and_artifact")
+async def knowledge_delete(
+    kb_id: str,
+    confirm: bool,
+    *,
+    runtime: ToolRuntime,
+) -> str:
+    """Delete a Knowledge package only after the user explicitly requested it."""
+    if not confirm:
+        raise ValueError("confirm must be true after explicit user intent")
+    context = runtime.context
+    async with session_scope(tenant_id=str(context.tenant_id)) as session:
+        await _route_call(kb_routes.delete_kb(
+            uuid.UUID(kb_id), request=_request(runtime), ctx=_auth(runtime),
+            session=session, service=_service(runtime, session),
+        ))
+    return _tool_result("knowledge_delete", {"id": kb_id, "status": "deleted"})
+
+
+@tool("knowledge_search", response_format="content_and_artifact")
+async def knowledge_search(
+    kb_ids: list[str], query: str, top_k: int = 5, *, runtime: ToolRuntime,
+) -> str:
+    """Search the derived text index of selected authorized packages."""
+    body = kb_routes.SearchRequest(kb_ids=kb_ids, query=query, top_k=top_k)
+    context = runtime.context
+    async with session_scope(tenant_id=str(context.tenant_id)) as session:
+        result = await _route_call(kb_routes.search(
+            body, request=_request(runtime), ctx=_auth(runtime), session=session,
+            service=_service(runtime, session),
+        ))
+    return _tool_result("knowledge_search", result)
 
 
 @tool(response_format="content_and_artifact")
@@ -529,7 +588,7 @@ async def task_resume(
 
 @tool(response_format="content_and_artifact")
 async def deployment_list(
-    trigger_type: Literal["api", "webhook", "cron"] | None = None,
+    trigger_type: Literal["api", "webhook"] | None = None,
     enabled: bool | None = None,
     workflow_id: str | None = None,
     limit: int = 50,
@@ -546,7 +605,6 @@ async def deployment_list(
             enabled=enabled,
             workflow_id=workflow_id,
             q=None,
-            serving_only=False,
             limit=limit,
             offset=offset,
             ctx=_auth(runtime),
@@ -581,12 +639,10 @@ async def deployment_create(
     workflow_id: str,
     name: str,
     slug: str,
-    trigger_type: Literal["api", "webhook", "cron"],
+    trigger_type: Literal["api", "webhook"],
     version_pin: Literal["head", "specific"] = "head",
     pinned_major: int | None = None,
     pinned_sub: int | None = None,
-    cron_expr: str | None = None,
-    cron_timezone: str = "UTC",
     rate_limit_qps: int = 10,
     require_user_auth: bool = True,
     *,
@@ -595,7 +651,7 @@ async def deployment_create(
     """Create a workflow deployment.
 
     API and webhook deployments return a one-time credential; preserve it in
-    the response shown to the user. Cron deployments require cron_expr.
+    the response shown to the user.
     Persistent creation requires user authorization by default.
     """
     del require_user_auth
@@ -608,8 +664,6 @@ async def deployment_create(
         version_pin=version_pin,
         pinned_major=pinned_major,
         pinned_sub=pinned_sub,
-        cron_expr=cron_expr,
-        cron_tz=cron_timezone,
         rate_limit_qps=rate_limit_qps,
     )
     async with session_scope(tenant_id=str(context.tenant_id)) as session:
@@ -631,8 +685,6 @@ async def deployment_update(
     name: str | None = None,
     enabled: bool | None = None,
     rate_limit_qps: int | None = None,
-    cron_expr: str | None = None,
-    cron_timezone: str | None = None,
     version_pin: Literal["head", "specific"] | None = None,
     pinned_major: int | None = None,
     pinned_sub: int | None = None,
@@ -651,8 +703,6 @@ async def deployment_update(
         "name": name,
         "enabled": enabled,
         "rate_limit_qps": rate_limit_qps,
-        "cron_expr": cron_expr,
-        "cron_tz": cron_timezone,
         "version_pin": version_pin,
         "pinned_major": pinned_major,
         "pinned_sub": pinned_sub,
@@ -721,9 +771,10 @@ DEPLOYMENT_MCP_TOOLS = [
 ]
 
 KNOWLEDGE_MCP_TOOLS = [
-    list_knowledge_bases,
-    get_knowledge_base,
-    list_knowledge_files,
-    search_knowledge,
-    read_knowledge_file,
+    knowledge_list,
+    knowledge_get,
+    knowledge_create,
+    knowledge_update,
+    knowledge_delete,
+    knowledge_search,
 ]

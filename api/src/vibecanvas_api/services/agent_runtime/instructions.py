@@ -35,27 +35,17 @@ def command_instructions_for_modes(
         if not content:
             raise ValueError(f"active command has no context definition: {name}")
         if name == "diagram" and active_diagram:
-            # New rows store the richer Active Diagram Context.  Direct refs
-            # are accepted for Chats created before that projection existed.
-            diagram_ref = active_diagram.get("diagram_ref")
-            if not isinstance(diagram_ref, dict):
-                diagram_ref = active_diagram
-                active_diagram = {
-                    "diagram_ref": diagram_ref,
-                    "family": "",
-                    "type": "",
-                    "selected_element_ids": [],
-                    "viewport_bounds": None,
+            file_ref = active_diagram.get("file_ref")
+            if isinstance(file_ref, dict):
+                source_path = str(file_ref.get("path") or "")
+                active_context = {
+                    "active_diagram": active_diagram,
+                    "editable_source_path": source_path,
                 }
-            source_path = str(diagram_ref.get("path") or "")
-            active_context = {
-                "active_diagram": active_diagram,
-                "editable_source_path": source_path,
-            }
-            content = (
-                f"{content}\n\n## Active Diagram Context\n"
-                f"{json.dumps(active_context, ensure_ascii=False, sort_keys=True)}"
-            )
+                content = (
+                    f"{content}\n\n## Active Diagram Context\n"
+                    f"{json.dumps(active_context, ensure_ascii=False, sort_keys=True)}"
+                )
         instructions.append(
             RuntimeInstruction(
                 instruction_id=(

@@ -3,26 +3,17 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from mcp import types
 
 from vibecanvas_api.auth.deps import AuthContext
-from vibecanvas_api.services.platform_mcp import server as platform_server
+from vibecanvas_api.services.platform_mcp import invocation as platform_invocation
 from vibecanvas_api.services.platform_mcp.capability import platform_mcp_policy
-from vibecanvas_api.services.platform_mcp.server import (
-    BUILD_MCP,
-    CONFIG_MCP,
-    DEPLOYMENT_MCP,
-    DIAGRAM_MCP,
-    INTERACTIVE_MCP,
-    KNOWLEDGE_MCP,
-    PLAN_MCP,
-    TASK_MCP,
-    WORKFLOW_MCP,
-    _tool_error_result,
-)
+from vibecanvas_api.services.platform_mcp.invocation import _tool_error_result
+from vibecanvas_api.agents.prompts.diagram import DIAGRAM_MCP_TOOL_NAMES
+from vibecanvas_api.services.platform_mcp.catalog import sandbox_mcp_catalog
 from vibecanvas_api.storage.sync_session import current_sync_tenant_id
 
 
@@ -68,7 +59,7 @@ def _identity():
 
 def _allow_context_checks(monkeypatch) -> None:
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "_live_platform_identity",
         AsyncMock(return_value=_identity()),
     )
@@ -78,13 +69,18 @@ def _allow_context_checks(monkeypatch) -> None:
             return SimpleNamespace(allowed=True)
 
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "authz_service_for_session",
         lambda **_kwargs: AllowService(),
     )
 
 
 async def _tools(server) -> dict[str, types.Tool]:
+    if isinstance(server, str):
+        return {
+            tool.name: tool
+            for tool in platform_invocation.platform_mcp_tool_manifest(server)
+        }
     handler = server._mcp_server.request_handlers[types.ListToolsRequest]
     result = await handler(types.ListToolsRequest(method="tools/list"))
     return {tool.name: tool for tool in result.root.tools}
@@ -94,7 +90,7 @@ def test_tool_error_result_is_model_correctable_mcp_error() -> None:
     result = _tool_error_result(
         code="invalid_tool_arguments",
         message="'ref' is a required property",
-        tool_name="present_diagram",
+        tool_name="update_canvas",
         json_pointer="/ref",
     )
 
@@ -110,7 +106,7 @@ def test_tool_error_result_is_model_correctable_mcp_error() -> None:
             "json_pointer": "/ref",
         },
         "retry": {
-            "tool": "present_diagram",
+            "tool": "update_canvas",
             "instruction": (
                 "Correct only the rejected argument using this tool's "
                 "published inputSchema and exact previously returned values."
@@ -120,41 +116,164 @@ def test_tool_error_result_is_model_correctable_mcp_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_management_catalog_matches_every_live_platform_registry() -> None:
-    """The settings UI must not drift from the MCP services agents receive."""
+async def test_management_catalog_matches_each_runtime_boundary() -> None:
+    """Platform and sandbox catalogs must each match their runtime boundary."""
     servers = {
-        "config": CONFIG_MCP,
-        "interactive": INTERACTIVE_MCP,
-        "workflow": WORKFLOW_MCP,
-        "task": TASK_MCP,
-        "deployment": DEPLOYMENT_MCP,
-        "knowledge": KNOWLEDGE_MCP,
-        "build": BUILD_MCP,
-        "plan": PLAN_MCP,
-        "diagram": DIAGRAM_MCP,
+        name: name
+        for name in (
+            "config",
+            "interactive",
+            "workflow",
+            "task",
+            "deployment",
+            "knowledge",
+            "build",
+        )
     }
-    catalog = {item["id"]: item for item in platform_server.platform_mcp_catalog()}
+    platform_catalog = [
+        {
+            "id": name,
+            **platform_invocation.platform_mcp_catalog_entry(name),
+        }
+        for name in servers
+    ]
+    sandbox_catalog = sandbox_mcp_catalog()
+    catalog = {item["id"]: item for item in [*platform_catalog, *sandbox_catalog]}
 
-    assert set(catalog) == set(servers)
+    assert set(catalog) == {*servers, "diagram", "document"}
+    assert {item["id"] for item in platform_catalog} == set(servers)
+    assert [item["id"] for item in sandbox_catalog] == ["diagram", "document"]
     for server_name, server in servers.items():
         registered = await _tools(server)
         listed = {tool["name"]: tool for tool in catalog[server_name]["tools"]}
         assert set(listed) == set(registered)
         assert all(tool["input_schema"]["type"] == "object" for tool in listed.values())
 
-    assert catalog["plan"]["runtime_types"] == ["langchain"]
-    assert catalog["workflow"]["activation_mode"] == "base"
+    assert catalog["workflow"]["activation_mode"] == "command"
+    assert catalog["workflow"]["activation"] == "/workflow"
     assert catalog["task"]["activation"] == "/task"
     assert catalog["diagram"]["runtime_types"] == ["langchain", "codex"]
 
 
+def test_transport_neutral_manifest_matches_fastmcp_registration() -> None:
+    manifest = {
+        tool.name: tool
+        for tool in platform_invocation.platform_mcp_tool_manifest("workflow")
+    }
+
+    assert set(manifest) == {"list_workflows", "get_workflow"}
+    assert manifest["list_workflows"].inputSchema["type"] == "object"
+    assert manifest["get_workflow"].annotations.readOnlyHint is True
+    with pytest.raises(ValueError, match="unknown platform MCP server"):
+        platform_invocation.platform_mcp_tool_manifest("missing")
+
+
+@pytest.mark.asyncio
+async def test_transport_neutral_gateway_verifies_and_invokes_without_http_context(
+    monkeypatch,
+) -> None:
+    capability = _capability()
+    tool = SimpleNamespace(
+        name="get_workflow",
+        description="Get one workflow.",
+        args={"workflow_id": {"type": "string"}},
+    )
+    invoke = AsyncMock(return_value=([types.TextContent(type="text", text="ok")], {"status": "success"}))
+    verify = Mock(return_value=capability)
+    monkeypatch.setitem(
+        platform_invocation._PLATFORM_MCP_TOOLSETS,
+        "workflow",
+        (tool,),
+    )
+    monkeypatch.setattr(
+        platform_invocation,
+        "verify_platform_mcp_capability",
+        verify,
+    )
+    monkeypatch.setattr(
+        platform_invocation,
+        "invoke_platform_mcp_tool_with_capability",
+        invoke,
+    )
+
+    result = await platform_invocation.invoke_platform_mcp_tool(
+        server="workflow",
+        tool_name="get_workflow",
+        arguments={"workflow_id": "workflow-a"},
+        capability_token="turn-capability",
+    )
+
+    assert result[1] == {"status": "success"}
+    verify.assert_called_once_with(
+        "turn-capability",
+        secret=platform_invocation.config.signing_secret,
+        server="workflow",
+    )
+    invoke.assert_awaited_once_with(
+        tool,
+        {"workflow_id": "workflow-a"},
+        "workflow",
+        capability,
+    )
+
+
+@pytest.mark.asyncio
+async def test_transport_neutral_gateway_rejects_bad_capability_and_arguments(
+    monkeypatch,
+) -> None:
+    invoke = AsyncMock()
+    monkeypatch.setattr(
+        platform_invocation,
+        "invoke_platform_mcp_tool_with_capability",
+        invoke,
+    )
+    monkeypatch.setattr(
+        platform_invocation,
+        "verify_platform_mcp_capability",
+        lambda *_args, **_kwargs: None,
+    )
+    with pytest.raises(PermissionError, match="invalid or expired"):
+        await platform_invocation.invoke_platform_mcp_tool(
+            server="workflow",
+            tool_name="get_workflow",
+            arguments={"workflow_id": "workflow-a"},
+            capability_token="invalid",
+        )
+
+    monkeypatch.setattr(
+        platform_invocation,
+        "verify_platform_mcp_capability",
+        lambda *_args, **_kwargs: _capability(),
+    )
+    monkeypatch.setitem(
+        platform_invocation._PLATFORM_MCP_TOOLSETS,
+        "workflow",
+        (
+            SimpleNamespace(
+                name="get_workflow",
+                description="Get one workflow.",
+                args={"workflow_id": {"type": "string"}},
+            ),
+        ),
+    )
+    result = await platform_invocation.invoke_platform_mcp_tool(
+        server="workflow",
+        tool_name="get_workflow",
+        arguments={},
+        capability_token="valid",
+    )
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    invoke.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_workflow_discovery_is_default_and_build_mutations_are_separate() -> None:
-    tools = await _tools(WORKFLOW_MCP)
+    tools = await _tools("workflow")
     assert set(tools) == {"list_workflows", "get_workflow"}
     assert all(tool.annotations.readOnlyHint for tool in tools.values())
 
-    tools = await _tools(BUILD_MCP)
+    tools = await _tools("build")
     assert set(tools) == {
         "set_workflow",
         "create_workflow",
@@ -176,7 +295,7 @@ async def test_workflow_discovery_is_default_and_build_mutations_are_separate() 
 
 @pytest.mark.asyncio
 async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None:
-    task_tools = await _tools(TASK_MCP)
+    task_tools = await _tools("task")
     assert set(task_tools) == {
         "task_list",
         "task_get",
@@ -194,7 +313,7 @@ async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None
     )
     assert task_tools["task_delete_scheduled_run"].annotations.destructiveHint is True
 
-    deployment_tools = await _tools(DEPLOYMENT_MCP)
+    deployment_tools = await _tools("deployment")
     assert set(deployment_tools) == {
         "deployment_list",
         "deployment_get",
@@ -212,88 +331,47 @@ async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None
 
 
 @pytest.mark.asyncio
-async def test_knowledge_platform_mcp_exports_read_only_contract() -> None:
-    tools = await _tools(KNOWLEDGE_MCP)
+async def test_knowledge_platform_mcp_exports_package_contract() -> None:
+    tools = await _tools("knowledge")
     assert set(tools) == {
-        "list_knowledge_bases",
-        "get_knowledge_base",
-        "list_knowledge_files",
-        "search_knowledge",
-        "read_knowledge_file",
+        "knowledge_list",
+        "knowledge_get",
+        "knowledge_create",
+        "knowledge_update",
+        "knowledge_delete",
+        "knowledge_search",
     }
-    assert all(tool.annotations.readOnlyHint for tool in tools.values())
+    assert tools["knowledge_list"].annotations.readOnlyHint is True
+    assert tools["knowledge_get"].annotations.readOnlyHint is True
+    assert tools["knowledge_search"].annotations.readOnlyHint is True
+    assert tools["knowledge_create"].annotations.destructiveHint is True
+    assert tools["knowledge_update"].annotations.destructiveHint is True
+    assert tools["knowledge_delete"].annotations.destructiveHint is True
     assert (
-        tools["search_knowledge"]
+        tools["knowledge_search"]
         .inputSchema["properties"]["top_k"]["default"]
         == 5
     )
 
 
-@pytest.mark.asyncio
-async def test_plan_platform_mcp_exports_only_create_from_file_contract() -> None:
-    tools = await _tools(PLAN_MCP)
-    assert set(tools) == {"create_execution_plan"}
-    create = tools["create_execution_plan"]
-    assert set(create.inputSchema["properties"]) == {"plan_path"}
-    assert create.annotations.readOnlyHint is False
-
-
-@pytest.mark.asyncio
-async def test_diagram_platform_mcp_exports_closed_loop_contract() -> None:
-    tools = await _tools(DIAGRAM_MCP)
-    assert set(tools) == {
-        "get_diagram_spec",
-        "search_diagram_assets",
-        "inspect_diagram",
-        "check_diagram",
-        "review_diagram",
-        "read_diagram_review_image",
-        "export_diagram",
-    }
-    assert tools["get_diagram_spec"].annotations.readOnlyHint is True
-    assert tools["check_diagram"].annotations.readOnlyHint is False
-    assert tools["review_diagram"].annotations.readOnlyHint is False
-    assert tools["read_diagram_review_image"].annotations.readOnlyHint is True
-    assert tools["export_diagram"].annotations.idempotentHint is True
-    for tool in tools.values():
-        assert tool.inputSchema["additionalProperties"] is False
-        assert tool.outputSchema is not None
-        assert tool.outputSchema["additionalProperties"] is False
-        assert all(
-            heading in (tool.description or "")
-            for heading in (
-                "Use when:",
-                "Do not use:",
-                "Input comes from:",
-                "On success:",
-                "On recoverable result:",
-            )
-        )
-    check_schema = tools["check_diagram"].inputSchema
-    assert check_schema["properties"]["source_ref"][
-        "additionalProperties"
-    ] is False
-    assert check_schema["properties"]["spec_ref"][
-        "additionalProperties"
-    ] is False
-    assert len(
-        tools["review_diagram"].inputSchema["properties"]["focus"]["oneOf"]
-    ) == 4
+def test_sandbox_diagram_catalog_identifies_official_mcp_tools() -> None:
+    entry = sandbox_mcp_catalog()[0]
+    assert [tool["name"] for tool in entry["tools"]] == list(
+        DIAGRAM_MCP_TOOL_NAMES
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("server_name", "server"),
     [
-        ("config", CONFIG_MCP),
-        ("interactive", INTERACTIVE_MCP),
-        ("workflow", WORKFLOW_MCP),
-        ("task", TASK_MCP),
-        ("deployment", DEPLOYMENT_MCP),
-        ("knowledge", KNOWLEDGE_MCP),
-        ("build", BUILD_MCP),
-        ("plan", PLAN_MCP),
-        ("diagram", DIAGRAM_MCP),
+        ("config", "config"),
+        ("interactive", "interactive"),
+        ("workflow", "workflow"),
+        ("task", "task"),
+        ("deployment", "deployment"),
+        ("knowledge", "knowledge"),
+        ("build", "build"),
     ],
 )
 async def test_every_registered_platform_tool_has_a_signed_action_ceiling(
@@ -311,7 +389,7 @@ async def test_every_registered_platform_tool_has_a_signed_action_ceiling(
         actions=policy.actions,
     )
     for tool_name in await _tools(server):
-        platform_server._require_tool_capability(
+        platform_invocation._require_tool_capability(
             capability,
             server=server_name,
             tool_name=tool_name,
@@ -336,10 +414,9 @@ async def test_platform_tool_invocation_scopes_and_restores_sync_tenant(monkeypa
             "meta": {"tool": "example"},
         }
 
-    monkeypatch.setattr(platform_server, "_capability", lambda _server: capability)
-    monkeypatch.setattr(platform_server, "_context_for", fake_context)
+    monkeypatch.setattr(platform_invocation, "_context_for", fake_context)
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "prepare_platform_tool",
         AsyncMock(),
     )
@@ -347,8 +424,13 @@ async def test_platform_tool_invocation_scopes_and_restores_sync_tenant(monkeypa
 
     outer = current_sync_tenant_id.set("outer-tenant")
     try:
-        content, artifact = await platform_server._invoke(
-            tool, {"value": "ok"}, "workflow"
+        content, artifact = (
+            await platform_invocation.invoke_platform_mcp_tool_with_capability(
+                tool,
+                {"value": "ok"},
+                "workflow",
+                capability,
+            )
         )
         assert content[0].text == "ok"
         assert artifact["status"] == "success"
@@ -369,14 +451,12 @@ async def test_platform_tool_error_restores_sync_tenant(monkeypatch) -> None:
             "meta": {"tool": "check_workflow"},
         }
 
-    monkeypatch.setattr(platform_server, "_capability", lambda _server: capability)
-
     async def fake_context(_capability):
         return context
 
-    monkeypatch.setattr(platform_server, "_context_for", fake_context)
+    monkeypatch.setattr(platform_invocation, "_context_for", fake_context)
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "prepare_platform_tool",
         AsyncMock(),
     )
@@ -384,7 +464,12 @@ async def test_platform_tool_error_restores_sync_tenant(monkeypatch) -> None:
 
     outer = current_sync_tenant_id.set("outer-tenant")
     try:
-        result = await platform_server._invoke(tool, {}, "workflow")
+        result = await platform_invocation.invoke_platform_mcp_tool_with_capability(
+            tool,
+            {},
+            "workflow",
+            capability,
+        )
         assert isinstance(result, types.CallToolResult)
         assert result.isError is True
         payload = json.loads(result.content[0].text)
@@ -415,12 +500,12 @@ async def test_platform_context_rejects_non_running_turn(
         async def get_for_chat(self, *_args, **_kwargs):
             return SimpleNamespace(status=run_status)
 
-    monkeypatch.setattr(platform_server, "session_scope", fake_session_scope)
-    monkeypatch.setattr(platform_server, "AgentRunsRepo", FakeRunsRepo)
+    monkeypatch.setattr(platform_invocation, "session_scope", fake_session_scope)
+    monkeypatch.setattr(platform_invocation, "AgentRunsRepo", FakeRunsRepo)
     _allow_context_checks(monkeypatch)
 
     with pytest.raises(PermissionError, match="active run"):
-        await platform_server._context_for(capability)
+        await platform_invocation._context_for(capability)
 
 
 @pytest.mark.asyncio
@@ -449,18 +534,18 @@ async def test_platform_context_rejects_workspace_scope_mismatch(monkeypatch) ->
                 "current_workflow_id": None,
             }
 
-    monkeypatch.setattr(platform_server, "session_scope", fake_session_scope)
-    monkeypatch.setattr(platform_server, "AgentRunsRepo", FakeRunsRepo)
-    monkeypatch.setattr(platform_server, "ChatRepo", FakeChatRepo)
+    monkeypatch.setattr(platform_invocation, "session_scope", fake_session_scope)
+    monkeypatch.setattr(platform_invocation, "AgentRunsRepo", FakeRunsRepo)
+    monkeypatch.setattr(platform_invocation, "ChatRepo", FakeChatRepo)
     _allow_context_checks(monkeypatch)
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "chat_workspace_scope_id",
         lambda _chat_id: "workspace-from-database",
     )
 
     with pytest.raises(PermissionError, match="workspace"):
-        await platform_server._context_for(capability)
+        await platform_invocation._context_for(capability)
 
 
 @pytest.mark.asyncio
@@ -498,18 +583,18 @@ async def test_platform_context_rebuilds_active_membership_without_preloading_wo
         def get_current_workflow(self, _workflow_id):
             raise AssertionError("workflow content was loaded before authorization")
 
-    monkeypatch.setattr(platform_server, "session_scope", fake_session_scope)
-    monkeypatch.setattr(platform_server, "AgentRunsRepo", FakeRunsRepo)
-    monkeypatch.setattr(platform_server, "ChatRepo", FakeChatRepo)
+    monkeypatch.setattr(platform_invocation, "session_scope", fake_session_scope)
+    monkeypatch.setattr(platform_invocation, "AgentRunsRepo", FakeRunsRepo)
+    monkeypatch.setattr(platform_invocation, "ChatRepo", FakeChatRepo)
     _allow_context_checks(monkeypatch)
-    monkeypatch.setattr(platform_server, "SyncWorkflowRepo", FakeWorkflowRepo)
+    monkeypatch.setattr(platform_invocation, "SyncWorkflowRepo", FakeWorkflowRepo)
     monkeypatch.setattr(
-        platform_server,
+        platform_invocation,
         "chat_workspace_scope_id",
         lambda _chat_id: "workspace-a",
     )
 
-    context = await platform_server._context_for(capability)
+    context = await platform_invocation._context_for(capability)
 
     assert context.workflow == {}
     assert context.current_workflow_id == "workflow-a"

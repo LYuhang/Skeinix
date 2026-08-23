@@ -34,12 +34,64 @@ _ACTIONS = (
 def upgrade() -> None:
     bind = op.get_bind()
     for table in (
-        "user_mfa_totp",
         "user_webauthn_credentials",
         "user_webauthn_challenges",
-        "user_login_mfa_challenges",
     ):
         Base.metadata.tables[table].create(bind, checkfirst=True)
+    # These retired tables are spelled out here rather than imported from the
+    # current ORM metadata so a fresh install can replay history before the
+    # later removal migration.
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_mfa_totp (
+            user_id UUID PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            secret_ciphertext TEXT NOT NULL,
+            secret_nonce TEXT NOT NULL,
+            secret_key_id UUID NOT NULL REFERENCES content_encryption_keys(key_id)
+                ON DELETE RESTRICT,
+            last_used_step BIGINT,
+            recovery_code_hashes TEXT[] NOT NULL DEFAULT '{}',
+            pending_expires_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT ck_user_mfa_totp_status
+                CHECK (status IN ('pending','active','disabled'))
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_user_mfa_totp_tenant "
+        "ON user_mfa_totp(tenant_id)"
+    )
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_login_mfa_challenges (
+            token_hash TEXT PRIMARY KEY,
+            user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            audience TEXT NOT NULL DEFAULT 'web',
+            available_methods TEXT[] NOT NULL DEFAULT '{}',
+            webauthn_challenge BYTEA,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            CONSTRAINT ck_user_login_mfa_challenges_audience
+                CHECK (audience IN ('web','extension','api')),
+            CONSTRAINT ck_user_login_mfa_challenges_attempts
+                CHECK (failed_attempts >= 0 AND failed_attempts <= 5)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_user_login_mfa_challenges_user "
+        "ON user_login_mfa_challenges(user_id)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_user_login_mfa_challenges_expires "
+        "ON user_login_mfa_challenges(expires_at)"
+    )
     op.execute(
         "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "
         "step_up_expires_at TIMESTAMPTZ"

@@ -1,9 +1,8 @@
-"""Deployments §5 / T9 — Celery ``deployment_invoke`` task.
+"""Celery worker for API and webhook Deployment invocations.
 
-All three deployment trigger types (api / webhook / cron) funnel through
-this single Celery task. The route handlers (T6 sync / T7 api-async /
-T8 webhook / T10 cron) send ``deployment_invoke`` messages. Deployment
-observability belongs to Deployment logs/history, not the Task Center table.
+Both external trigger types funnel through this single task. Deployment
+observability belongs to Deployment logs/history, not the Task Center table;
+recurring execution is owned by scheduled Tasks.
 
 Architecture choice — async-driven worker (deviation from batch_exec):
 
@@ -83,10 +82,9 @@ def deployment_invoke(
             the body and forwarded explicitly to every worker-safe session.
         deployment_id: UUID string — looked up via ``DeploymentsRepo.get``
             under the tenant scope (RLS).
-        inputs: Workflow inputs — for ``api`` triggers this is the raw
-            request body (T7); for ``webhook`` triggers it is
-            ``{"payload": <parsed-json>}`` (T8); for ``cron`` it will be
-            the user-configured static inputs (T10).
+        inputs: Workflow inputs — for ``api`` triggers this is the raw request
+            body; for ``webhook`` triggers it is
+            ``{"payload": <parsed-json>}``.
 
     Side effects:
       * runs the deployment's pinned workflow version

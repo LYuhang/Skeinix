@@ -110,7 +110,6 @@ const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.resources',
     fallback: 'Resources',
     items: [
-      { to: '/credentials', kind: 'credential', labelKey: 'nav.credentials', fallback: 'API Key' },
       { to: '/mcp-servers', kind: 'mcp', labelKey: 'nav.mcpServers', fallback: 'MCP Server' },
       { to: '/skills', kind: 'skill', labelKey: 'nav.skills', fallback: 'Skill' },
       { to: '/knowledge', kind: 'knowledge', labelKey: 'nav.knowledge', fallback: 'Knowledge' },

@@ -76,6 +76,7 @@ export interface UseTaskStreamResult {
 export function useTaskStream(
   taskId: string | undefined,
   enabled = true,
+  initialAfter = 0,
 ): UseTaskStreamResult {
   const [streamState, setStreamState] = useState<{
     taskId: string;
@@ -88,7 +89,7 @@ export function useTaskStream(
   useEffect(() => {
     if (!taskId || !enabled) return;
 
-    lastIdRef.current = 0;
+    lastIdRef.current = initialAfter;
 
     const ctrl = new AbortController();
     const base = getApiBase();
@@ -195,7 +196,7 @@ export function useTaskStream(
     return () => {
       ctrl.abort();
     };
-  }, [enabled, taskId]);
+  }, [enabled, initialAfter, taskId]);
 
   if (!streamState || streamState.taskId !== taskId) return { events: [], done: false };
   return { events: streamState.events, done: streamState.done };

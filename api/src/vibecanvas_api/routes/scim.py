@@ -37,6 +37,7 @@ from vibecanvas_api.security.enterprise_identity import (
 from vibecanvas_api.security.identity_protection import (
     decrypt_user_profile,
     encrypt_user_profile,
+    profile_email_lookup_digest,
 )
 from vibecanvas_api.storage.db import session_scope
 from vibecanvas_api.storage.models import Session, User
@@ -425,6 +426,9 @@ async def _write_user(
         user.profile_ciphertext = profile.ciphertext
         user.profile_nonce = profile.nonce
         user.profile_key_id = profile.key_id
+        user.profile_email_lookup_hash = profile_email_lookup_digest(
+            values["email"]
+        )
         private = await encrypt_directory_user_private(
             session,
             directory_user_id=(

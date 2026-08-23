@@ -20,6 +20,7 @@ to keep the test suite asyncpg-friendly (TestClient uses sync httpx).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -35,7 +36,8 @@ def test_router_mounted_in_app():
     assert "/api/v1/tasks/{task_id}/cancel" in paths
 
 
-def test_task_to_out_serializes_uuid_and_datetime():
+@pytest.mark.asyncio
+async def test_task_to_out_serializes_uuid_and_datetime():
     """``_task_to_out`` stringifies UUIDs and ISO-encodes datetimes."""
     from datetime import datetime, timezone
     from vibecanvas_api.authorization.types import Action, Decision
@@ -55,12 +57,33 @@ def test_task_to_out_serializes_uuid_and_datetime():
         submitted_at = datetime(2026, 5, 23, tzinfo=timezone.utc)
         started_at = None
         finished_at = None
+        user_id = uuid.uuid4()
 
-    out = _task_to_out(_Stub(), Decision(
-        True,
-        capabilities=frozenset({Action.VIEW}),
-        effective_role="viewer",
-    ))
+    class _Provenance:
+        async def build(self, **_kwargs):
+            from vibecanvas_api.schemas.access import (
+                ResourcePartyOut,
+                ResourceProvenanceOut,
+            )
+
+            return ResourceProvenanceOut(
+                ownership_scope="personal",
+                origin_type="created",
+                owner=ResourcePartyOut(
+                    type="user",
+                    display_name="Task owner",
+                ),
+            )
+
+    out = await _task_to_out(
+        _Stub(),
+        Decision(
+            True,
+            capabilities=frozenset({Action.VIEW}),
+            effective_role="viewer",
+        ),
+        _Provenance(),
+    )
     assert out["id"] == str(_Stub.id)
     assert out["status"] == "queued"
     assert out["submitted_at"].startswith("2026-05-23T")
@@ -213,6 +236,63 @@ async def test_cancel_queued_flips_status_and_emits_event(pg_engine):
         assert events[-1].event_type == "terminal"
         assert events[-1].payload["action"] == "task.cancelled"
         assert events[-1].payload["data"] == {"reason": "queued-cancel"}
+
+
+@pytest.mark.asyncio
+async def test_task_event_history_supports_time_order_and_stable_sequence_cursor(pg_engine):
+    from vibecanvas_api.storage.db import session_scope
+    from vibecanvas_api.storage.repo_tasks import TasksRepo
+
+    tenant_id, user_id = uuid.uuid4(), uuid.uuid4()
+    await _seed_tenant_user(pg_engine, tenant_id, user_id)
+    task_id = await _seed_task(
+        pg_engine, tenant_id=tenant_id, user_id=user_id, status="running",
+    )
+    base = datetime(2026, 8, 22, 1, 0, tzinfo=timezone.utc)
+    async with session_scope(tenant_id=str(tenant_id)) as session:
+        repo = TasksRepo(session)
+        ids = [
+            await repo.insert_event(task_id, "log", {"message": f"event-{index}"}, tenant_id)
+            for index in range(3)
+        ]
+        for index, event_id in enumerate(ids):
+            await session.execute(
+                text("UPDATE task_events SET ts=:ts WHERE id=:id"),
+                {"id": event_id, "ts": base + timedelta(minutes=index)},
+            )
+        await session.commit()
+
+    async with session_scope(tenant_id=str(tenant_id)) as session:
+        repo = TasksRepo(session)
+        page = await repo.events_for_task(
+            task_id=task_id,
+            from_=base + timedelta(seconds=30),
+            to=base + timedelta(minutes=3),
+            limit=2,
+            descending=True,
+        )
+        assert [event.id for event in page] == [ids[2], ids[1]]
+        assert await repo.latest_event_seq(task_id) == ids[2]
+        next_page = await repo.events_for_task(
+            task_id=task_id,
+            before_seq=page[-1].id,
+            limit=2,
+            descending=True,
+        )
+        assert [event.id for event in next_page] == [ids[0]]
+        ascending = await repo.events_for_task(
+            task_id=task_id,
+            limit=2,
+            descending=False,
+        )
+        assert [event.id for event in ascending] == [ids[0], ids[1]]
+        ascending_next = await repo.events_for_task(
+            task_id=task_id,
+            after_seq=ascending[-1].id,
+            limit=2,
+            descending=False,
+        )
+        assert [event.id for event in ascending_next] == [ids[2]]
 
 
 @pytest.mark.asyncio

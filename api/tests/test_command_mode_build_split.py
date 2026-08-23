@@ -26,10 +26,10 @@ def test_base_prompt_is_lean_no_node_definitions():
     p = _build_system_prompt("chat", active_modes=set())
     assert _NODE_CATALOG_MARKER not in p
     assert "Skeinix assistant" in p
-    assert "/build" in p
+    assert "/workflow" in p
     assert "/browser" not in p
     # BUILD identity NOT present in Base
-    assert "BUILD mode" not in p
+    assert "WORKFLOW mode" not in p
 
 
 def test_base_prompt_default_active_modes_none_is_lean():
@@ -38,8 +38,8 @@ def test_base_prompt_default_active_modes_none_is_lean():
     assert _NODE_CATALOG_MARKER not in p
 
 
-def test_active_build_does_not_change_system_prompt():
-    p = _build_system_prompt("chat", active_modes={"build"})
+def test_active_workflow_does_not_change_system_prompt():
+    p = _build_system_prompt("chat", active_modes={"workflow"})
     base = _build_system_prompt("chat", active_modes=set())
     assert p == base
     assert _NODE_CATALOG_MARKER not in p
@@ -47,10 +47,10 @@ def test_active_build_does_not_change_system_prompt():
     assert "Examples:" not in p
 
 
-def test_build_command_context_has_schema_catalog_and_build_identity():
-    p = command_context_for("build")
+def test_workflow_command_context_has_schema_catalog_and_identity():
+    p = command_context_for("workflow")
     assert _NODE_CATALOG_MARKER in p
-    assert "BUILD mode" in p
+    assert "WORKFLOW mode" in p
     assert "one top-level JSON object keyed by node id" in p
     assert "shared base" in p and "schema" in p
     assert "get_node_spec(node_type=...)" in p
@@ -63,7 +63,7 @@ def test_build_command_context_has_schema_catalog_and_build_identity():
 
 
 def test_build_prompt_prefers_code_generated_workflow_json():
-    p = command_context_for("build")
+    p = command_context_for("workflow")
     assert "Treat workflow JSON as code-generated data" in p
     assert "json.dump(..., ensure_ascii=False, indent=2)" in p
     assert "JSON files must use double quotes" in p
@@ -71,7 +71,7 @@ def test_build_prompt_prefers_code_generated_workflow_json():
 
 
 def test_build_prompt_separates_authoring_and_workflow_runtime_filesystems():
-    p = command_context_for("build")
+    p = command_context_for("workflow")
     assert "Authoring filesystem versus Workflow runtime" in p
     assert "Workflow nodes can access only `/run/...` and `/mount/...`" in p
     assert "Never invent a runtime file" in p
@@ -87,22 +87,22 @@ def test_base_prompt_documents_workspace_visibility():
 
 
 def test_build_prompt_requires_current_global_model_discovery():
-    p = command_context_for("build")
-    assert 'call `get_config(scope="global")` in the current build turn' in p
+    p = command_context_for("workflow")
+    assert 'call `get_config(scope="global")` in the current workflow turn' in p
     assert "must be one enabled key" in p
     assert "Chat Agent's own model" in p
 
 
 def test_build_prompt_warns_against_shared_end_node_for_branches():
-    p = command_context_for("build")
+    p = command_context_for("workflow")
     assert "Do not merge multiple branches by pointing them to the same EndNode" in p
     assert "Each terminal branch owns its own EndNode" in p
     assert "proper join node such as ParallelEndNode or LoopEndNode" in p
 
 
 def test_build_prompt_still_has_lean_base_identity():
-    # /build is ADDITIVE on top of the lean base, not a replacement.
-    p = _build_system_prompt("chat", active_modes={"build"})
+    # /workflow is additive on top of the lean base, not a replacement.
+    p = _build_system_prompt("chat", active_modes={"workflow"})
     assert "Skeinix assistant" in p
 
 
@@ -128,8 +128,8 @@ def test_base_tools_lack_construction_and_run_tools():
 
 def test_build_tools_are_supplied_only_by_platform_mcp():
     base = _names(build_tools(set()))
-    active = _names(build_tools({"build"}))
-    platform_names = set(COMMAND_MODES["build"].tools)
+    active = _names(build_tools({"workflow"}))
+    platform_names = set(COMMAND_MODES["workflow"].tools)
 
     assert active == base
     assert platform_names.isdisjoint(active)
@@ -137,7 +137,7 @@ def test_build_tools_are_supplied_only_by_platform_mcp():
 
 def test_build_mode_appends_without_reordering_base_prefix():
     base = [t.name for t in build_tools(set())]
-    build = [t.name for t in build_tools({"build"})]
+    build = [t.name for t in build_tools({"workflow"})]
     assert build[:len(base)] == base
 
 
@@ -152,7 +152,7 @@ def test_command_mode_names_match_platform_mcp_groups():
         WORKFLOW_MCP_TOOLS,
     )
 
-    cfg = COMMAND_MODES["build"]
+    cfg = COMMAND_MODES["workflow"]
     expected = {
         *(tool.name for tool in WORKFLOW_MCP_TOOLS),
         set_workflow.name,
@@ -199,9 +199,9 @@ async def test_agent_tool_list_gates_vibe_workflow_on_build():
     assert {"read_cells", "query_data", "count_column_values"}.isdisjoint(base_names)
     assert "update_state" not in base_names
 
-    build_names = await _capture_agent_tools({"build"})
+    build_names = await _capture_agent_tools({"workflow"})
     assert build_names == base_names
-    assert set(COMMAND_MODES["build"].tools).isdisjoint(build_names)
+    assert set(COMMAND_MODES["workflow"].tools).isdisjoint(build_names)
 
 
 # ── CommandContextEdit (persistent command context) ───────────────────────
@@ -211,20 +211,20 @@ def _human(text, *, command=None):
     return HumanMessage(content=text, additional_kwargs=kwargs)
 
 
-def test_command_context_prepends_latest_build_activation_message():
+def test_command_context_prepends_latest_workflow_activation_message():
     from vibecanvas_api.agents.middleware.command_context_edit import CommandContextEdit
     msgs = [
-        _human("/build first task", command="build"),
+        _human("/workflow first task", command="workflow"),
         _human("normal follow-up"),
-        _human("/build second task", command="build"),
+        _human("/workflow second task", command="workflow"),
     ]
     CommandContextEdit(
-        {"build": command_context_for("build")},
-        {"build"},
+        {"workflow": command_context_for("workflow")},
+        {"workflow"},
     ).apply(msgs, count_tokens=lambda xs: 123)
     injected = [
         m for m in msgs
-        if '<command-context command="build">' in getattr(m, "content", "")
+        if '<command-context command="workflow">' in getattr(m, "content", "")
     ]
     assert len(injected) == 1
     assert len(msgs) == 3
@@ -232,19 +232,19 @@ def test_command_context_prepends_latest_build_activation_message():
     content = injected[0].content
     assert content.startswith("<system-reminder>")
     assert "<system-reminder>" in content and "</system-reminder>" in content
-    assert "<user-message>\n/build second task\n</user-message>" in content
-    assert "BUILD mode" in content
-    assert "latest /build activation" in content
+    assert "<user-message>\n/workflow second task\n</user-message>" in content
+    assert "WORKFLOW mode" in content
+    assert "latest /workflow activation" in content
     assert "get_node_spec(node_type=\"StartNode\")" not in content
     assert injected[0].additional_kwargs["tokens"]["raw"] == 123
     assert message_tokens(injected[0])["raw"] == 123
-    assert '<command-context-superseded command="build">' in msgs[0].content
-    assert "<user-message>\n/build first task\n</user-message>" in msgs[0].content
-    assert msgs[0].additional_kwargs["command_context"]["build"] == {
+    assert '<command-context-superseded command="workflow">' in msgs[0].content
+    assert "<user-message>\n/workflow first task\n</user-message>" in msgs[0].content
+    assert msgs[0].additional_kwargs["command_context"]["workflow"] == {
         "injected": False,
         "projection": "superseded",
     }
-    assert msgs[2].additional_kwargs["command_context"]["build"] == {
+    assert msgs[2].additional_kwargs["command_context"]["workflow"] == {
         "injected": True,
         "projection": "active",
     }
@@ -260,17 +260,17 @@ def test_command_context_counts_active_and_superseded_repeated_commands():
         return 321
 
     msgs = [
-        _human("/build first task", command="build"),
+        _human("/workflow first task", command="workflow"),
         _human("normal follow-up"),
-        _human("/build second task", command="build"),
+        _human("/workflow second task", command="workflow"),
     ]
     CommandContextEdit(
-        {"build": command_context_for("build")},
-        {"build"},
+        {"workflow": command_context_for("workflow")},
+        {"workflow"},
     ).apply(msgs, count_tokens=count_tokens)
     injected = [
         m for m in msgs
-        if '<command-context command="build">' in getattr(m, "content", "")
+        if '<command-context command="workflow">' in getattr(m, "content", "")
     ]
     assert len(injected) == 1
     assert calls == 2
@@ -284,29 +284,29 @@ def test_command_context_supersession_is_per_command_and_idempotent():
     from vibecanvas_api.agents.middleware.command_context_edit import CommandContextEdit
 
     msgs = [
-        _human("/build first task", command="build"),
+        _human("/workflow first task", command="workflow"),
         _human("/browser inspect first page", command="browser"),
-        _human("/build second task", command="build"),
+        _human("/workflow second task", command="workflow"),
         _human("/browser inspect second page", command="browser"),
     ]
     edit = CommandContextEdit(
         {
-            "build": "BACKEND BUILD CONTEXT",
+            "workflow": "BACKEND WORKFLOW CONTEXT",
             "browser": "BACKEND BROWSER CONTEXT",
         },
-        {"build", "browser"},
+        {"workflow", "browser"},
     )
     edit.apply(msgs, count_tokens=lambda xs: len(xs[0].content))
     first_projection = [message.content for message in msgs]
     edit.apply(msgs, count_tokens=lambda xs: len(xs[0].content))
 
     assert [message.content for message in msgs] == first_projection
-    assert '<command-context-superseded command="build">' in msgs[0].content
+    assert '<command-context-superseded command="workflow">' in msgs[0].content
     assert '<command-context-superseded command="browser">' in msgs[1].content
-    assert "BACKEND BUILD CONTEXT" in msgs[2].content
+    assert "BACKEND WORKFLOW CONTEXT" in msgs[2].content
     assert "BACKEND BROWSER CONTEXT" in msgs[3].content
     assert "BACKEND BROWSER CONTEXT" not in msgs[2].content
-    assert "BACKEND BUILD CONTEXT" not in msgs[3].content
+    assert "BACKEND WORKFLOW CONTEXT" not in msgs[3].content
 
 
 def test_command_context_projection_does_not_change_checkpoint_source_messages():
@@ -315,13 +315,13 @@ def test_command_context_projection_does_not_change_checkpoint_source_messages()
     from vibecanvas_api.agents.middleware.command_context_edit import CommandContextEdit
 
     checkpoint_messages = [
-        _human("first task", command="build"),
-        _human("second task", command="build"),
+        _human("first task", command="workflow"),
+        _human("second task", command="workflow"),
     ]
     model_view = deepcopy(checkpoint_messages)
     CommandContextEdit(
-        {"build": "BACKEND BUILD CONTEXT"},
-        {"build"},
+        {"workflow": "BACKEND WORKFLOW CONTEXT"},
+        {"workflow"},
     ).apply(model_view, count_tokens=lambda xs: 1)
 
     assert [message.content for message in checkpoint_messages] == [
@@ -333,7 +333,7 @@ def test_command_context_projection_does_not_change_checkpoint_source_messages()
         for message in checkpoint_messages
     )
     assert "<command-context-superseded" in model_view[0].content
-    assert "BACKEND BUILD CONTEXT" in model_view[1].content
+    assert "BACKEND WORKFLOW CONTEXT" in model_view[1].content
 
 
 def test_command_context_noop_when_empty():
@@ -368,8 +368,8 @@ def test_context_edits_inserts_command_context_before_compaction():
     from vibecanvas_api.agent import _build_context_edits
     edits = _build_context_edits(
         None,
-        command_contexts={"build": command_context_for("build")},
-        activated_this_turn={"build"},
+        command_contexts={"workflow": command_context_for("workflow")},
+        activated_this_turn={"workflow"},
     )
     types = [type(e).__name__ for e in edits]
     assert "CommandContextEdit" in types
@@ -381,10 +381,6 @@ def test_context_edits_no_command_context_when_empty():
     edits = _build_context_edits(None, command_contexts={})
     types = [type(e).__name__ for e in edits]
     assert "CommandContextEdit" not in types
-
-
-def test_plan_mode_is_not_composed_in_v1():
-    assert "## Plan mode" not in build_system_prompt({"plan"}, surface="chat")
 
 
 def test_browser_mode_does_not_change_system_prompt():

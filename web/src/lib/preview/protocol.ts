@@ -20,32 +20,15 @@ export type RunFileRefV1 = {
 
 export type FileRefV1 = ChatFileRefV1 | MountFileRefV1 | RunFileRefV1;
 
-export type DiagramDraftPreviewRefV1 = {
-  schemaVersion: 1;
-  kind: 'diagram_draft';
-  draftId: string;
-  chatId: string;
-  targetPath: `/data/${string}`;
-  title: string;
-};
-
 export type PreviewResourceRefV1 =
   | { schemaVersion: 1; kind: 'file'; fileRef: FileRefV1 }
   | { schemaVersion: 1; kind: 'interactive'; artifactId: string }
-  | DiagramDraftPreviewRefV1
   | {
       schemaVersion: 1;
       kind: 'background_jobs';
       chatId: string;
       jobId?: string;
       deliveryBatchId?: string;
-    }
-  | {
-      schemaVersion: 1;
-      kind: 'execution_plan';
-      planId: string;
-      runId: string;
-      revision?: number;
     }
   | { schemaVersion: 1; kind: 'workflow'; workflowId: string };
 
@@ -60,84 +43,15 @@ export type PreviewRendererId =
   | 'image'
   | 'audio'
   | 'video'
-  | 'diagram'
+  | 'drawio'
   | 'unsupported';
 
-export interface DiagramIssueV1 {
-  issue_id?: string;
+export interface DrawioIssueV1 {
   severity: 'error' | 'warning' | 'info';
-  disposition?: 'blocking' | 'repairable' | 'render_cue' | 'accepted';
-  stage: 'schema' | 'semantic' | 'compile' | 'visual';
+  stage: 'schema' | 'semantic';
   code: string;
   json_pointer: string;
-  element_id?: string | null;
-  element_ids?: string[];
-  json_pointers?: string[];
   message: string;
-  suggested_fix?: string | null;
-  geometry?: Record<string, unknown>;
-  cause?: Record<string, unknown>;
-  suggested_operations?: Array<Record<string, unknown>>;
-  auto_fixable?: boolean;
-}
-
-export interface DiagramSceneV1 {
-  schemaVersion: 1;
-  diagramId: string;
-  title: string;
-  family: string;
-  diagramType: string;
-  compilerVersion: string;
-  themeVersion: string;
-  bounds: { x: number; y: number; width: number; height: number };
-  nodes: Array<{
-    id: string;
-    kind: string;
-    label: string;
-    labelLines: string[];
-    description?: string | null;
-    descriptionLines: string[];
-    styleRole: string;
-    importance: string;
-    assetRef?: string | null;
-    ports: Array<{
-      id: string;
-      label?: string | null;
-      side: 'NORTH' | 'EAST' | 'SOUTH' | 'WEST';
-      direction: 'in' | 'out' | 'inout';
-      x: number;
-      y: number;
-      sourcePointer: string;
-    }>;
-    bounds: { x: number; y: number; width: number; height: number };
-    sourcePointer: string;
-    metadata: Record<string, unknown>;
-  }>;
-  edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    kind: string;
-    label?: string | null;
-    importance: string;
-    points: Array<{ x: number; y: number }>;
-    sourcePointer: string;
-    crossings?: Array<{
-      x: number;
-      y: number;
-      style: 'gap' | 'bridge' | 'bundle';
-      overEdgeId?: string | null;
-    }>;
-  }>;
-  groups: Array<{
-    id: string;
-    label: string;
-    styleRole: string;
-    nodeIds: string[];
-    bounds: { x: number; y: number; width: number; height: number };
-    sourcePointer: string;
-  }>;
-  issues: DiagramIssueV1[];
 }
 
 export interface PreviewErrorInfo {
@@ -166,6 +80,12 @@ export interface PreviewDescriptorV1 {
     truncated: boolean;
     rangeSupported: boolean;
   } | null;
+  rendition?: {
+    format: 'pdf';
+    contentType: 'application/pdf';
+    url: string;
+    sourceRevision: string;
+  } | null;
   text?: {
     encoding: 'utf-8';
     bom: boolean;
@@ -174,16 +94,14 @@ export interface PreviewDescriptorV1 {
   } | null;
   diagram?: {
     status: 'valid' | 'invalid';
-    scene?: DiagramSceneV1 | null;
-    issues: DiagramIssueV1[];
+    format?: 'drawio';
+    issues: DrawioIssueV1[];
     sourceHash?: string;
-    draft?: {
-      draftId: string;
-      status: string;
-      sequence: number;
-      terminal: boolean;
-      operation: string;
-      elementIds: string[];
+    summary?: {
+      pages: number;
+      cells: number;
+      vertices: number;
+      edges: number;
     };
   } | null;
   error?: PreviewErrorInfo | null;

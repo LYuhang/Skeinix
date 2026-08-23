@@ -16,10 +16,13 @@
 ARG CODEX_CLI_VERSION=0.147.0
 ARG NPM_VERSION=11.19.0
 ARG PLAYWRIGHT_MCP_VERSION=0.0.79
+ARG DRAWIO_DESKTOP_VERSION=31.1.8
+ARG DRAWIO_DESKTOP_AMD64_SHA256=f4c49ed84422ea4afd95818f53c54bc666e57b33bd036d468c7096619b47ffd9
+ARG DRAWIO_DESKTOP_ARM64_SHA256=62a9ea636accada76076bd5a20f61b707e0e8093d3fd28c6583518663ca795d6
 
 # Node-based runtime assets share a digest-pinned Node/npm base, but are built
 # in independent stages. Updating Playwright MCP therefore cannot invalidate
-# the Codex or ELK dependency caches.
+# the Codex or draw.io dependency caches.
 FROM node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS node-runtime-base
 ARG NPM_VERSION
 RUN set -eux; \
@@ -52,33 +55,32 @@ RUN set -eux; \
 COPY api/playwright-runtime/launch.cjs /opt/playwright-mcp/launch.cjs
 RUN chmod 0755 /opt/playwright-mcp/launch.cjs
 
-FROM node-runtime-base AS elk-assets
-COPY api/elk-runtime/package.json api/elk-runtime/package-lock.json /opt/elk/
-RUN npm ci --prefix /opt/elk --ignore-scripts --no-audit --no-fund \
+FROM node-runtime-base AS drawio-assets
+COPY api/drawio-runtime/package.json api/drawio-runtime/package-lock.json /opt/drawio-mcp/
+RUN npm ci --prefix /opt/drawio-mcp --ignore-scripts --no-audit --no-fund \
         --omit=dev && \
-    test "$(node -p 'require("/opt/elk/node_modules/elkjs/package.json").version')" = "0.12.0"
-COPY web/scripts/elk-layout.mjs /opt/elk/elk-layout.mjs
-RUN printf '%s' \
-      '{"graph":{"id":"image-probe","children":[{"id":"a","width":80,"height":40}]}}' \
-      | node /opt/elk/elk-layout.mjs \
-      | grep -q '"engineVersion":"elkjs-0.12.0"'
+    test "$(node -p 'require("/opt/drawio-mcp/node_modules/@drawio/mcp/package.json").version')" = "1.5.0"
+COPY api/drawio-runtime/launch.mjs /opt/drawio-mcp/launch.mjs
+RUN chmod 0755 /opt/drawio-mcp/launch.mjs && \
+    test "$(node /opt/drawio-mcp/launch.mjs --version)" = "1.5.0"
 
 FROM python:3.11.15-slim-trixie@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 ARG CODEX_CLI_VERSION
 ARG PLAYWRIGHT_MCP_VERSION
+ARG DRAWIO_DESKTOP_VERSION
+ARG DRAWIO_DESKTOP_AMD64_SHA256
+ARG DRAWIO_DESKTOP_ARM64_SHA256
+ARG TARGETARCH
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 
 WORKDIR /app
 
 COPY --from=codex-assets /opt/codex /opt/codex
 COPY --from=node-runtime-base /usr/local/bin/node /usr/local/bin/node
-COPY --from=elk-assets /opt/elk /opt/elk
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex && \
     test "$(codex --version)" = "codex-cli ${CODEX_CLI_VERSION}" && \
-    test "$(node --version)" = "v22.23.2" && \
-    printf '%s' \
-      '{"graph":{"id":"image-probe","children":[{"id":"a","width":80,"height":40}]}}' \
-      | node /opt/elk/elk-layout.mjs \
-      | grep -q '"engineVersion":"elkjs-0.12.0"'
+    test "$(node --version)" = "v22.23.2"
 
 # gVisor (runsc) — workflow execution is sandbox-ONLY since P2 (no in-process
 # fallback), so the runtime image MUST carry the runsc binary. Fetch the SAME
@@ -94,6 +96,12 @@ ARG RUNSC_RELEASE=20260601.0
 # package managers remain opt-in environment dependencies to keep the trusted
 # base image lean and its attack surface bounded.
 RUN set -eux; \
+    case "${DEBIAN_MIRROR}" in http://*|https://*) ;; *) exit 2 ;; esac; \
+    case "${DEBIAN_SECURITY_MIRROR}" in http://*|https://*) ;; *) exit 2 ;; esac; \
+    sed -i \
+        -e "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+        -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources; \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u4 \
@@ -107,7 +115,24 @@ RUN set -eux; \
         unzip=6.0-29 \
         zip=3.0-15 \
         fonts-dejavu-core=2.37-8 \
-        fonts-wqy-zenhei=0.9.45-8; \
+        fonts-wqy-zenhei=0.9.45-8 \
+        xvfb=2:21.1.16-1.3+deb13u3 \
+        xauth=1:1.1.2-1.1 \
+        libgtk-3-0t64=3.24.49-3 \
+        libnotify4=0.8.6-1 \
+        libnss3=2:3.110-1+deb13u4 \
+        libxss1=1:1.2.3-1+b3 \
+        libxtst6=2:1.2.5-1 \
+        xdg-utils=1.2.1-2 \
+        libatspi2.0-0t64=2.56.2-1+deb13u1 \
+        libuuid1=2.41.5-0+deb13u1 \
+        libsecret-1-0=0.21.7-1 \
+        libgbm1=25.0.7-2+deb13u1 \
+        libasound2t64=1.2.14-1 \
+        libreoffice-writer-nogui=4:25.2.3-2+deb13u6 \
+        libreoffice-impress-nogui=4:25.2.3-2+deb13u6 \
+        libreoffice-calc-nogui=4:25.2.3-2+deb13u6 \
+        poppler-utils=25.03.0-5+deb13u4; \
     arch="$(uname -m)"; \
     base="https://storage.googleapis.com/gvisor/releases/release/${RUNSC_RELEASE}/${arch}"; \
     curl -fsSL --retry 3 -o /tmp/runsc "${base}/runsc"; \
@@ -115,6 +140,24 @@ RUN set -eux; \
     echo "$(awk '{print $1}' /tmp/runsc.sha512 | head -n1)  /tmp/runsc" | sha512sum -c -; \
     chmod 0755 /tmp/runsc && mv /tmp/runsc /usr/local/bin/runsc; \
     rm -f /tmp/runsc.sha512; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+        amd64|x86_64) drawio_arch="amd64"; drawio_sha="${DRAWIO_DESKTOP_AMD64_SHA256}" ;; \
+        arm64|aarch64) drawio_arch="arm64"; drawio_sha="${DRAWIO_DESKTOP_ARM64_SHA256}" ;; \
+        *) echo "Unsupported draw.io Desktop architecture: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
+    esac; \
+    drawio_deb="drawio-${drawio_arch}-${DRAWIO_DESKTOP_VERSION}.deb"; \
+    curl -fsSL --retry 3 -o "/tmp/${drawio_deb}" \
+        "https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_DESKTOP_VERSION}/${drawio_deb}"; \
+    echo "${drawio_sha}  /tmp/${drawio_deb}" | sha256sum -c -; \
+    test "$(dpkg-deb -f "/tmp/${drawio_deb}" Package)" = "draw.io"; \
+    test "$(dpkg-deb -f "/tmp/${drawio_deb}" Version)" = "${DRAWIO_DESKTOP_VERSION}"; \
+    test "$(dpkg-deb -f "/tmp/${drawio_deb}" Architecture)" = "${drawio_arch}"; \
+    dpkg-deb -x "/tmp/${drawio_deb}" /tmp/drawio-desktop-root; \
+    mv /tmp/drawio-desktop-root/opt/drawio /opt/drawio; \
+    ln -s /opt/drawio/drawio /usr/local/bin/drawio; \
+    test -x /opt/drawio/drawio; \
+    ! ldd /opt/drawio/drawio | grep -q "not found"; \
+    rm -f "/tmp/${drawio_deb}"; \
     rm -rf /var/lib/apt/lists/*
 
 # Install reviewed, hash-locked build tooling and runtime dependencies before
@@ -152,6 +195,14 @@ COPY --from=playwright-assets /opt/playwright-mcp /opt/playwright-mcp
 RUN ln -s /opt/playwright-mcp/launch.cjs /usr/local/bin/skeinix-playwright-mcp && \
     skeinix-playwright-mcp --version | grep -q "${PLAYWRIGHT_MCP_VERSION}"
 
+# Diagram authoring is the pinned official draw.io MCP. Skeinix supplies only
+# sandbox activation and platform file/preview adapters around this runtime.
+COPY --from=drawio-assets /opt/drawio-mcp /opt/drawio-mcp
+COPY api/drawio-runtime/export.sh /usr/local/bin/skeinix-drawio-export
+RUN chmod 0755 /usr/local/bin/skeinix-drawio-export && \
+    ln -s /opt/drawio-mcp/launch.mjs /usr/local/bin/skeinix-diagram-mcp && \
+    test "$(skeinix-diagram-mcp --version)" = "1.5.0"
+
 # API/worker images do not need a package installer. The dedicated sandboxd
 # image opts into pip because it owns the narrow, wheel-only, content-addressed
 # Workflow dependency builder; third-party code still executes only in gVisor.
@@ -182,8 +233,7 @@ RUN groupadd --gid 10001 vibecanvas && \
       /run/vibecanvas-sandbox
 
 EXPOSE 8000
-ENV VIBECANVAS_API_CORS_ORIGINS=http://localhost:3000 \
-    VIBECANVAS_ELK_LAYOUT_SCRIPT=/opt/elk/elk-layout.mjs
+ENV VIBECANVAS_API_CORS_ORIGINS=http://localhost:3000
 USER 10001:10001
 
 # Production-ready default. Override VIBECANVAS_API_DEV_TOKEN at run time.

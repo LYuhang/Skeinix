@@ -164,7 +164,7 @@ export function HTTPRequestNodeEditor({
               value={authStr('header_name')}
               onCommit={(next) => patchAuth('header_name', next)}
               disabled={readOnly}
-              placeholder="header name (e.g. X-API-Key)"
+              placeholder={t('canvas.http.headerNamePlaceholder', 'Header name (for example, X-API-Key)')}
               className="h-8 text-xs"
               data-testid="cfg-http-auth-header"
             />

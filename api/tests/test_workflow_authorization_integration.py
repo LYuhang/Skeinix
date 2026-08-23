@@ -8,12 +8,17 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from vibecanvas_api.audit import actions as audit_actions
+from vibecanvas_api.audit.repo import AuditRepo
 from vibecanvas_api.app import build_app
+from vibecanvas_api.auth.ratelimit import LoginRateLimitExceeded
 from vibecanvas_api.authorization.openfga_client import (
     OpenFgaReadPage,
     OpenFgaTuple,
 )
 from vibecanvas_api.config import config
+from vibecanvas_api.routes import resource_access as resource_access_routes
+from vibecanvas_api.storage.db import session_scope
 
 
 class _RelationshipStore:
@@ -78,7 +83,26 @@ class _RelationshipStore:
         )
 
     def _role(self, user: str, object_: str, roles: set[str]) -> bool:
-        return any(self._has(user, role, object_) for role in roles)
+        if any(self._has(user, role, object_) for role in roles):
+            return True
+        for item in self.tuples:
+            if item.object != object_ or item.relation not in roles:
+                continue
+            subject, separator, subject_relation = item.user.partition("#")
+            if not separator:
+                continue
+            if subject.startswith("group:") and subject_relation in {
+                "direct_member",
+                "member",
+            }:
+                if self._has(user, "direct_member", subject):
+                    return True
+            if subject.startswith("organization:") and (
+                subject_relation == "member"
+                and self._has(user, "member", subject)
+            ):
+                return True
+        return False
 
     def _allowed(self, user: str, relation: str, object_: str) -> bool:
         if object_.startswith("organization:"):
@@ -93,6 +117,20 @@ class _RelationshipStore:
                     user,
                     object_,
                     {"owner", "admin", "member", "auditor"},
+                )
+            if relation == "can_manage_members":
+                return self._role(user, object_, {"owner", "admin"})
+            return False
+        if object_.startswith("group:"):
+            if relation == "can_view_metadata":
+                return self._role(
+                    user,
+                    object_,
+                    {"manager", "lead", "direct_member"},
+                ) or self._organization_role(
+                    user,
+                    object_,
+                    {"owner", "admin", "auditor"},
                 )
             return False
         if not object_.startswith("workflow:"):
@@ -151,6 +189,29 @@ async def _register(client: AsyncClient, label: str) -> tuple[str, dict]:
         )
     ).json()
     return token, me
+
+
+async def _register_exact(
+    client: AsyncClient,
+    label: str,
+) -> tuple[str, dict, str]:
+    email = f"{label}_{uuid.uuid4().hex[:12]}@example.com"
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "username": label,
+            "password": "pw12345678",
+        },
+    )
+    assert response.status_code == 201, response.text
+    token = response.json()["session_token"]
+    me_response = await client.get(
+        "/api/v1/auth/me",
+        headers=_headers(token),
+    )
+    assert me_response.status_code == 200, me_response.text
+    return token, me_response.json(), email
 
 
 async def _join_active_organization(
@@ -215,6 +276,14 @@ async def test_workflow_direct_share_capabilities_and_revoke(
         guest_token, guest = await _register(client, "guest")
         auditor_token, auditor = await _register(client, "auditor")
         admin_token, admin = await _register(client, "admin")
+        async with pg_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE organizations SET kind = 'business', "
+                    "name = 'Workflow Company' WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": uuid.UUID(owner["tenant_id"])},
+            )
         await _join_active_organization(
             pg_engine,
             user_id=viewer["user_id"],
@@ -258,6 +327,11 @@ async def test_workflow_direct_share_capabilities_and_revoke(
             "admin",
             f"organization:{owner['tenant_id']}",
         ))
+        store.tuples.add(OpenFgaTuple(
+            f"user:{viewer['user_id']}",
+            "member",
+            f"organization:{owner['tenant_id']}",
+        ))
 
         guest_create = await client.post(
             "/api/v1/workflows",
@@ -280,6 +354,119 @@ async def test_workflow_direct_share_capabilities_and_revoke(
         wf_id = workflow["wf_id"]
         assert workflow["access"]["effective_role"] == "manager"
         assert "manage_access" in workflow["access"]["capabilities"]
+
+        group = await client.post(
+            f"/api/v1/organizations/{owner['tenant_id']}/groups",
+            json={"name": "Platform", "kind": "team"},
+            headers=_headers(owner_token),
+        )
+        assert group.status_code == 201, group.text
+        resolved_group = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={"target_type": "group", "identifier": "Platform"},
+            headers=_headers(owner_token),
+        )
+        assert resolved_group.status_code == 200, resolved_group.text
+        assert resolved_group.json()["target"]["display_name"] == "Platform"
+        assert resolved_group.json()["target"]["detail"] == "Platform"
+
+        resolved_organization = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={"target_type": "organization", "identifier": "ignored"},
+            headers=_headers(owner_token),
+        )
+        assert resolved_organization.status_code == 200
+        assert resolved_organization.json()["target"]["display_name"] == (
+            "Workflow Company"
+        )
+        assert resolved_organization.json()["target"]["allowed_relations"] == [
+            "viewer"
+        ]
+
+        # Relationship-scope grants remain one userset tuple. Membership
+        # changes take effect immediately without copying per-user grants.
+        group_target = resolved_group.json()["target"]
+        group_binding = {
+            "relation": "viewer",
+            "subject_type": "group",
+            "subject_id": str(group.json()["group_id"]),
+            "subject_relation": "member",
+        }
+        group_grant = await client.post(
+            f"/api/v1/workflows/{wf_id}/access",
+            json={
+                "relation": "viewer",
+                "resolution_token": group_target["resolution_token"],
+            },
+            headers=_headers(
+                owner_token,
+                **{"Idempotency-Key": "grant-platform-team"},
+            ),
+        )
+        assert group_grant.status_code == 201, group_grant.text
+        group_ref = f"group:{group.json()['group_id']}"
+        viewer_ref = f"user:{viewer['user_id']}"
+        store.tuples.add(OpenFgaTuple(viewer_ref, "direct_member", group_ref))
+        group_visible = await client.get(
+            f"/api/v1/workflows/{wf_id}",
+            headers=_headers(viewer_token),
+        )
+        assert group_visible.status_code == 200, group_visible.text
+        store.tuples.discard(OpenFgaTuple(
+            viewer_ref,
+            "direct_member",
+            group_ref,
+        ))
+        group_hidden = await client.get(
+            f"/api/v1/workflows/{wf_id}",
+            headers=_headers(viewer_token),
+        )
+        assert group_hidden.status_code == 404
+        group_revoke = await client.request(
+            "DELETE",
+            f"/api/v1/workflows/{wf_id}/access",
+            json=group_binding,
+            headers=_headers(
+                owner_token,
+                **{"Idempotency-Key": "revoke-platform-team"},
+            ),
+        )
+        assert group_revoke.status_code == 200, group_revoke.text
+
+        organization_target = resolved_organization.json()["target"]
+        organization_binding = {
+            "relation": "viewer",
+            "subject_type": "organization",
+            "subject_id": owner["tenant_id"],
+            "subject_relation": "member",
+        }
+        organization_grant = await client.post(
+            f"/api/v1/workflows/{wf_id}/access",
+            json={
+                "relation": "viewer",
+                "resolution_token": organization_target["resolution_token"],
+            },
+            headers=_headers(
+                owner_token,
+                **{"Idempotency-Key": "grant-entire-organization"},
+            ),
+        )
+        assert organization_grant.status_code == 201, organization_grant.text
+        organization_visible = await client.get(
+            f"/api/v1/workflows/{wf_id}",
+            headers=_headers(viewer_token),
+        )
+        assert organization_visible.status_code == 200
+        organization_revoke = await client.request(
+            "DELETE",
+            f"/api/v1/workflows/{wf_id}/access",
+            json=organization_binding,
+            headers=_headers(
+                owner_token,
+                **{"Idempotency-Key": "revoke-entire-organization"},
+            ),
+        )
+        assert organization_revoke.status_code == 200
 
         # Auditors and organization admins can inventory resources without
         # receiving private workflow content.  Their list projection contains
@@ -329,9 +516,23 @@ async def test_workflow_direct_share_capabilities_and_revoke(
             "subject_id": viewer["user_id"],
             "subject_relation": None,
         }
+        resolved_viewer = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={
+                "target_type": "user",
+                "identifier": viewer["email"],
+            },
+            headers=_headers(owner_token),
+        )
+        assert resolved_viewer.status_code == 200, resolved_viewer.text
+        viewer_target = resolved_viewer.json()["target"]
+        assert viewer_target is not None
         granted = await client.post(
             f"/api/v1/workflows/{wf_id}/access",
-            json=binding,
+            json={
+                "relation": "viewer",
+                "resolution_token": viewer_target["resolution_token"],
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "grant-viewer-1"},
@@ -354,9 +555,23 @@ async def test_workflow_direct_share_capabilities_and_revoke(
             **binding,
             "subject_id": guest["user_id"],
         }
+        resolved_guest = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={
+                "target_type": "user",
+                "identifier": guest["email"],
+            },
+            headers=_headers(owner_token),
+        )
+        assert resolved_guest.status_code == 200, resolved_guest.text
+        guest_target = resolved_guest.json()["target"]
+        assert guest_target is not None
         guest_granted = await client.post(
             f"/api/v1/workflows/{wf_id}/access",
-            json=guest_binding,
+            json={
+                "relation": "viewer",
+                "resolution_token": guest_target["resolution_token"],
+            },
             headers=_headers(
                 owner_token,
                 **{"Idempotency-Key": "grant-guest-viewer-1"},
@@ -394,12 +609,47 @@ async def test_workflow_direct_share_capabilities_and_revoke(
             headers=_headers(owner_token),
         )
         assert listed.status_code == 200, listed.text
-        assert listed.json()["items"] == [
+        assert [
+            {
+                key: item[key]
+                for key in (
+                    "relation",
+                    "subject_type",
+                    "subject_id",
+                    "subject_relation",
+                    "source",
+                )
+            }
+            for item in listed.json()["items"]
+        ] == [
             {**binding, "source": "direct"},
             {**guest_binding, "source": "direct"},
         ]
+        assert [item["display_name"] for item in listed.json()["items"]] == [
+            "viewer",
+            "guest",
+        ]
+        assert [item["detail"] for item in listed.json()["items"]] == [
+            viewer["email"],
+            guest["email"],
+        ]
 
         foreign_token, foreign = await _register(client, "foreign")
+        out_of_scope = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={"target_type": "user", "identifier": foreign["email"]},
+            headers=_headers(owner_token),
+        )
+        unknown = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={
+                "target_type": "user",
+                "identifier": f"unknown-{uuid.uuid4().hex}@example.com",
+            },
+            headers=_headers(owner_token),
+        )
+        assert out_of_scope.status_code == unknown.status_code == 200
+        assert out_of_scope.json() == unknown.json() == {"target": None}
         foreign_grant = await client.post(
             f"/api/v1/workflows/{wf_id}/access",
             json={**binding, "subject_id": foreign["user_id"]},
@@ -469,3 +719,187 @@ async def test_workflow_direct_share_capabilities_and_revoke(
         )
         assert guest_after_revoke_list.status_code == 200
         assert guest_after_revoke_list.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_cross_personal_shared_with_me_rechecks_authoritative_access(
+    pg_engine,
+    monkeypatch,
+):
+    """A projection locates a cross-tenant root but never grants it."""
+    monkeypatch.setattr(config, "resource_sharing_enabled", True)
+    store = _RelationshipStore()
+    app = build_app()
+    app.state.openfga_client = store
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        owner_token, owner, _ = await _register_exact(client, "share_owner")
+        recipient_token, recipient, recipient_email = await _register_exact(
+            client,
+            "share_recipient",
+        )
+
+        created = await client.post(
+            "/api/v1/workflows",
+            json={
+                "name": "Cross-personal workflow",
+                "description": "Visible only after current authorization",
+            },
+            headers=_headers(owner_token),
+        )
+        assert created.status_code == 201, created.text
+        wf_id = created.json()["wf_id"]
+
+        for unavailable_target in ("group", "organization"):
+            unavailable = await client.post(
+                f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+                json={
+                    "target_type": unavailable_target,
+                    "identifier": "Platform",
+                },
+                headers=_headers(owner_token),
+            )
+            assert unavailable.status_code == 200
+            assert unavailable.json() == {"target": None}
+
+        resolved = await client.post(
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target",
+            json={"target_type": "user", "identifier": recipient_email},
+            headers=_headers(owner_token),
+        )
+        assert resolved.status_code == 200, resolved.text
+        target = resolved.json()["target"]
+        assert target is not None
+        assert target["target_type"] == "user"
+        assert "manager" not in target["allowed_relations"]
+
+        granted = await client.post(
+            f"/api/v1/workflows/{wf_id}/access",
+            json={
+                "relation": "viewer",
+                "resolution_token": target["resolution_token"],
+            },
+            headers=_headers(
+                owner_token,
+                **{"Idempotency-Key": "cross-personal-viewer"},
+            ),
+        )
+        assert granted.status_code == 201, granted.text
+
+        shared = await client.get(
+            "/api/v1/resource-access/shared?resource_type=workflow",
+            headers=_headers(recipient_token),
+        )
+        assert shared.status_code == 200, shared.text
+        assert shared.json()["next_offset"] is None
+        assert len(shared.json()["items"]) == 1
+        item = shared.json()["items"][0]
+        assert item["resource_type"] == "workflow"
+        assert item["resource_id"] == wf_id
+        assert item["name"] == "Cross-personal workflow"
+        assert item["description"] == (
+            "Visible only after current authorization"
+        )
+        assert item["access"]["effective_role"] == "viewer"
+        assert item["access"]["source"] == "shared"
+        assert item["provenance"]["ownership_scope"] == "personal"
+        assert item["provenance"]["origin_type"] == "created"
+        assert "tenant" not in item
+
+        detail = await client.get(
+            f"/api/v1/workflows/{wf_id}",
+            headers=_headers(recipient_token),
+        )
+        assert detail.status_code == 200, detail.text
+
+        # Simulate an authoritative tuple already removed while a stale
+        # recipient locator remains. The list must fail closed and expose no
+        # resource metadata from the projection alone.
+        store.tuples.discard(OpenFgaTuple(
+            f"user:{recipient['user_id']}",
+            "viewer",
+            f"workflow:{wf_id}",
+        ))
+        stale_projection = await client.get(
+            "/api/v1/resource-access/shared?resource_type=workflow",
+            headers=_headers(recipient_token),
+        )
+        assert stale_projection.status_code == 200, stale_projection.text
+        assert stale_projection.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_share_lookup_rate_limit_is_audited_outside_failed_request(
+    pg_engine,
+    monkeypatch,
+):
+    assert pg_engine is not None
+    monkeypatch.setattr(config, "resource_sharing_enabled", True)
+    store = _RelationshipStore()
+    app = build_app()
+    app.state.openfga_client = store
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        owner_token, owner, _ = await _register_exact(client, "lookup_audit")
+        created = await client.post(
+            "/api/v1/workflows",
+            json={"name": "Lookup audit workflow"},
+            headers=_headers(owner_token),
+        )
+        assert created.status_code == 201, created.text
+        wf_id = created.json()["wf_id"]
+        lookup_url = (
+            f"/api/v1/resource-access/workflow/{wf_id}/resolve-target"
+        )
+        not_found = await client.post(
+            lookup_url,
+            json={
+                "target_type": "user",
+                "identifier": f"missing-{uuid.uuid4().hex}@example.com",
+            },
+            headers=_headers(owner_token),
+        )
+        assert not_found.status_code == 200
+        assert not_found.json() == {"target": None}
+
+        async def reject_lookup(*_args, **_kwargs):
+            raise LoginRateLimitExceeded
+
+        monkeypatch.setattr(
+            resource_access_routes,
+            "consume_rate_limited_action",
+            reject_lookup,
+        )
+        limited = await client.post(
+            lookup_url,
+            json={
+                "target_type": "user",
+                "identifier": f"limited-{uuid.uuid4().hex}@example.com",
+            },
+            headers=_headers(owner_token),
+        )
+        assert limited.status_code == 429
+        assert limited.headers["retry-after"] == "60"
+        assert limited.json()["detail"] == "share_target_lookup_rate_limited"
+
+    async with session_scope(
+        tenant_id=owner["tenant_id"],
+        user_id=owner["user_id"],
+    ) as session:
+        records = await AuditRepo(session).list_for_tenant(
+            action=audit_actions.SHARE_LOOKUP,
+            limit=10,
+        )
+    relevant = [item for item in records if item.target_id == wf_id]
+    assert {item.meta.get("lookup_outcome") for item in relevant} >= {
+        "not_found",
+        "rate_limited",
+    }
+    assert all("identifier_hash" in item.meta for item in relevant)
+    assert all("identifier" not in item.meta for item in relevant)

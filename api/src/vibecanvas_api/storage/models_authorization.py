@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -198,5 +199,69 @@ class AuthzMutation(Base):
             "AND status IN ('requested','failed')"
             ")",
             name="ck_authz_mutation_revocation_guard",
+        ),
+    )
+
+
+class SharedResourceProjection(Base):
+    """Recipient locator for an applied direct User grant.
+
+    This row never grants access by itself. It lets an authenticated recipient
+    locate the owning tenant so the request can re-check the authoritative
+    OpenFGA tuple under that tenant's RLS context.
+    """
+
+    __tablename__ = "shared_resource_projections"
+
+    owner_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    resource_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    resource_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    recipient_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    relation: Mapped[str] = mapped_column(Text, primary_key=True)
+    source_mutation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("authz_mutations.mutation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    edge_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "resource_type IN ('workflow','task','deployment','knowledge_base')",
+            name="ck_shared_resource_projection_type",
+        ),
+        CheckConstraint(
+            "relation IN ('viewer','editor','operator','manager')",
+            name="ck_shared_resource_projection_relation",
+        ),
+        CheckConstraint(
+            "edge_revision > 0",
+            name="ck_shared_resource_projection_revision",
+        ),
+        Index(
+            "ix_shared_resource_recipient",
+            "recipient_user_id",
+            "resource_type",
+            "updated_at",
+        ),
+        Index(
+            "ix_shared_resource_owner",
+            "owner_tenant_id",
+            "resource_type",
+            "resource_id",
         ),
     )

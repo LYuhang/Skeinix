@@ -373,6 +373,16 @@ export function EmbedChatPage() {
   }, [extensionAuthenticated, postToExtension, seeded]);
 
   useEffect(() => {
+    if (!seeded || extensionAuthenticated) return;
+    if (window.parent === window) {
+      queueMicrotask(() => setBindingFailed(true));
+      return;
+    }
+    const timer = window.setTimeout(() => setBindingFailed(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [extensionAuthenticated, seeded]);
+
+  useEffect(() => {
     if (!binding || !seeded || !extensionAuthenticated) return;
     const timer = window.setTimeout(() => setBindingFailed(true), 12_000);
     return () => window.clearTimeout(timer);
@@ -400,6 +410,40 @@ export function EmbedChatPage() {
   // embed (it receives a partitioned HttpOnly Session cookie).
   if (!authenticated) {
     return <EmbedLogin />;
+  }
+
+  if (!extensionAuthenticated && bindingFailed) {
+    const appHref = `${getBasePath() || ''}/chat`;
+    const standalone = window.parent === window;
+    return (
+      <div className="flex h-screen items-center justify-center bg-surface-app p-5">
+        <section className="w-full max-w-sm rounded-xl border border-edge-structural bg-surface-raised p-5 text-center shadow-raised">
+          <div className="mx-auto grid size-10 place-items-center rounded-xl bg-state-warning/10 text-state-warning">
+            <RotateCw className="size-4" aria-hidden="true" />
+          </div>
+          <h1 className="mt-3 text-base font-semibold">
+            {t('embed.session_timeout', 'The extension session could not be established')}
+          </h1>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">
+            {standalone
+              ? t('embed.standalone_hint', 'This secure Chat surface is opened by the Skeinix browser extension. Open the side panel, or continue in the main app.')
+              : t('embed.session_timeout_hint', 'Open the Skeinix side panel and retry. If the extension was updated, reload it before trying again.')}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            {!standalone ? <Button size="sm" onClick={retryBinding}>
+              <RotateCw className="size-3.5" aria-hidden="true" />
+              {t('retry', 'Retry')}
+            </Button> : null}
+            <Button asChild size="sm" variant="outline">
+              <a href={appHref} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+                {t('embed.open_main_app', 'Open main app')}
+              </a>
+            </Button>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   if (!extensionAuthenticated) {

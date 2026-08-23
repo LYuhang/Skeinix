@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ActionableError } from '@/components/presentation/ActionableError';
 import { CompactEmptyState } from '@/components/presentation/CompactEmptyState';
@@ -8,6 +8,11 @@ import { FileTypeIcon } from '@/components/presentation/FileTypeIcon';
 import { ResourceIcon } from '@/components/presentation/ResourceIcon';
 import { fileVisualFor } from '@/lib/presentation/file-visuals';
 import { resourceVisual } from '@/lib/presentation/resource-visuals';
+import { setLocale } from '@/lib/i18n';
+
+beforeEach(() => {
+  setLocale('en');
+});
 
 describe('workbench presentation primitives', () => {
   it('keeps resource identity separate from execution status', () => {
@@ -49,6 +54,19 @@ describe('workbench presentation primitives', () => {
     expect(details).not.toHaveAttribute('open');
     fireEvent.click(screen.getByRole('button', { name: 'Test again' }));
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('localizes the ActionableError technical-details fallback', () => {
+    setLocale('zh');
+    render(
+      <ActionableError
+        title="连接失败"
+        technicalDetails="Internal diagnostics"
+      />,
+    );
+
+    expect(screen.getByText('技术详情')).toBeInTheDocument();
+    expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
   });
 
   it('renders a compact empty state with one clear action', () => {

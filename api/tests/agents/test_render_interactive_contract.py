@@ -9,15 +9,17 @@ from unittest.mock import AsyncMock
 import pytest
 
 from vibecanvas_api.agents.tools.decorator import ToolError
-from vibecanvas_api.diagrams.registry import REGISTRY_VERSION, get_diagram_type
 from vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive import (
     _persist_interactive_state,
     render_interactive,
 )
+from vibecanvas_api.services.platform_mcp.interactive_tools.render_url_preview import (
+    render_url_preview,
+)
 from vibecanvas_api.services.platform_mcp.interactive_tools.schema import interactive_view_json_schema
 
 
-def test_public_schema_has_only_html_and_file_views():
+def test_public_schema_has_html_file_and_url_views():
     schema = render_interactive.tool_call_schema.model_json_schema()
     assert set(schema["properties"]) == {
         "title",
@@ -27,7 +29,7 @@ def test_public_schema_has_only_html_and_file_views():
     variants = schema["properties"]["view"]["oneOf"]
     assert {
         variant["properties"]["type"]["const"] for variant in variants
-    } == {"html_preview", "file_preview"}
+    } == {"html_preview", "file_preview", "url_preview"}
     assert '<form action="/data/<file>" method="post">' in render_interactive.description
     assert "fetch('/data/labels.json'" in render_interactive.description
     assert "platform-specific JavaScript object" in render_interactive.description
@@ -39,6 +41,59 @@ def test_public_schema_has_only_html_and_file_views():
     assert "ordinary user-triggered ``fetch``" in render_interactive.description
     assert "do not overwrite the HTML" in render_interactive.description
     assert "Continue starts a" in render_interactive.description
+
+
+@pytest.mark.asyncio
+async def test_url_preview_tool_publishes_isolated_webview_artifact(monkeypatch):
+    module = importlib.import_module(
+        "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
+    )
+    persist = AsyncMock()
+    monkeypatch.setattr(module, "_persist_interactive_state", persist)
+
+    content, artifact = await render_url_preview.coroutine(
+        title="Reference page",
+        url="https://example.com/docs?section=preview",
+        description="External documentation",
+        runtime=SimpleNamespace(
+            context=SimpleNamespace(
+                tenant_id="tenant_1",
+                chat_id="chat_1",
+                turn_id="turn_1",
+            )
+        ),
+    )
+
+    definition = artifact["payload"]["artifact"]
+    assert artifact["status"] == "success"
+    assert definition["component_type"] == "url_preview"
+    assert definition["props"] == {
+        "url": "https://example.com/docs?section=preview",
+        "description": "External documentation",
+    }
+    assert definition["height"] == 520
+    assert "render_interactive → url_preview" in content
+    persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_url_preview_rejects_non_http_navigation(monkeypatch):
+    module = importlib.import_module(
+        "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
+    )
+    persist = AsyncMock()
+    monkeypatch.setattr(module, "_persist_interactive_state", persist)
+
+    content, artifact = await render_url_preview.coroutine(
+        title="Unsafe page",
+        url="javascript:alert(1)",
+        runtime=SimpleNamespace(context=SimpleNamespace()),
+    )
+
+    assert artifact["status"] == "error"
+    assert artifact["error"]["code"] == "invalid_interactive_input"
+    assert "absolute HTTP(S) URL" in content
+    persist.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -164,93 +219,50 @@ async def test_database_failure_is_not_reported_as_a_successful_card(monkeypatch
         )
 
 
-def _valid_diagram_bytes() -> bytes:
-    spec = get_diagram_type("flow", "basic")
-    assert spec is not None
-    return json.dumps({
-        "schemaVersion": 1,
-        "id": "interactive-flow",
-        "title": "Interactive flow",
-        "diagram": {"family": "flow", "type": "basic"},
-        "model": {
-            "nodes": [
-                {"id": "start", "kind": "start", "label": "Start"},
-                {"id": "done", "kind": "end", "label": "Done"},
-            ],
-            "edges": [{"id": "finish", "source": "start", "target": "done"}],
-            "groups": [],
-            "embeds": [],
-            "resources": [],
-        },
-        "intent": {
-            "direction": "RIGHT",
-            "density": "comfortable",
-            "stability": "preserve",
-            "primaryPath": ["start", "done"],
-            "constraints": [],
-        },
-        "view": {"layoutMode": "auto", "overrides": {}, "frames": []},
-        "metadata": {
-            "createdBy": "agent",
-            "specVersion": REGISTRY_VERSION,
-            "specHash": spec.spec_hash,
-            "compilerVersion": None,
-            "themeVersion": None,
-        },
-    }).encode()
-
-
 @pytest.mark.asyncio
-async def test_invalid_diagram_file_creates_no_interactive_card(monkeypatch):
+async def test_file_preview_defers_type_validation_to_preview(monkeypatch):
     module = importlib.import_module(
         "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
     )
     persist = AsyncMock()
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
-    session = SimpleNamespace(
-        read_file=AsyncMock(return_value={
-            "ok": True,
-            "kind": "text",
-            "content": '{"schemaVersion":1}',
-        }),
-        sync_workspace_path=AsyncMock(return_value=True),
-    )
+    session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=True))
     content, artifact = await render_interactive.coroutine(
         title="Broken flow",
         view={
             "type": "file_preview",
-            "path": "/data/diagrams/broken.vdiagram.json",
+            "path": "/data/diagrams/broken.drawio",
         },
         runtime=SimpleNamespace(context=SimpleNamespace(_attached_session=session)),
     )
 
-    assert artifact["status"] == "error"
-    assert artifact["error"]["code"] == "invalid_diagram"
-    assert "no Preview card was created" in content
-    persist.assert_not_awaited()
-    session.sync_workspace_path.assert_not_awaited()
+    assert artifact["status"] == "success"
+    assert "render_interactive → file_preview" in content
+    assert artifact["payload"]["artifact"]["props"] == {
+        "path": "/data/diagrams/broken.drawio",
+        "file_type": "auto",
+        "description": "",
+    }
+    persist.assert_awaited_once()
+    session.sync_workspace_path.assert_awaited_once_with(
+        "/data/diagrams/broken.drawio"
+    )
 
 
 @pytest.mark.asyncio
-async def test_valid_diagram_file_is_checked_then_rendered_without_mutating_vfs(monkeypatch):
+async def test_file_preview_preserves_optional_type_hint(monkeypatch):
     module = importlib.import_module(
         "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
     )
     persist = AsyncMock()
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
-    session = SimpleNamespace(
-        read_file=AsyncMock(return_value={
-            "ok": True,
-            "kind": "text",
-            "content": _valid_diagram_bytes().decode(),
-        }),
-        sync_workspace_path=AsyncMock(return_value=True),
-    )
+    session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=True))
     _, artifact = await render_interactive.coroutine(
         title="Interactive flow",
         view={
             "type": "file_preview",
-            "path": "/data/diagrams/flow.vdiagram.json",
+            "path": "/data/diagrams/flow.drawio",
+            "file_type": "drawio",
         },
         runtime=SimpleNamespace(
             context=SimpleNamespace(
@@ -264,7 +276,33 @@ async def test_valid_diagram_file_is_checked_then_rendered_without_mutating_vfs(
 
     assert artifact["status"] == "success"
     definition = artifact["payload"]["artifact"]
-    assert definition["props"]["mime"] == "application/vnd.vibecanvas.diagram+json"
-    assert artifact["payload"]["diagram_validation"]["nodes"] == 2
-    session.sync_workspace_path.assert_not_awaited()
+    assert definition["props"]["file_type"] == "drawio"
+    assert "diagram_validation" not in artifact["payload"]
+    session.sync_workspace_path.assert_awaited_once_with(
+        "/data/diagrams/flow.drawio"
+    )
     persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unsynced_diagram_file_creates_no_interactive_card(monkeypatch):
+    module = importlib.import_module(
+        "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
+    )
+    persist = AsyncMock()
+    monkeypatch.setattr(module, "_persist_interactive_state", persist)
+    session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=False))
+
+    content, artifact = await render_interactive.coroutine(
+        title="Unsynced flow",
+        view={
+            "type": "file_preview",
+            "path": "/data/diagrams/unsynced.drawio",
+        },
+        runtime=SimpleNamespace(context=SimpleNamespace(_attached_session=session)),
+    )
+
+    assert artifact["status"] == "error"
+    assert artifact["error"]["code"] == "file_preview_sync_failed"
+    assert "before creating its Preview" in content
+    persist.assert_not_awaited()

@@ -245,14 +245,13 @@ class Chat(Base):
     # composer from silently switching a persisted Codex thread between the
     # ChatGPT-account and API-broker transports.
     runtime_model_id: Mapped[str | None] = mapped_column(Text)
-    # Non-secret model/generation choices frozen with ``runtime_model_id`` on
-    # the first accepted Turn. Settings are Chat state, not a mutable user-wide
-    # preference, so reopening a historical Chat cannot silently inherit the
-    # model or reasoning effort selected in another conversation.
+    # Non-secret model/generation choices last accepted for this Chat. They are
+    # mutable only between Turns and seed Resume; each AgentRun retains the
+    # immutable model/source/effort snapshot used by that historical Turn.
     runtime_agent_settings: Mapped[dict | None] = mapped_column(JSONB)
-    # Small stable Runtime variant selected on the first Turn: ``langchain``,
-    # ``codex:api``, or ``codex:account``. API providers remain switchable
-    # within their variant; a persisted Codex thread cannot cross API/account.
+    # Current Runtime connection variant: ``langchain``, ``codex:api``, or
+    # ``codex:account``. Changing it keeps the Chat history/workspace while the
+    # adapter safely reconfigures or forks its provider-native thread.
     runtime_connection_id: Mapped[str | None] = mapped_column(Text)
     # Fixed when a LangChain Chat binds on its first Turn.  These values are
     # deliberately immutable afterwards: regenerating a wall clock value for
@@ -443,6 +442,7 @@ class User(Base):
         PgUUID(as_uuid=True),
         ForeignKey("content_encryption_keys.key_id", ondelete="RESTRICT"),
     )
+    profile_email_lookup_hash: Mapped[str | None] = mapped_column(Text)
     status:       Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     created_at:   Mapped[datetime] = _ts()
     updated_at:   Mapped[datetime] = _ts()
@@ -451,6 +451,7 @@ class User(Base):
             "status IN ('active','disabled','pending_deletion')",
             name="ck_users_status",
         ),
+        Index("ix_users_profile_email_lookup", "profile_email_lookup_hash"),
     )
 
 
@@ -636,7 +637,7 @@ class Session(Base):
         ),
         CheckConstraint(
             "authentication_strength IN "
-            "('password','oauth','totp','webauthn','recovery')",
+            "('password','oauth','webauthn')",
             name="ck_sessions_authentication_strength",
         ),
         CheckConstraint(
@@ -648,48 +649,6 @@ class Session(Base):
             "(privileged_access_request_id IS NOT NULL)",
             name="ck_sessions_support_scope",
         ),
-    )
-
-
-class UserMfaTotp(Base):
-    """Account-global TOTP factor with ciphertext-only seed storage."""
-
-    __tablename__ = "user_mfa_totp"
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="pending",
-    )
-    secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
-    secret_nonce: Mapped[str] = mapped_column(Text, nullable=False)
-    secret_key_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("content_encryption_keys.key_id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    last_used_step: Mapped[int | None] = mapped_column(BigInteger)
-    recovery_code_hashes: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, server_default="{}",
-    )
-    pending_expires_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-    )
-    created_at: Mapped[datetime] = _ts()
-    updated_at: Mapped[datetime] = _ts()
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending','active','disabled')",
-            name="ck_user_mfa_totp_status",
-        ),
-        Index("ix_user_mfa_totp_tenant", "tenant_id"),
     )
 
 
@@ -771,54 +730,6 @@ class UserWebAuthnChallenge(Base):
             name="uq_user_webauthn_challenge_session_purpose",
         ),
         Index("ix_user_webauthn_challenges_expires", "expires_at"),
-    )
-
-
-class UserLoginMfaChallenge(Base):
-    """Short-lived password-verified login state; never an application Session.
-
-    The opaque token is stored only as a digest.  A caller holding this token
-    can attempt an enrolled second factor, but cannot access any authenticated
-    route until the challenge and factor are completed atomically.
-    """
-
-    __tablename__ = "user_login_mfa_challenges"
-    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    audience: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="web",
-    )
-    available_methods: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, server_default="{}",
-    )
-    webauthn_challenge: Mapped[bytes | None] = mapped_column(LargeBinary)
-    failed_attempts: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="0",
-    )
-    created_at: Mapped[datetime] = _ts()
-    expires_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False,
-    )
-    __table_args__ = (
-        CheckConstraint(
-            "audience IN ('web','extension','api')",
-            name="ck_user_login_mfa_challenges_audience",
-        ),
-        CheckConstraint(
-            "failed_attempts >= 0 AND failed_attempts <= 5",
-            name="ck_user_login_mfa_challenges_attempts",
-        ),
-        Index("ix_user_login_mfa_challenges_user", "user_id"),
-        Index("ix_user_login_mfa_challenges_expires", "expires_at"),
     )
 
 
@@ -1081,102 +992,6 @@ class VfsArtifactEvent(Base):
     )
 
 
-class DiagramDraft(Base):
-    """Durable cross-worker state for one in-progress Diagram edit.
-
-    Source and compiled Scene bodies remain in the encrypted/object-backed VFS;
-    this row stores only ownership, cursors, hashes, and lifecycle state.
-    """
-
-    __tablename__ = "diagram_drafts"
-    draft_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-        nullable=False,
-        server_default=text("current_setting('app.tenant_id', true)::uuid"),
-    )
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    chat_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("chats.chat_id", ondelete="CASCADE"), nullable=False
-    )
-    turn_id: Mapped[str] = mapped_column(Text, nullable=False)
-    workspace_scope_id: Mapped[str] = mapped_column(Text, nullable=False)
-    source_path: Mapped[str] = mapped_column(Text, nullable=False)
-    target_path: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="writing")
-    latest_source_sequence: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, server_default="0"
-    )
-    latest_ready_sequence: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, server_default="0"
-    )
-    latest_ready_scene_ref: Mapped[str | None] = mapped_column(Text)
-    terminal: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
-    created_at: Mapped[datetime] = _ts()
-    updated_at: Mapped[datetime] = _ts()
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('writing','parsing','compiling','ready','invalid',"
-            "'superseded','committed','cancelled')",
-            name="ck_diagram_drafts_status",
-        ),
-        UniqueConstraint(
-            "chat_id", "turn_id", "source_path",
-            name="uq_diagram_drafts_turn_source",
-        ),
-        Index("ix_diagram_drafts_chat_updated", "chat_id", "updated_at"),
-    )
-
-
-class DiagramRenderRevision(Base):
-    """One source sequence and, when ready, its encrypted VFS Scene pointer."""
-
-    __tablename__ = "diagram_render_revisions"
-    draft_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
-        ForeignKey("diagram_drafts.draft_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    sequence: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    revision_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), nullable=False, server_default=func.gen_random_uuid(),
-        unique=True,
-    )
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-        nullable=False,
-        server_default=text("current_setting('app.tenant_id', true)::uuid"),
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    operation: Mapped[str] = mapped_column(Text, nullable=False, server_default="update_diagram")
-    element_ids: Mapped[list] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    scene_ref: Mapped[str | None] = mapped_column(Text)
-    scene_hash: Mapped[str | None] = mapped_column(Text)
-    scene_path: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = _ts()
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('writing','parsing','compiling','ready','invalid',"
-            "'superseded','committed','cancelled')",
-            name="ck_diagram_render_revisions_status",
-        ),
-        Index(
-            "ix_diagram_render_revisions_ready_cursor",
-            "tenant_id", "draft_id", "status", "sequence",
-        ),
-    )
-
-
 # updated_at auto-trigger DDL — applied in the Alembic initial migration
 # (Task 3), NOT here. Kept as a constant so the migration imports it.
 UPDATED_AT_TRIGGER_FN = """
@@ -1217,7 +1032,6 @@ from . import models_kb  # noqa: F401,E402  -- side-effect: model registration
 # Durable interactive agent turns + resumable UI event log.
 from . import models_agent_runs  # noqa: F401,E402  -- side-effect: model registration
 from . import models_background_jobs  # noqa: F401,E402  -- side-effect: model registration
-from . import models_execution_plans  # noqa: F401,E402  -- side-effect: model registration
 
 # Organization identity — import so Organization/Group/OrgMembership/
 # GroupMembership register on Base.metadata. RLS + indexes live in migrations.

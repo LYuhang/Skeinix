@@ -10,6 +10,7 @@ export const loadCanvasPage = () => import('@/pages/canvas/CanvasPage');
 export const loadAppLayout = () => import('@/app/AppLayout');
 export const loadChatPage = () => import('@/pages/chat/ChatPage');
 export const loadEmbedChatPage = () => import('@/pages/embed/EmbedChatPage');
+export const loadStandalonePreviewPage = () => import('@/pages/preview/StandalonePreviewPage');
 export const loadSettingsPage = () => import('@/pages/settings/SettingsPage');
 export const loadLoginPage = () => import('@/pages/auth/LoginPage');
 export const loadSignupPage = () => import('@/pages/auth/SignupPage');
@@ -19,9 +20,7 @@ export const loadTasksListPage = () => import('@/pages/tasks/TasksListPage');
 export const loadTaskDetailPage = () => import('@/pages/tasks/TaskDetailPage');
 export const loadDeploymentsListPage = () => import('@/pages/deployments/DeploymentsListPage');
 export const loadDeploymentDetailPage = () => import('@/pages/deployments/DeploymentDetailPage');
-export const loadCredentialsPage = () => import('@/pages/credentials/CredentialsPage');
 export const loadMcpServersPage = () => import('@/pages/mcp-servers/McpServersPage');
-export const loadPlatformMcpDetailPage = () => import('@/pages/mcp-servers/PlatformMcpDetailPage');
 export const loadMcpServerDetailPage = () => import('@/pages/mcp-servers/McpServerDetailPage');
 export const loadMcpCatalogDetailPage = () => import('@/pages/mcp-servers/McpCatalogDetailPage');
 export const loadSkillsPage = () => import('@/pages/skills/SkillsPage');
@@ -34,14 +33,13 @@ export const loadPlatformManagementPage = () => import('@/pages/management/Platf
 
 const NAV_ROUTE_LOADERS: Readonly<Record<string, () => Promise<unknown>>> = {
   '/chat': loadChatPage,
+  '/preview': loadStandalonePreviewPage,
   '/workspace': loadWorkspacePage,
   '/tasks': loadTasksListPage,
   '/tasks/:taskId': loadTaskDetailPage,
   '/deployments': loadDeploymentsListPage,
   '/deployments/:depId': loadDeploymentDetailPage,
-  '/credentials': loadCredentialsPage,
   '/mcp-servers': loadMcpServersPage,
-  '/mcp-servers/platform/:platformId': loadPlatformMcpDetailPage,
   '/mcp-servers/:id': loadMcpServerDetailPage,
   '/mcp-servers/discover/:source': loadMcpCatalogDetailPage,
   '/skills': loadSkillsPage,
@@ -59,7 +57,6 @@ const PRIMARY_IDLE_ROUTES = [
   '/workspace',
   '/tasks',
   '/deployments',
-  '/credentials',
   '/mcp-servers',
   '/skills',
   '/knowledge',
@@ -73,7 +70,6 @@ const DETAIL_IDLE_ROUTES = [
   '/knowledge/:kbId',
   '/skills/:id',
   '/mcp-servers/:id',
-  '/mcp-servers/platform/:platformId',
   '/mcp-servers/discover/:source',
   '/skills/discover/:source',
   '/workflow/:wfId',

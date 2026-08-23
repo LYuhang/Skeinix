@@ -152,6 +152,17 @@ describe('Agent Turn wire protocol', () => {
           },
         );
       }),
+      http.get(
+        '*/api/v1/chats/chat_gap/turns/by-client-request/:clientRequestId',
+        () => HttpResponse.json({
+          run_id: 'turn_gap_1',
+          chat_id: 'chat_gap',
+          status: 'running',
+          last_event_id: 1,
+          created_at: '2026-08-23T00:00:00Z',
+          pending_hitl: [],
+        }),
+      ),
     );
     useChatStreamStore.getState().beginTurn('chat_gap', '');
 
@@ -169,5 +180,56 @@ describe('Agent Turn wire protocol', () => {
         content: 'complete',
       }),
     ]);
+  });
+
+  it('uses the durable Run terminal state when the final SSE frame is lost', async () => {
+    let resumeRequests = 0;
+    server.use(
+      http.post('*/api/v1/chat-scopes/:scopeId/chats/:chatId/messages', () => (
+        new HttpResponse(
+          [
+            'id: 1\nevent: started\ndata: {"turn_id":"turn_terminal_1"}\n\n',
+            'id: 2\nevent: CHAT_EVENT\ndata: {"type":"message_start","message_id":"assistant_terminal","role":"assistant"}\n\n',
+            'id: 3\nevent: NO_OP\ndata: {}\n\n',
+          ].join(''),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'X-Turn-Id': 'turn_terminal_1',
+            },
+          },
+        )
+      )),
+      http.get(
+        '*/api/v1/chats/chat_terminal/turns/by-client-request/:clientRequestId',
+        () => HttpResponse.json({
+          run_id: 'turn_terminal_1',
+          chat_id: 'chat_terminal',
+          status: 'completed',
+          last_event_id: 3,
+          created_at: '2026-08-23T00:00:00Z',
+          pending_hitl: [],
+        }),
+      ),
+      http.get('*/api/v1/chats/chat_terminal/turns/turn_terminal_1/stream', () => {
+        resumeRequests += 1;
+        return new HttpResponse('id: 4\nevent: done\ndata: {}\n\n', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    useChatStreamStore.getState().beginTurn('chat_terminal', '');
+
+    await streamAgentTurn({
+      wfId: 'scope_terminal',
+      chatId: 'chat_terminal',
+      content: 'finish even if the final frame is lost',
+      signal: new AbortController().signal,
+    });
+
+    expect(resumeRequests).toBe(0);
+    expect(useChatStreamStore.getState().runtimes.chat_terminal.state).toBe('complete');
   });
 });

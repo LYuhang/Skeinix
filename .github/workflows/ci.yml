@@ -102,6 +102,7 @@ jobs:
           pnpm lint
           pnpm lint:visual
           pnpm lint:routes
+          pnpm lint:locales
           pnpm lint:retired-ui
           pnpm test
           pnpm build

@@ -143,7 +143,7 @@ function portableRuntimeAssetsPlugin() {
           "font-src 'self' data:",
           "connect-src 'self'",
           "worker-src 'self' blob:",
-          "frame-src 'self' data: blob:",
+          "frame-src 'self' data: blob: http: https:",
           "media-src 'self' data: blob:",
           "object-src 'none'",
           "base-uri 'self'",

@@ -14,11 +14,6 @@ from vibecanvas_api.storage.models_agent_runs import (
     InteractiveArtifact,
 )
 from vibecanvas_api.storage.models_background_jobs import ChatToolJob
-from vibecanvas_api.storage.models_execution_plans import (
-    ExecutionNodeRun,
-    ExecutionPlan,
-    ExecutionPlanRun,
-)
 from vibecanvas_api.storage.models_kb import KbFile
 from vibecanvas_api.storage.models_skills import SkillRevision
 from vibecanvas_api.storage.models_tasks import (
@@ -46,37 +41,6 @@ async def _agent_run_parent(
             select(AgentRun.chat_id).where(AgentRun.run_id == resource.id)
         )
     ).scalar_one_or_none()
-    return _root(ResourceType.CHAT, resource, chat_id) if chat_id else None
-
-
-async def _agent_plan_parent(
-    session: AsyncSession, resource: ResourceRef,
-) -> ResourceRef | None:
-    """Resolve any current Execution Plan identifier to its owning Chat."""
-    chat_id = (
-        await session.execute(
-            select(ExecutionPlan.chat_id).where(ExecutionPlan.plan_id == resource.id)
-        )
-    ).scalar_one_or_none()
-    if chat_id is None:
-        chat_id = (
-            await session.execute(
-                select(ExecutionPlanRun.chat_id).where(
-                    ExecutionPlanRun.plan_run_id == resource.id
-                )
-            )
-        ).scalar_one_or_none()
-    if chat_id is None:
-        chat_id = (
-            await session.execute(
-                select(ExecutionPlanRun.chat_id)
-                .join(
-                    ExecutionNodeRun,
-                    ExecutionNodeRun.plan_run_id == ExecutionPlanRun.plan_run_id,
-                )
-                .where(ExecutionNodeRun.node_run_id == resource.id)
-            )
-        ).scalar_one_or_none()
     return _root(ResourceType.CHAT, resource, chat_id) if chat_id else None
 
 
@@ -266,7 +230,6 @@ async def _skill_revision_parent(
 
 AUTHZ_PARENT_RESOLVERS: dict[ResourceType, ParentResolver] = {
     ResourceType.AGENT_RUN: _agent_run_parent,
-    ResourceType.AGENT_PLAN: _agent_plan_parent,
     ResourceType.HITL_REQUEST: _hitl_parent,
     ResourceType.INTERACTIVE_ARTIFACT: _artifact_parent,
     ResourceType.BACKGROUND_JOB: _background_job_parent,

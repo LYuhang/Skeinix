@@ -24,10 +24,30 @@ Install the following tools before starting:
 - Docker Compose v2;
 - OpenSSL and `curl`.
 
-Four CPU cores and 8 GiB of memory are recommended for a complete local stack.
-The host must support privileged Linux containers and the gVisor startup probe.
-Compatibility is verified automatically before the API begins accepting
-traffic.
+### System requirements
+
+The supported requirements apply to the complete stack, including Agent
+sandboxes, Office document conversion, diagram export, databases, and
+background workers.
+
+| Resource | Minimum | Recommended |
+| --- | ---: | ---: |
+| CPU available to Docker | 4 vCPU | 8 vCPU |
+| Memory available to Docker | 8 GiB | 16 GiB |
+| Free disk before installation | 20 GiB | 40 GiB or more |
+
+Docker Desktop users must allocate these CPU and memory resources to the Linux
+engine; host totals alone are not sufficient. Disk capacity must cover the
+repository, images and build cache, database and object-store growth, and
+sandbox snapshots. A GPU is not required.
+
+The preflight checks the Docker allocation and available repository filesystem
+space before a build starts. A deliberately undersized test installation can
+set `SKEINIX_ALLOW_UNSUPPORTED_RESOURCES=true` for that invocation, but such a
+deployment is outside the supported configuration and may fail when an Agent,
+LibreOffice, or diagram renderer runs. The host must also support privileged
+Linux containers and the gVisor startup probe; compatibility is verified
+automatically before the API begins accepting traffic.
 
 Docker installation does not require Python, Node.js, or pnpm on the host. All
 application dependencies are built into the project images.
@@ -100,53 +120,6 @@ If `.env` already exists, the initializer preserves its contents. Do not delete
 or regenerate an environment file after storing data: it contains encryption
 keys required to read the existing object store.
 
-#### Remote server deployment
-
-The public URL is the only browser-facing build parameter. The launcher derives
-the canonical Host and CORS Origin, enables secure cookies for HTTPS, and
-compiles the same URL into the extension package. On a cloud VM, also provide
-the private interface address used behind the provider's public-IP NAT:
-
-```bash
-./scripts/deploy/local_server.sh up \
-  --public-url https://skeinix.example.com \
-  --bind-address 10.0.0.4
-```
-
-The command persists the derived settings in `.env`; subsequent `up` and
-`restart` commands do not need the options. Passing a new `--public-url` updates
-the derived settings without regenerating secrets or persistent data. Because
-the origin is compiled into the MV3 manifest, download the extension again
-after changing the URL.
-
-Point the domain's DNS record at the public IP and terminate HTTPS at a trusted
-reverse proxy. Forward the proxy to the private Web entry point on port `9001`.
-For example, a minimal Caddy site block is:
-
-```caddyfile
-skeinix.example.com {
-  reverse_proxy 10.0.0.4:9001
-}
-```
-
-Allow inbound TCP `80` for certificate issuance and redirect, and `443` for
-application traffic. Do not expose `8000`, `5432`, `6379`, `8080`, `2112`, or
-`9100`; the launcher keeps these control-plane ports on loopback. After HTTPS is
-working, the cloud firewall does not need to expose `9001` publicly.
-
-For short-lived evaluation without a purchased domain, an IP-encoded hostname
-such as `203-0-113-20.sslip.io` can resolve to the corresponding public IP. This
-depends on the third-party [sslip.io service](https://sslip.io/) and is not a
-substitute for deployment-owned DNS.
-
-Plain HTTP by public IP can evaluate the main application, but Chrome will not
-retain the extension's partitioned session on an insecure public origin.
-Extension sign-in, WebAuthn, passkeys, and other secure-context browser features
-require trusted HTTPS outside `localhost`. Do not weaken the extension cookie
-attributes to bypass this browser boundary. Production deployments have
-additional infrastructure requirements described in the
-[production deployment guide](../DEPLOY.md).
-
 ### Manage the stack
 
 | Action | Command |
@@ -192,8 +165,15 @@ cd Skeinix
 ```
 
 The bootstrap installs the required system packages, Node.js, pnpm, Codex CLI,
-uv, Python dependencies, frontend dependencies, and the pinned gVisor runtime.
-It then creates the local configuration and starts Skeinix.
+uv, Python dependencies, frontend dependencies, the pinned gVisor runtime,
+headless LibreOffice, Poppler, and the checksum-verified draw.io Desktop CLI.
+LibreOffice renders Word and PowerPoint files and provides headless office-file
+conversion and validation for document-generation workflows; native XLSX files
+are displayed by the browser workbook renderer. Poppler renders PDF pages. The
+draw.io CLI and its disposable Xvfb display produce the image feedback used to
+review native diagrams. The
+installer verifies these runtime commands before creating the local
+configuration and starting Skeinix.
 
 To prepare the environment without starting services:
 
@@ -205,6 +185,36 @@ Start the prepared installation later with:
 
 ```bash
 ./launch.sh start
+```
+
+If dependencies are installed manually instead of through the bootstrap, add
+the server-oriented office packages before starting Skeinix:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  xvfb xauth \
+  libreoffice-writer-nogui \
+  libreoffice-impress-nogui \
+  libreoffice-calc-nogui \
+  poppler-utils
+```
+
+These are non-GUI packages; a desktop LibreOffice installation is not
+required. Native Diagram feedback additionally requires the pinned draw.io
+Desktop package and `skeinix-drawio-export` wrapper installed by
+[`bootstrap_native_linux.sh`](../scripts/bootstrap_native_linux.sh). For a
+manual installation, follow that script's architecture selection, SHA-256
+verification, package-metadata checks, and wrapper installation rather than
+downloading an unverified latest package.
+
+Verify that the commands used by the document and diagram runtimes are
+available:
+
+```bash
+libreoffice --version  # `soffice --version` is also accepted
+pdftoppm -v
+command -v drawio skeinix-drawio-export
 ```
 
 The implementation is available in
@@ -250,12 +260,22 @@ After the stack is healthy:
 1. open <http://localhost:9001>;
 2. create a user account or sign in;
 3. open **Settings → Agent Runtime**;
-4. add a supported model provider or connect a Codex account; and
+4. open **Settings → API credentials** to connect OpenRouter or add a provider
+   key, or connect a Codex account under **Settings → Agent Runtime**; and
 5. start a Chat or create a Workflow.
 
 A model provider is not required for the platform to start, but Agent Chat
-cannot run until a model connection is available. User-managed providers can be
-configured from Settings; a deployment-wide default is optional.
+cannot run until a compatible model connection is available. User-managed
+providers can be configured from Settings; a deployment-wide default is
+optional. Settings controls the default Runtime for new Chats and the available
+account/API sources. The Chat composer selects the concrete source, model, and
+model-supported thinking level for each turn.
+OpenRouter uses `VIBECANVAS_PUBLIC_URL` as its fixed OAuth callback origin, so
+that value must match the address users open in the browser. A connected
+OpenRouter account supplies its compatible text and tool-calling models to both
+enabled Runtimes: LangChain uses its OpenAI-compatible transport, while Codex
+uses the Responses API through Skeinix's host-side model broker. The catalog can
+be refreshed from Settings without changing existing Chat history.
 
 ### Install the Browser Extension
 
@@ -274,21 +294,8 @@ package.
 
 ## Common configuration
 
-Docker reads `.env`; native installation reads `.env.launch.local`. For Docker,
-prefer the deployment options over editing related variables individually:
-
-| Deployment input | Local default | Purpose |
-| --- | --- | --- |
-| `--public-url URL` | `http://localhost:9001` | Sets the browser-visible URL and derives Host, CORS, secure-cookie, and extension build settings |
-| `--bind-address ADDRESS` | `127.0.0.1` | Publishes only the Web entry point on one exact host interface; use the VM private IP behind cloud NAT |
-
-The derived values are persisted in `.env`. Most deployments should not set
-`WEB_ALLOWED_HOSTS`, `VIBECANVAS_API_CORS_ORIGINS`,
-`WEB_SESSION_COOKIE_SECURE`, `VIBECANVAS_EXTENSION_WEB_BASE`, or
-`VIBECANVAS_EXTENSION_ALLOWED_ORIGINS` separately. They remain available as
-advanced overrides for deployments with multiple reviewed public entries.
-
-The following runtime settings are occasionally changed independently:
+Docker reads `.env`; native installation reads `.env.launch.local`. The
+following runtime settings are occasionally changed independently:
 
 | Variable | Local default | Purpose |
 | --- | --- | --- |
@@ -312,28 +319,6 @@ egress requirements are covered in [Production deployment](../DEPLOY.md).
 For the design behind the sandbox modes and network controls, see
 [Sandbox lifecycle](architecture.md#sandbox-lifecycle) and
 [Network boundaries](architecture.md#network-boundaries).
-
-## Remote access
-
-Services bind to loopback by default. For a remote server, the simplest and
-safest access method is an SSH tunnel:
-
-```bash
-ssh -N -L 9001:127.0.0.1:9001 user@server
-```
-
-Keep the command running and open <http://localhost:9001> on the local machine.
-No listener or origin setting needs to change for this method.
-
-For direct access over a trusted LAN, pass the matching HTTP URL and one exact
-private address to `--public-url` and `--bind-address`. Do not use `0.0.0.0` or
-`::`; the launcher rejects wildcard bindings. Native deployments must list the
-exact host and browser origin in `.env.launch.local`.
-
-Internet-facing access requires HTTPS, a trusted reverse proxy, explicit host
-and origin allowlists, firewall policy, and production secret management. Use
-the [production deployment process](../DEPLOY.md) instead of modifying the local
-stack for this purpose.
 
 ## Updating a source installation
 

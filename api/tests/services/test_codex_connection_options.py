@@ -122,8 +122,11 @@ def test_bound_chat_model_replaces_only_the_catalog_default():
     )
 
     assert rebound.default_model_id == "codex:account:gpt"
-    assert [model.id for model in rebound.models] == ["codex:account:gpt"]
-    assert [model.is_default for model in rebound.models] == [True]
+    assert [model.id for model in rebound.models] == [
+        "codex:default",
+        "codex:account:gpt",
+    ]
+    assert [model.is_default for model in rebound.models] == [False, True]
     # The helper returns copies; a per-Chat projection cannot mutate the
     # process-shared catalog used by another Chat.
     assert capabilities.default_model_id == "codex:default"
@@ -158,8 +161,10 @@ def test_bound_chat_does_not_fall_back_to_another_api_when_its_model_is_missing(
         },
     )
 
-    assert rebound.authenticated is False
-    assert rebound.models == []
+    assert rebound.authenticated is True
+    assert [model.id for model in rebound.models] == [
+        "codex:credential:22222222-2222-4222-8222-222222222222"
+    ]
     assert rebound.default_model_id is None
     assert rebound.error_code == "runtime_model_unavailable"
 

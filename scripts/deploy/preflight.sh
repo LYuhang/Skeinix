@@ -34,9 +34,52 @@ require_command docker
 require_command curl
 require_command openssl
 require_command awk
+require_command df
 
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 plugin is unavailable"
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable to the current user"
+
+# The complete stack includes an Agent sandbox, document conversion, diagram
+# export, databases, and background workers. Check the resources assigned to
+# the Docker engine rather than the host totals so Docker Desktop limits are
+# accounted for. An 8 GiB allocation commonly reports about 7.5 GiB after VM
+# reservation, which is the supported lower bound used here.
+minimum_cpu_count=4
+minimum_memory_bytes=8053063680
+minimum_disk_kib=20971520
+docker_cpu_count="$(docker info --format '{{.NCPU}}')"
+docker_memory_bytes="$(docker info --format '{{.MemTotal}}')"
+repository_free_kib="$(df -Pk "$REPO_ROOT" | awk 'NR == 2 { print $4 }')"
+
+[[ "$docker_cpu_count" =~ ^[0-9]+$ ]] || fail "Docker returned an invalid CPU count"
+[[ "$docker_memory_bytes" =~ ^[0-9]+$ ]] || fail "Docker returned an invalid memory limit"
+[[ "$repository_free_kib" =~ ^[0-9]+$ ]] || fail "unable to determine free repository disk space"
+
+resource_failures=()
+if (( docker_cpu_count < minimum_cpu_count )); then
+  resource_failures+=("Docker has ${docker_cpu_count} CPU(s); at least ${minimum_cpu_count} are required")
+fi
+if (( docker_memory_bytes < minimum_memory_bytes )); then
+  resource_failures+=("Docker has $((docker_memory_bytes / 1024 / 1024)) MiB memory; an 8 GiB allocation is required")
+fi
+if (( repository_free_kib < minimum_disk_kib )); then
+  resource_failures+=("the repository filesystem has $((repository_free_kib / 1024 / 1024)) GiB free; at least 20 GiB is required")
+fi
+
+allow_unsupported_resources="${SKEINIX_ALLOW_UNSUPPORTED_RESOURCES:-false}"
+if (( ${#resource_failures[@]} > 0 )); then
+  for resource_failure in "${resource_failures[@]}"; do
+    echo "RESOURCE ERROR: $resource_failure" >&2
+  done
+  case "${allow_unsupported_resources,,}" in
+    1|true|yes)
+      echo "WARNING: continuing with unsupported resources because SKEINIX_ALLOW_UNSUPPORTED_RESOURCES is enabled" >&2
+      ;;
+    *)
+      fail "resource preflight failed; see docs/installation.md or explicitly opt into an unsupported test run"
+      ;;
+  esac
+fi
 
 [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE does not exist; run scripts/deploy/local_server.sh init"
 chmod 600 "$ENV_FILE"
@@ -80,6 +123,9 @@ VIBECANVAS_ENV_FILE="$ENV_FILE" \
   docker compose --env-file "$ENV_FILE" config --quiet
 
 echo "preflight=pass"
+echo "docker_cpu_count=$docker_cpu_count"
+echo "docker_memory_mib=$((docker_memory_bytes / 1024 / 1024))"
+echo "repository_free_gib=$((repository_free_kib / 1024 / 1024))"
 echo "env_file=$ENV_FILE"
 echo "bind_address=$bind_address"
 echo "internal_bind_address=$internal_bind_address"

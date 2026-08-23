@@ -19,6 +19,7 @@ import struct
 
 from vibecanvas_api.services.sandbox.egress_broker import (
     EgressBroker,
+    _open_validated_connection,
     _resolve_public_addresses,
 )
 
@@ -223,6 +224,26 @@ async def test_trusted_fake_ip_dns_requires_a_hostname(monkeypatch):
     assert await _resolve_public_addresses(
         "198.18.0.7", 443, (fake_network,)
     ) == ()
+
+
+async def test_validated_connection_retries_a_transient_dial_failure(monkeypatch):
+    attempts: list[tuple[str, int]] = []
+    expected = (object(), object())
+
+    async def connect(host: str, port: int):
+        attempts.append((host, port))
+        if len(attempts) < 3:
+            raise OSError("transient proxy dial failure")
+        return expected
+
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    monkeypatch.setattr(asyncio, "sleep", no_delay)
+
+    assert await _open_validated_connection(("198.18.0.36",), 443) == expected
+    assert attempts == [("198.18.0.36", 443)] * 3
 
 
 async def test_suffix_match(tmp_path):

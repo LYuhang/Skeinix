@@ -1,5 +1,5 @@
 """Async tenant ContextVar — bound by ``resolve_deployment_and_bind_tenant``
-for external (api / webhook / cron) flows.
+for external API and webhook Deployment flows.
 
 The user-request path uses the explicit ``current_user`` + ``tenant_db`` DI
 (JWT → request.state → session-scoped GUC); this is the deployment-side
@@ -43,7 +43,7 @@ tenant_id_var: ContextVar[Optional[UUID]] = ContextVar(
 async def session_scope_admin() -> AsyncIterator[AsyncSession]:
     """Admin-role async session — RLS-bypassing. ONLY for system code that
     needs to look up rows before the tenant context is known (deployment
-    slug / api_key resolution; cross-tenant cron sweeps).
+    slug / api_key resolution and bounded platform maintenance).
 
     Mirrors ``db.py:session_scope`` (commit-on-success, rollback-on-
     exception) but binds to the restricted maintenance connection
@@ -55,7 +55,7 @@ async def session_scope_admin() -> AsyncIterator[AsyncSession]:
     tenant-scoped so RLS applies.
 
     FIX-beat (loop-bound engine): the celery-BEAT periodic tasks
-    (cron dispatcher, invoke-counter flush, concurrency reconciler) call
+    (invoke-counter flush and concurrency reconciler) call
     this inside ``asyncio.run`` once per tick, in a single long-lived
     worker process. The old implementation bound the *process-global*
     pooled ``get_admin_engine()`` to tick #1's loop, which ``asyncio.run``

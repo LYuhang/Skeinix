@@ -84,7 +84,6 @@ ACTION_RELATIONS: Mapping[ResourceType, Mapping[Action, str]] = {
         Action.VIEW: "can_view",
         Action.UPDATE: "can_update",
         Action.DELETE: "can_delete",
-        Action.MANAGE_ACCESS: "can_manage_access",
         Action.USE: "can_use",
         Action.PUBLISH: "can_publish",
     },
@@ -116,7 +115,6 @@ ACTION_RELATIONS: Mapping[ResourceType, Mapping[Action, str]] = {
         Action.VIEW: "can_view",
         Action.UPDATE: "can_update",
         Action.DELETE: "can_delete",
-        Action.MANAGE_ACCESS: "can_manage_access",
         Action.MOUNT: "can_mount",
     },
     ResourceType.KNOWLEDGE_BASE: {
@@ -132,7 +130,6 @@ ACTION_RELATIONS: Mapping[ResourceType, Mapping[Action, str]] = {
         Action.VIEW: "can_view",
         Action.UPDATE: "can_update",
         Action.DELETE: "can_delete",
-        Action.MANAGE_ACCESS: "can_manage_access",
         Action.USE: "can_use",
         Action.PUBLISH: "can_publish",
     },
@@ -161,12 +158,9 @@ ACTION_RELATIONS: Mapping[ResourceType, Mapping[Action, str]] = {
 
 SHAREABLE_RESOURCE_TYPES = frozenset({
     ResourceType.WORKFLOW,
-    ResourceType.TEMPLATE,
     ResourceType.TASK,
     ResourceType.DEPLOYMENT,
-    ResourceType.STORAGE_ROOT,
     ResourceType.KNOWLEDGE_BASE,
-    ResourceType.SKILL_INSTALLATION,
 })
 
 
@@ -205,16 +199,6 @@ SHARE_RELATION_SUBJECTS: Mapping[
     }
     for resource_type in SHAREABLE_RESOURCE_TYPES
 }
-
-# Template has no operator preset in the model.
-SHARE_RELATION_SUBJECTS[ResourceType.TEMPLATE] = {
-    relation: subjects
-    for relation, subjects in SHARE_RELATION_SUBJECTS[
-        ResourceType.TEMPLATE
-    ].items()
-    if relation != "operator"
-}
-
 
 ROLE_CAPABILITIES: Mapping[
     ResourceType,
@@ -266,17 +250,6 @@ ROLE_CAPABILITIES: Mapping[
         "manager": frozenset(ACTION_RELATIONS[ResourceType.WORKFLOW]),
     },
     ResourceType.TEMPLATE: {
-        "viewer": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.USE,
-        }),
-        "editor": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.UPDATE,
-            Action.USE,
-        }),
         "manager": frozenset(ACTION_RELATIONS[ResourceType.TEMPLATE]),
     },
     ResourceType.TASK: {
@@ -324,20 +297,6 @@ ROLE_CAPABILITIES: Mapping[
         "manager": frozenset(ACTION_RELATIONS[ResourceType.DEPLOYMENT]),
     },
     ResourceType.STORAGE_ROOT: {
-        "viewer": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-        }),
-        "editor": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.UPDATE,
-        }),
-        "operator": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.MOUNT,
-        }),
         "manager": frozenset(ACTION_RELATIONS[ResourceType.STORAGE_ROOT]),
     },
     ResourceType.KNOWLEDGE_BASE: {
@@ -358,20 +317,6 @@ ROLE_CAPABILITIES: Mapping[
         "manager": frozenset(ACTION_RELATIONS[ResourceType.KNOWLEDGE_BASE]),
     },
     ResourceType.SKILL_INSTALLATION: {
-        "viewer": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-        }),
-        "editor": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.UPDATE,
-        }),
-        "operator": frozenset({
-            Action.VIEW_METADATA,
-            Action.VIEW,
-            Action.USE,
-        }),
         "manager": frozenset(
             ACTION_RELATIONS[ResourceType.SKILL_INSTALLATION]
         ),

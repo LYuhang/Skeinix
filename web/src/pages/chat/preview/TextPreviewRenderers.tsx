@@ -1,14 +1,31 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Columns2, Eye, RotateCcw, Save } from 'lucide-react';
+import {
+  isValidElement,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react';
+import { Code2, Columns2, Eye, LogOut, RotateCcw, Save } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog';
+import { CopyButton } from '@/components/ui/copy-button';
 import { Textarea } from '@/components/ui/textarea';
 import { PreviewApiError, createPreviewResourceSession } from '@/lib/api/previews';
 import { useWritePreviewFile } from '@/lib/api/queries/previews';
-import type { PreviewDescriptorV1, PreviewErrorInfo } from '@/lib/preview/protocol';
+import type {
+  PreviewDescriptorV1,
+  PreviewErrorInfo,
+  PreviewResourceSessionV1,
+} from '@/lib/preview/protocol';
 import { agentFilePathFromHref } from '@/lib/preview/protocol';
 import {
   isPreviewSandboxLoaderMessage,
@@ -16,10 +33,12 @@ import {
   PREVIEW_SANDBOX_LOADER_PATH,
 } from '@/lib/preview/sandbox-loader';
 import { cn } from '@/lib/utils';
+import { useShiki } from '@/lib/use-shiki';
 import {
   buildFilePreviewHtmlDocument,
   FILE_PREVIEW_CHANNEL,
 } from './html-preview-document';
+import { resolveMarkdownImageUrl } from './markdown-preview-resource';
 import { PreviewErrorState } from './PreviewErrorState';
 import { resolveCodePreviewLanguage } from './code-preview-language';
 import type { PreviewRendererProps } from './renderer-types';
@@ -56,6 +75,7 @@ function HtmlDocument({
   html: string;
   onOpenFile?: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [documentHtml, setDocumentHtml] = useState<string | null>(null);
   const [documentRevision, setDocumentRevision] = useState(0);
@@ -106,7 +126,7 @@ function HtmlDocument({
   }, [loadSandboxDocument, onOpenFile]);
 
   if (error) return <PreviewErrorState descriptor={descriptor} error={error} />;
-  if (!documentHtml) return <div className="p-4 text-sm text-muted-foreground">Loading HTML preview…</div>;
+  if (!documentHtml) return <div className="p-4 text-sm text-muted-foreground">{t('preview.html.loading', 'Loading HTML preview…')}</div>;
   return (
     <iframe
       key={`${descriptor.revision}:${documentRevision}`}
@@ -133,9 +153,7 @@ function RenderedText({
 }) {
   if (kind === 'markdown') {
     return (
-      <article className="prose prose-sm max-w-none p-5 dark:prose-invert">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
-      </article>
+      <MarkdownDocument descriptor={descriptor} value={value} onOpenFile={onOpenFile} />
     );
   }
   if (kind === 'html') {
@@ -144,27 +162,215 @@ function RenderedText({
   return <pre className="min-h-full whitespace-pre-wrap break-words p-4 font-mono text-xs">{value}</pre>;
 }
 
+function markdownNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(markdownNodeText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return markdownNodeText(node.props.children);
+  }
+  return '';
+}
+
+function markdownHeadingSlug(children: ReactNode): string {
+  return markdownNodeText(children)
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+type MarkdownHeadingProps = ComponentPropsWithoutRef<'h1'> & { node?: unknown };
+type MarkdownAnchorProps = ComponentPropsWithoutRef<'a'> & { node?: unknown };
+type MarkdownImageProps = ComponentPropsWithoutRef<'img'> & { node?: unknown };
+type MarkdownCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown };
+type MarkdownPreProps = ComponentPropsWithoutRef<'pre'> & { node?: unknown };
+
+function MarkdownCodePanel({ children }: Pick<MarkdownPreProps, 'children'>) {
+  const codeElement = isValidElement<MarkdownCodeProps>(children) ? children : null;
+  const code = markdownNodeText(codeElement?.props.children ?? children).replace(/\n$/, '');
+  const language = /(?:^|\s)language-([\w+-]+)/.exec(codeElement?.props.className ?? '')?.[1]
+    ?? 'text';
+  const highlighted = useShiki(code, language);
+
+  return (
+    <div className="markdown-document-code-panel" data-language={language}>
+      <div className="markdown-document-code-header">
+        <span>{language === 'text' ? 'Plain text' : language}</span>
+        <CopyButton value={code} />
+      </div>
+      {highlighted ? (
+        <div
+          className="markdown-document-code-highlight"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
+      ) : (
+        <pre><code>{code}</code></pre>
+      )}
+    </div>
+  );
+}
+
+function MarkdownDocument({
+  descriptor,
+  value,
+  onOpenFile,
+}: {
+  descriptor: PreviewDescriptorV1;
+  value: string;
+  onOpenFile?: (path: string) => void;
+}) {
+  const articleRef = useRef<HTMLElement>(null);
+  const resourceSessionKey = `${descriptor.revision}:${JSON.stringify(descriptor.fileRef)}`;
+  const [resourceSessionState, setResourceSessionState] = useState<{
+    key: string;
+    session: PreviewResourceSessionV1;
+  } | null>(null);
+  const resourceSession = resourceSessionState?.key === resourceSessionKey
+    ? resourceSessionState.session
+    : null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void createPreviewResourceSession(descriptor.fileRef, controller.signal).then(
+      (session) => setResourceSessionState({ key: resourceSessionKey, session }),
+      () => undefined,
+    );
+    return () => controller.abort();
+  }, [descriptor.fileRef, resourceSessionKey]);
+
+  const slugCounts = new Map<string, number>();
+  const renderHeading = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => (
+    { children, node: _node, ...props }: MarkdownHeadingProps
+  ) => {
+    void _node;
+    const base = markdownHeadingSlug(children) || 'section';
+    const seen = slugCounts.get(base) ?? 0;
+    slugCounts.set(base, seen + 1);
+    const id = seen === 0 ? base : `${base}-${seen}`;
+    return <Tag {...props} id={id}>{children}</Tag>;
+  };
+  const renderLink = ({ children, href, node: _node, ...props }: MarkdownAnchorProps) => {
+    void _node;
+    const targetPath = href ? agentFilePathFromHref(href) : null;
+    if (href?.startsWith('#')) {
+      return (
+        <a
+          {...props}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            let id = href.slice(1);
+            try {
+              id = decodeURIComponent(id);
+            } catch {
+              return;
+            }
+            const safeId = id.replace(/["\\]/g, '\\$&');
+            articleRef.current
+              ?.querySelector<HTMLElement>(`[id="${safeId}"]`)
+              ?.scrollIntoView({ block: 'start' });
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
+    if (targetPath) {
+      return (
+        <a
+          {...props}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            onOpenFile?.(targetPath);
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
+    const external = href?.startsWith('https://') || href?.startsWith('http://');
+    return (
+      <a
+        {...props}
+        href={href}
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noopener noreferrer' : undefined}
+      >
+        {children}
+      </a>
+    );
+  };
+  const renderImage = ({ src, node: _node, ...props }: MarkdownImageProps) => {
+    void _node;
+    const resolved = src && resourceSession
+      ? resolveMarkdownImageUrl(src, resourceSession)
+      : src && (/^https?:\/\//i.test(src) || /^data:image\//i.test(src))
+        ? src
+        : null;
+    return <img {...props} src={resolved ?? undefined} />;
+  };
+
+  return (
+    <article ref={articleRef} className="markdown-document" data-role="markdown-document">
+      <div className="markdown-document-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: renderHeading('h1'),
+          h2: renderHeading('h2'),
+          h3: renderHeading('h3'),
+          h4: renderHeading('h4'),
+          h5: renderHeading('h5'),
+          h6: renderHeading('h6'),
+          a: renderLink,
+          img: renderImage,
+          code: ({ children, className, node: _node, ...props }: MarkdownCodeProps) => {
+            void _node;
+            return <code className={cn('markdown-document-code-inline', className)} {...props}>{children}</code>;
+          },
+          pre: ({ children, node: _node }: MarkdownPreProps) => {
+            void _node;
+            return <MarkdownCodePanel>{children}</MarkdownCodePanel>;
+          },
+          table: ({ children }) => (
+            <div className="markdown-document-table-wrap"><table>{children}</table></div>
+          ),
+        }}
+      >
+        {value}
+      </ReactMarkdown>
+      </div>
+    </article>
+  );
+}
+
 function TextDocumentRenderer({
   descriptor,
   onDirtyChange,
   onOpenFile,
   kind,
 }: PreviewRendererProps & { kind: TextKind }) {
+  const { t } = useTranslation();
   const write = useWritePreviewFile(descriptor.fileRef);
   const [source, setSource] = useState('');
   const [savedSource, setSavedSource] = useState('');
   const [mode, setMode] = useState<DisplayMode>(kind === 'text' ? 'source' : 'preview');
   const [editing, setEditing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadedRevision, setLoadedRevision] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<PreviewErrorInfo | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const [confirmExitEditing, setConfirmExitEditing] = useState(false);
+  const [reloadSequence, setReloadSequence] = useState(0);
   const editRevisionRef = useRef(descriptor.revision);
   const [editRevision, setEditRevision] = useState(descriptor.revision);
   const codeLanguage = kind === 'text' ? resolveCodePreviewLanguage(descriptor) : null;
   const dirty = editing && source !== savedSource;
-  const conflict = saveConflict
-    || (dirty && descriptor.revision !== editRevision);
+  const conflict = saveConflict || (dirty && descriptor.revision !== editRevision);
   const dirtyRef = useRef(dirty);
 
   useEffect(() => {
@@ -174,9 +380,7 @@ function TextDocumentRenderer({
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   useEffect(() => {
-    if (dirtyRef.current && descriptor.revision !== editRevisionRef.current) {
-      return;
-    }
+    if (dirtyRef.current && descriptor.revision !== editRevisionRef.current) return;
     const controller = new AbortController();
     void loadText(descriptor, controller.signal).then(
       (value) => {
@@ -193,10 +397,10 @@ function TextDocumentRenderer({
         }
       },
     ).finally(() => {
-      if (!controller.signal.aborted) setLoading(false);
+      if (!controller.signal.aborted) setLoadedRevision(descriptor.revision);
     });
     return () => controller.abort();
-  }, [descriptor]);
+  }, [descriptor, reloadSequence]);
 
   const save = useCallback(async (overwrite = false) => {
     setSaveConflict(false);
@@ -218,24 +422,43 @@ function TextDocumentRenderer({
   }, [descriptor.contentType, descriptor.revision, source, write]);
 
   const reload = useCallback(() => {
+    dirtyRef.current = false;
     setEditing(false);
     setSaveConflict(false);
     onDirtyChange(false);
-    setSource(typeof descriptor.content?.inlineText === 'string' ? descriptor.content.inlineText : '');
-    setSavedSource(typeof descriptor.content?.inlineText === 'string' ? descriptor.content.inlineText : '');
-    editRevisionRef.current = descriptor.revision;
-    setEditRevision(descriptor.revision);
-  }, [descriptor, onDirtyChange]);
+    setLoadedRevision(null);
+    setReloadSequence((value) => value + 1);
+  }, [onDirtyChange]);
+
+  const discardAndExit = useCallback(() => {
+    setSource(savedSource);
+    setEditing(false);
+    setSaveConflict(false);
+    setConfirmExitEditing(false);
+    onDirtyChange(false);
+  }, [onDirtyChange, savedSource]);
+
+  const requestExitEditing = useCallback(() => {
+    if (dirty) {
+      setConfirmExitEditing(true);
+      return;
+    }
+    setEditing(false);
+    setSaveConflict(false);
+    onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
 
   const modes = useMemo(() => kind === 'text'
-    ? [{ id: 'source' as const, label: 'Source', Icon: Code2 }]
+    ? [{ id: 'source' as const, label: t('preview.mode.source', 'Source'), Icon: Code2 }]
     : [
-        { id: 'source' as const, label: 'Source', Icon: Code2 },
-        { id: 'preview' as const, label: 'Preview', Icon: Eye },
-        { id: 'split' as const, label: 'Split', Icon: Columns2 },
-      ], [kind]);
+        { id: 'source' as const, label: t('preview.mode.source', 'Source'), Icon: Code2 },
+        { id: 'preview' as const, label: t('preview.mode.preview', 'Preview'), Icon: Eye },
+        { id: 'split' as const, label: t('preview.mode.split', 'Split'), Icon: Columns2 },
+      ], [kind, t]);
 
-  if (loading) return <div className="p-4 text-sm text-muted-foreground">Loading text…</div>;
+  if (loadedRevision !== descriptor.revision && !dirty && !conflict) {
+    return <div className="p-4 text-sm text-muted-foreground">{t('preview.text.loading', 'Loading text…')}</div>;
+  }
   if (loadError) return <PreviewErrorState descriptor={descriptor} error={loadError} />;
 
   return (
@@ -255,7 +478,7 @@ function TextDocumentRenderer({
         ))}
         <div className="flex-1" />
         {descriptor.text?.mixedNewlines ? (
-          <span className="text-xs text-amber-600">Mixed newlines will be normalized</span>
+          <span className="text-xs text-amber-600">{t('preview.text.mixedNewlines', 'Mixed newlines will be normalized')}</span>
         ) : null}
         {descriptor.capabilities.edit && !editing ? (
           <Button size="sm" variant="outline" onClick={() => {
@@ -264,29 +487,36 @@ function TextDocumentRenderer({
             setEditing(true);
             setMode('source');
           }}>
-            Edit
+            {t('preview.action.edit', 'Edit')}
           </Button>
         ) : null}
         {editing ? (
-          <Button size="sm" disabled={!dirty || write.isPending} onClick={() => void save()}>
-            <Save className="mr-1 h-3.5 w-3.5" />
-            Save
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" onClick={requestExitEditing}>
+              <LogOut className="mr-1 h-3.5 w-3.5" />
+              {t('preview.action.exitEditing', 'Exit editing')}
+            </Button>
+            <Button size="sm" disabled={!dirty || write.isPending} onClick={() => void save()}>
+              <Save className="mr-1 h-3.5 w-3.5" />
+              {t('preview.action.save', 'Save')}
+            </Button>
+          </div>
         ) : null}
       </div>
       {conflict ? (
         <div role="alert" className="flex items-center gap-2 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-          <span className="min-w-0 flex-1">This file changed after editing began. Reload it or explicitly overwrite the latest revision.</span>
+          <span className="min-w-0 flex-1">
+            {t(
+              'preview.conflict.description',
+              'This file changed after editing began. Reload it or explicitly overwrite the latest revision.',
+            )}
+          </span>
           <Button size="sm" variant="outline" onClick={reload}>
             <RotateCcw className="mr-1 h-3.5 w-3.5" />
-            Reload
+            {t('preview.conflict.reload', 'Reload')}
           </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => setConfirmOverwrite(true)}
-          >
-            Overwrite
+          <Button size="sm" variant="destructive" onClick={() => setConfirmOverwrite(true)}>
+            {t('preview.conflict.overwrite', 'Overwrite')}
           </Button>
         </div>
       ) : null}
@@ -339,12 +569,27 @@ function TextDocumentRenderer({
         ) : null}
       </div>
       <ConfirmationDialog
+        open={confirmExitEditing}
+        onOpenChange={setConfirmExitEditing}
+        title={t('preview.exitEditing.title', 'Discard unsaved changes?')}
+        description={t(
+          'preview.exitEditing.description',
+          'Your edits have not been saved. Discard them and leave editing mode?',
+        )}
+        cancelLabel={t('preview.exitEditing.keepEditing', 'Keep editing')}
+        confirmLabel={t('preview.exitEditing.discard', 'Discard and exit')}
+        onConfirm={discardAndExit}
+      />
+      <ConfirmationDialog
         open={confirmOverwrite}
         onOpenChange={setConfirmOverwrite}
-        title="Overwrite"
-        description="Overwrite the latest file version with your current edits?"
-        cancelLabel="Cancel"
-        confirmLabel="Overwrite"
+        title={t('preview.conflict.overwriteTitle', 'Overwrite latest version?')}
+        description={t(
+          'preview.conflict.overwriteDescription',
+          'Overwrite the latest file version with your current edits?',
+        )}
+        cancelLabel={t('common.cancel', 'Cancel')}
+        confirmLabel={t('preview.conflict.overwrite', 'Overwrite')}
         pending={write.isPending}
         onConfirm={() => {
           setConfirmOverwrite(false);

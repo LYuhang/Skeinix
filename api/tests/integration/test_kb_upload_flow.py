@@ -72,6 +72,14 @@ async def _seed_tenant_and_user(pg_engine, tenant_id, user_id) -> None:
             {"u": user_id, "t": tenant_id,
              "e": f"kb-upflow-{uuid.uuid4().hex[:6]}@example.com"},
         )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"test-{tenant_id.hex}"},
+        )
 
 
 class _StubCtx:

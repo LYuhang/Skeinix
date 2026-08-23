@@ -1,0 +1,52 @@
+[
+  {
+    "file": "stream-message.jsonl",
+    "event_types": ["runtime.started", "message.start", "message.delta", "message.end", "runtime.completed"],
+    "product_event_types": ["CHAT_EVENT", "CHAT_EVENT", "CHAT_EVENT"],
+    "terminal_type": "runtime.completed"
+  },
+  {
+    "file": "tool-success.jsonl",
+    "event_types": ["runtime.started", "tool.start", "tool.update", "tool.end", "runtime.completed"],
+    "product_event_types": ["CHAT_EVENT", "CHAT_EVENT", "CHAT_EVENT"],
+    "terminal_type": "runtime.completed"
+  },
+  {
+    "file": "approval.jsonl",
+    "event_types": ["runtime.started", "approval.required", "approval.resolved", "runtime.completed"],
+    "product_event_types": ["HITL_REQUIRED", "HITL_RESOLVED"],
+    "terminal_type": "runtime.completed"
+  },
+  {
+    "file": "interaction.jsonl",
+    "event_types": ["runtime.started", "interaction.required", "interaction.resolved", "runtime.completed"],
+    "product_event_types": ["INTERACTION_REQUIRED", "INTERACTION_RESOLVED"],
+    "terminal_type": "runtime.completed"
+  },
+  {
+    "file": "artifact-usage-checkpoint.jsonl",
+    "event_types": ["runtime.started", "artifact", "usage", "checkpoint", "runtime.completed"],
+    "product_event_types": ["ARTIFACT", "USAGE"],
+    "terminal_type": "runtime.completed"
+  },
+  {
+    "file": "cancel.jsonl",
+    "event_types": ["runtime.started", "runtime.failed"],
+    "product_event_types": [],
+    "terminal_type": "runtime.failed",
+    "failure_message": "The turn was cancelled."
+  },
+  {
+    "file": "sanitized-failure.jsonl",
+    "event_types": ["runtime.started", "runtime.failed"],
+    "product_event_types": [],
+    "terminal_type": "runtime.failed",
+    "failure_message": "The Runtime could not complete this turn."
+  },
+  {
+    "file": "resume.jsonl",
+    "event_types": ["runtime.started", "checkpoint", "message.start", "message.delta", "message.end", "runtime.completed"],
+    "product_event_types": ["CHAT_EVENT", "CHAT_EVENT", "CHAT_EVENT"],
+    "terminal_type": "runtime.completed"
+  }
+]

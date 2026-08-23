@@ -29,13 +29,6 @@ const ChatWorkflowViewer = lazy(() =>
 const BackgroundJobsPreview = lazy(() =>
   import('./preview/BackgroundJobsPreview').then((module) => ({ default: module.BackgroundJobsPreview })),
 );
-const ExecutionPlanPreview = lazy(() =>
-  import('./preview/ExecutionPlanPreview').then((module) => ({ default: module.ExecutionPlanPreview })),
-);
-const DiagramDraftPreview = lazy(() =>
-  import('./preview/DiagramDraftPreview').then((module) => ({ default: module.DiagramDraftPreview })),
-);
-
 export interface ChatPreviewPaneProps {
   scopeId: string;
   open: boolean;
@@ -66,6 +59,10 @@ export function ChatPreviewPane({
   const { t } = useTranslation();
   const [resourcesOpen, setResourcesOpen] = useState(false);
   const active = items.find((item) => item.id === activeId) ?? items[0] ?? null;
+  const activeInteractive = active?.resource.kind === 'interactive'
+    ? active as Extract<ChatPreviewItem, { artifact: unknown }>
+    : null;
+  const isUrlPreview = activeInteractive?.artifact.component_type === 'url_preview';
   const fileViewerRef = useRef<ChatFilePreviewHandle>(null);
   const runWithActiveLeaveGuard = useCallback((action: () => void) => {
     if (active?.resource.kind === 'file' && fileViewerRef.current) {
@@ -74,6 +71,10 @@ export function ChatPreviewPane({
     }
     action();
   }, [active]);
+  const openFileWithActiveLeaveGuard = useCallback((path: string) => {
+    if (!onOpenInteractiveFile) return;
+    runWithActiveLeaveGuard(() => onOpenInteractiveFile(path));
+  }, [onOpenInteractiveFile, runWithActiveLeaveGuard]);
 
   if (!open) return null;
 
@@ -82,14 +83,10 @@ export function ChatPreviewPane({
     ? t('chat.preview.type.workflow', 'Workflow')
     : active?.resource.kind === 'file'
       ? t('chat.preview.type.file', 'File')
-      : active?.resource.kind === 'diagram_draft'
-        ? t('chat.preview.type.diagramDraft', 'Diagram draft')
       : active?.resource.kind === 'interactive'
         ? t('chat.preview.type.interactive', 'Interactive')
         : active?.resource.kind === 'background_jobs'
           ? t('chat.preview.type.backgroundJobs', 'Background jobs')
-          : active?.resource.kind === 'execution_plan'
-            ? t('chat.preview.type.executionPlan', 'Execution plan')
         : t('chat.preview.type.empty', 'No resource');
 
   return (
@@ -210,7 +207,10 @@ export function ChatPreviewPane({
           })}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1 bg-surface-work">
+      <div
+        className="min-h-0 flex-1 overflow-hidden bg-surface-work"
+        data-role="chat-preview-content"
+      >
         {!active ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
             <MessageSquare className="h-6 w-6" />
@@ -225,36 +225,28 @@ export function ChatPreviewPane({
             <ChatFilePreview
               ref={fileViewerRef}
               fileRef={active.resource.fileRef}
-              onOpenFile={onOpenInteractiveFile}
+              onOpenFile={openFileWithActiveLeaveGuard}
             />
-          </Suspense>
-        ) : active.resource.kind === 'diagram_draft' ? (
-          <Suspense fallback={<AsyncState kind="loading" title={t('chat.preview.loadingDiagramDraft', 'Loading diagram draft…')} />}>
-            <DiagramDraftPreview resource={active.resource} />
           </Suspense>
         ) : active.resource.kind === 'interactive' ? (
           <div className="flex h-full flex-col bg-surface-work">
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-              <div className="overflow-hidden rounded-lg border border-edge-subtle bg-surface-raised">
+            <div className={cn('min-h-0 flex-1', isUrlPreview ? 'overflow-hidden' : 'overflow-auto p-4')}>
+              <div className={cn(
+                'overflow-hidden bg-surface-raised',
+                isUrlPreview ? 'h-full min-h-0' : 'rounded-lg border border-edge-subtle',
+              )}>
                 <InteractiveArtifactPreview
-                  artifact={(active as Extract<ChatPreviewItem, { artifact: unknown }>).artifact}
-                  maxHeight="calc(100vh - 12rem)"
+                  artifact={activeInteractive!.artifact}
+                  maxHeight={isUrlPreview ? undefined : 'calc(100vh - 12rem)'}
+                  fillAvailableHeight={isUrlPreview}
                   onSubmitAsNewMessage={onSubmitInteractiveAsNewMessage}
-                  onOpenFilePreview={onOpenInteractiveFile}
+                  onOpenFilePreview={openFileWithActiveLeaveGuard}
                 />
               </div>
             </div>
           </div>
-        ) : active.resource.kind === 'execution_plan' ? (
-          <Suspense fallback={<AsyncState kind="loading" title="Loading execution plan…" />}>
-            <ExecutionPlanPreview
-              planId={active.resource.planId}
-              runId={active.resource.runId}
-              revision={active.resource.revision}
-            />
-          </Suspense>
         ) : (
-          <Suspense fallback={<AsyncState kind="loading" title="Loading background tasks…" />}>
+          <Suspense fallback={<AsyncState kind="loading" title={t('chat.preview.loadingBackgroundTasks', 'Loading background tasks…')} />}>
             <BackgroundJobsPreview
               scopeId={scopeId}
               chatId={active.resource.chatId}

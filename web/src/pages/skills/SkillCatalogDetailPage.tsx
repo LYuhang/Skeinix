@@ -5,6 +5,8 @@ import { ArrowLeft, BookOpenText, ExternalLink, ShieldCheck } from 'lucide-react
 
 import { Markdown } from '@/components/agent-sidebar/Markdown';
 import { EntityDetailShell } from '@/components/layout/entity-detail-shell';
+import { DetailSummary } from '@/components/layout/detail-summary';
+import { SectionBlock } from '@/components/layout/section-block';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -79,20 +81,29 @@ export function SkillCatalogDetailPage() {
             <TabsTrigger value="requirements">{t('skills.detail.tab.requirements', 'Requirements')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-3xl pr-2">
-            <h2 className="text-sm font-semibold">{t('skills.detail.description', 'Description')}</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">{skill.description}</p>
-            <dl className="mt-6 grid grid-cols-1 gap-x-8 gap-y-4 border-t pt-5 sm:grid-cols-2">
-              <Info label={t('skills.detail.source', 'Source')} value={skill.source_label} />
-              <Info label={t('skills.detail.version', 'Version')} value={`v${skill.version}`} />
-              <Info label={t('skills.detail.package_id', 'Package ID')} value={skill.source_id} mono />
-              <Info label={t('skills.detail.revision', 'Revision')} value={skill.revision.slice(0, 12)} mono />
-            </dl>
+            <SectionBlock title={t('skills.detail.about', 'About this Skill')}>
+              <p className="text-sm leading-6 text-muted-foreground">{skill.description}</p>
+            </SectionBlock>
+            <SectionBlock className="mt-4" title={t('skills.detail.packageDetails', 'Package details')}>
+              <DetailSummary items={[
+                { label: t('skills.detail.source', 'Source'), value: skill.source_label },
+                { label: t('skills.detail.version', 'Version'), value: `v${skill.version}` },
+                { label: t('skills.detail.package_id', 'Package ID'), value: <code className="text-xs">{skill.source_id}</code> },
+                { label: t('skills.detail.revision', 'Revision'), value: <code className="text-xs">{skill.revision.slice(0, 12)}</code> },
+              ]} />
+            </SectionBlock>
           </TabsContent>
           <TabsContent value="instructions" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-4xl p-1"><Markdown className="text-sm leading-6">{skill.body ?? ''}</Markdown></TabsContent>
           <TabsContent value="files" className="mt-0 min-h-0 flex-1 overflow-hidden"><SkillFileBrowser persistKey={`${skill.source}:${skill.source_id}`} files={files} skillMd={skill.skill_md ?? ''} loadFile={loadFile} selectedPath={selectedFile} onSelectedPathChange={selectFileInUrl} labels={{ files: t('skills.detail.files.bundle', 'Package Files'), loading: t('skills.detail.files.loading', 'Loading File…'), failed: t('skills.detail.files.failed', 'Could Not Load File'), binary: t('skills.detail.files.binary', 'Binary File Preview Is Not Available.') }} /></TabsContent>
           <TabsContent value="requirements" className="page-scroll-region mt-0 min-h-0 flex-1 max-w-3xl space-y-5 pr-2">
-            <section><h2 className="text-sm font-semibold">{t('skills.tools_title', 'Allowed Tools')}</h2><ToolList tools={skill.allowed_tools} empty={t('skills.no_tools', 'No Tool Requirements Declared.')} /></section>
-            <div className="flex items-start gap-3 border-t border-edge-subtle pt-5"><ShieldCheck className="mt-0.5 h-5 w-5 text-state-success" /><div><div className="text-sm font-medium">{t('skills.detail.validation.title', 'SKILL.md Validated')}</div><p className="mt-1 text-sm text-muted-foreground">{t('skills.detail.validation.catalog', 'The catalog package contains valid name, description, and instruction metadata.')}</p></div></div>
+            <SectionBlock
+              title={t('skills.detail.validation.title', 'SKILL.md validated')}
+              description={t('skills.detail.validation.catalog', 'The catalog package contains valid name, description, and instruction metadata.')}
+              icon={<ShieldCheck className="size-4 text-state-success" aria-hidden="true" />}
+            >
+              <h3 className="text-xs font-medium uppercase tracking-[0.06em] text-content-tertiary">{t('skills.tools_title', 'Allowed tools')}</h3>
+              <ToolList tools={skill.allowed_tools} empty={t('skills.no_tools', 'No tool requirements declared.')} />
+            </SectionBlock>
           </TabsContent>
         </Tabs>
       </EntityDetailShell>
@@ -101,5 +112,4 @@ export function SkillCatalogDetailPage() {
   );
 }
 
-function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`mt-1 text-sm ${mono ? 'font-mono text-xs' : ''}`}>{value}</dd></div>; }
 function ToolList({ tools, empty }: { tools: string[]; empty: string }) { return tools.length ? <div className="mt-3 flex flex-wrap gap-2">{tools.map((tool) => <span key={tool} className="rounded bg-secondary px-2 py-1 font-mono text-xs text-secondary-foreground">{tool}</span>)}</div> : <p className="mt-2 text-sm text-muted-foreground">{empty}</p>; }

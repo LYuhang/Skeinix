@@ -18,13 +18,13 @@ def test_read_file_tool_resolvable():
 def test_tools_package_aggregates():
     """The single current composer exposes a non-empty deterministic surface."""
     from vibecanvas_api.agents.tools import build_tools
-    assert build_tools({"build"})
+    assert build_tools({"workflow"})
 
 
 def test_node_execute_is_platform_mcp_only():
     from vibecanvas_api.agents.tools import build_tools
     from vibecanvas_api.services.platform_mcp.run_tools import RUN_TOOLS
 
-    names = {t.name for t in build_tools({"build"})}
+    names = {t.name for t in build_tools({"workflow"})}
     assert {"node_execute", "run_workflow"}.isdisjoint(names)
     assert {"node_execute", "run_workflow"} <= {tool.name for tool in RUN_TOOLS}

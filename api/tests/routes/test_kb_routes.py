@@ -5,21 +5,21 @@ Strategy: handler-direct-call (mirrors ``test_mcp_servers_create.py`` +
 fixtures do not exist in this repo's conftest; this codebase consistently
 calls the route handler functions directly with a stub ``AuthContext``
 and a manually-opened ``session_scope(tenant_id=...)``. That tests the
-same body validation + DB ordering + dedup + size + parser-type paths
+same body validation, package-path identity, size, and MIME/parser paths
 without bringing up the auth stack.
 
-Coverage (4 cases — match plan §6.4):
+Coverage includes:
 
 1. ``test_create_and_list_kb`` — POST /kb + GET /kb round-trip writes
    and reads the same row.
-2. ``test_upload_file_dedup_409`` — second upload of the same content
-   hash to the same KB raises 409 ``kb_duplicate_content_hash``.
+2. ``test_upload_duplicate_content_as_distinct_files`` — identical bytes may
+   be present at distinct package paths.
 3. ``test_upload_too_large_413`` — payload > 50 MB raises 413
    ``kb_file_too_large``.
-4. ``test_unsupported_type_400`` — filename + MIME mismatch (or absent
-   in registry) raises 400 ``kb_unsupported_file_type``.
+4. ``test_unindexed_type_is_stored`` — files outside the parser registry are
+   retained as authoritative package content without a derived index.
 
-Cases 2-4 also patch ``celery_app.send_task`` and ``get_object_store``
+Upload cases also patch ``celery_app.send_task`` and ``get_object_store``
 so the test doesn't actually hit the broker / boto3 client.
 """
 from __future__ import annotations
@@ -37,9 +37,12 @@ from vibecanvas_api.authorization.types import Action, Decision
 from vibecanvas_api.routes.kb import (
     KbCreate,
     create_kb,
+    delete_file,
+    import_kb,
     list_kbs,
     upload_file,
 )
+from vibecanvas_api.storage.repo_kb import KbRepo
 from vibecanvas_api.storage.db import session_scope
 
 
@@ -62,6 +65,14 @@ async def _seed_tenant_and_user(pg_engine, tenant_id, user_id) -> None:
             ),
             {"u": user_id, "t": tenant_id,
              "e": f"kb-routes-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {"t": tenant_id, "u": user_id, "slug": f"test-{tenant_id.hex}"},
         )
 
 
@@ -167,15 +178,8 @@ async def test_create_and_list_kb(pg_engine):
 
 
 @pytest.mark.asyncio
-async def test_upload_file_dedup_409(pg_engine):
-    """Two uploads with the same content_hash → 409.
-
-    First upload succeeds (creates the row, writes to in-memory object
-    store, enqueues celery). Second hits the partial UNIQUE on
-    ``(kb_id, content_hash) WHERE deleted_at IS NULL`` → IntegrityError
-    → 409 ``kb_duplicate_content_hash`` with ``existing_file_name``
-    in the body.
-    """
+async def test_upload_duplicate_content_as_distinct_files(pg_engine):
+    """Package paths, rather than content hashes, define file identity."""
     tenant_id = uuid.uuid4()
     user_id = uuid.uuid4()
     await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
@@ -204,20 +208,88 @@ async def test_upload_file_dedup_409(pg_engine):
         assert r1["status"] == "pending"
         assert "file_id" in r1
 
-        # Second upload — same blob → 409 dedup.
+        # The same bytes at another path remain a valid package file.
         async with session_scope(tenant_id=str(tenant_id)) as s:
-            up2 = _make_upload("a.txt", blob, "text/plain")
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_file(
-                    kb_id=uuid.UUID(kb.id), request=_StubRequest(), file=up2,
-                    ctx=ctx, session=s, service=_AllowAuthz(),
-                )
+            up2 = _make_upload("copy.txt", blob, "text/plain")
+            r2 = await upload_file(
+                kb_id=uuid.UUID(kb.id), request=_StubRequest(), file=up2,
+                ctx=ctx, session=s, service=_AllowAuthz(),
+            )
 
-    assert exc_info.value.status_code == 409
-    detail = exc_info.value.detail
-    assert isinstance(detail, dict), f"expected dict body, got {detail!r}"
-    assert detail.get("error") == "kb_duplicate_content_hash"
-    assert detail.get("existing_file_name") == "a.txt"
+    assert r2["status"] == "pending"
+    assert r2["file_id"] != r1["file_id"]
+    assert len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_import_folder_creates_one_authoritative_package(pg_engine):
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
+    ctx = _StubCtx(tenant_id, user_id)
+
+    with patch(
+        "vibecanvas_api.services.knowledge_packages.celery_app.send_task",
+    ):
+        async with session_scope(tenant_id=str(tenant_id)) as s:
+            created = await import_kb(
+                request=_StubRequest(),
+                name="Research",
+                description="A complete package",
+                archive=None,
+                files=[
+                    _make_upload("README.md", b"# Research", "text/markdown"),
+                    _make_upload("paper.pdf", b"%PDF-1.7", "application/pdf"),
+                ],
+                paths=["research/README.md", "research/papers/paper.pdf"],
+                ctx=ctx,
+                session=s,
+                service=_AllowAuthz(),
+            )
+
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        stored = await KbRepo(s).list_files(uuid.UUID(created.id))
+    assert created.name == "Research"
+    assert [item.name for item in stored] == ["README.md", "papers/paper.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_package_rejects_duplicate_path_and_root_readme_delete(pg_engine):
+    """Browser mutations cannot violate the package path/README invariants."""
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
+    ctx = _StubCtx(tenant_id, user_id)
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        kb = await create_kb(
+            body=KbCreate(name="Invariant"), request=_StubRequest(),
+            ctx=ctx, session=s, service=_AllowAuthz(),
+        )
+        await s.commit()
+
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        with pytest.raises(HTTPException) as duplicate:
+            await upload_file(
+                kb_id=uuid.UUID(kb.id), request=_StubRequest(),
+                file=_make_upload("readme.MD", b"replacement", "text/markdown"),
+                ctx=ctx, session=s, service=_AllowAuthz(),
+            )
+    assert duplicate.value.status_code == 409
+    assert duplicate.value.detail == "knowledge_package_path_exists"
+
+    async with session_scope(tenant_id=str(tenant_id)) as s:
+        readme = next(
+            item for item in await KbRepo(s).list_files(uuid.UUID(kb.id))
+            if item.name == "README.md"
+        )
+        with pytest.raises(HTTPException) as required:
+            await delete_file(
+                kb_id=uuid.UUID(kb.id), file_id=readme.id,
+                request=_StubRequest(), ctx=ctx, session=s,
+                service=_AllowAuthz(),
+            )
+    assert required.value.status_code == 409
+    assert required.value.detail == "knowledge_root_readme_required"
 
 
 @pytest.mark.asyncio
@@ -250,10 +322,8 @@ async def test_upload_too_large_413(pg_engine):
 
 
 @pytest.mark.asyncio
-async def test_unsupported_type_400(pg_engine):
-    """A binary file (``application/octet-stream`` MIME, ``.bin``
-    extension) is not in the parser registry → 400
-    ``kb_unsupported_file_type``."""
+async def test_unindexed_type_is_stored(pg_engine):
+    """An arbitrary binary remains in the package without an index task."""
     tenant_id = uuid.uuid4()
     user_id = uuid.uuid4()
     await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
@@ -266,16 +336,20 @@ async def test_unsupported_type_400(pg_engine):
         )
         await s.commit()
 
-    async with session_scope(tenant_id=str(tenant_id)) as s:
-        up = _make_upload("a.bin", b"x", "application/octet-stream")
-        with pytest.raises(HTTPException) as exc_info:
-            await upload_file(
+    sent: list[dict] = []
+    with patch(
+        "vibecanvas_api.routes.kb.celery_app.send_task",
+        side_effect=lambda *a, **kw: sent.append({"args": a, "kwargs": kw}),
+    ):
+        async with session_scope(tenant_id=str(tenant_id)) as s:
+            up = _make_upload("diagram.drawio", b"<mxfile/>", "application/xml")
+            result = await upload_file(
                 kb_id=uuid.UUID(kb.id), request=_StubRequest(), file=up,
                 ctx=ctx, session=s, service=_AllowAuthz(),
             )
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "kb_unsupported_file_type"
+    assert result["status"] == "stored"
+    assert result["task_id"] is None
+    assert sent == []
 
 
 # --------------------------------------------------------------- router mount
@@ -292,5 +366,5 @@ def test_router_mounted_under_api_v1_kb():
     assert "/api/v1/kb" in paths
     assert "/api/v1/kb/{kb_id}" in paths
     assert "/api/v1/kb/{kb_id}/files" in paths
-    assert "/api/v1/kb/{kb_id}/files/{file_id}/content" in paths
+    assert "/api/v1/kb/{kb_id}/files/{file_id}/raw" in paths
     assert "/api/v1/kb/search" in paths

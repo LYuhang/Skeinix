@@ -47,7 +47,7 @@ const SKILLS = [
     allowed_tools: ['read_file', 'apply_workflow_edit'],
     version: 1,
     access: {
-      capabilities: ['view', 'use', 'update', 'delete', 'manage_access', 'publish'],
+      capabilities: ['view', 'use', 'update', 'delete', 'publish'],
       effective_role: 'manager',
       source: 'computed',
     },
@@ -61,7 +61,7 @@ const SKILLS = [
     allowed_tools: ['read_file'],
     version: 3,
     access: {
-      capabilities: ['view', 'use', 'update', 'delete', 'manage_access', 'publish'],
+      capabilities: ['view', 'use', 'update', 'delete', 'publish'],
       effective_role: 'manager',
       source: 'computed',
     },
@@ -174,7 +174,7 @@ describe('SkillsPage', () => {
     expect(within(invoiceCard).getByRole('button', { name: 'Open actions for Invoice Parser' })).toBeInTheDocument();
   });
 
-  it('uses Skill-specific sharing language', async () => {
+  it('does not expose sharing for private Skill installations', async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText('Workflow Builder')).toBeInTheDocument());
@@ -184,7 +184,7 @@ describe('SkillsPage', () => {
     )!;
     await user.click(within(workflowCard).getByRole('button', { name: 'Open actions for Workflow Builder' }));
 
-    expect(await screen.findByRole('menuitem', { name: 'Share Skill' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Share Skill' })).not.toBeInTheDocument();
   });
 
   it('offers ZIP-only Custom Skill import without an inline creator', async () => {

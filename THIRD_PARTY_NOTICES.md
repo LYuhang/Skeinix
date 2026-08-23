@@ -24,6 +24,11 @@ Notable license choices in the current dependency graph include:
   under the BSD 3-Clause license, instead of Redis releases under RSALv2/SSPLv1.
 - `elkjs` is available under `EPL-2.0 OR GPL-3.0-or-later`; Skeinix uses it
   under EPL-2.0.
+- `@drawio/mcp` is the official draw.io MCP published by JGraph Ltd under
+  Apache-2.0. Skeinix runs the pinned package unchanged inside each activated
+  Chat sandbox and adds only file, preview, and quality-feedback adapters.
+  The package carries draw.io's vendored Libavoid routing assets and their
+  upstream notices.
 - `jszip` is available under `MIT OR GPL-3.0-or-later`; Skeinix uses it under
   the MIT license.
 - `axe-core`, `lightningcss`, `certifi`, `orjson`, and `tqdm` include MPL-2.0

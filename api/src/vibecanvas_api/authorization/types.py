@@ -25,7 +25,6 @@ class ResourceType(StrEnum):
     CHAT = "chat"
     CHAT_MESSAGE = "chat_message"
     AGENT_RUN = "agent_run"
-    AGENT_PLAN = "agent_plan"
     HITL_REQUEST = "hitl_request"
     INTERACTIVE_ARTIFACT = "interactive_artifact"
     BACKGROUND_JOB = "background_job"
@@ -96,6 +95,9 @@ class ResourceRef:
 @dataclass(frozen=True, slots=True)
 class AuthzRequestContext:
     active_organization_id: str
+    admitted_resource_organization_id: str = ""
+    admitted_resource_type: str = ""
+    admitted_resource_id: str = ""
     request_id: str = ""
     session_id: str = ""
     session_generation: int = 0

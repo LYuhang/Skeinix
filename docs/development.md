@@ -147,6 +147,15 @@ through `pytest-postgresql`; PostgreSQL server binaries, including `pg_ctl`,
 must be installed. Set `SKEINIX_TEST_PG_CTL` to an explicit executable when it
 is not discoverable in `PATH` or `/usr/lib/postgresql/*/bin/`.
 
+When PostgreSQL intentionally runs in Docker, the API suite can use that
+cluster without installing server binaries on the host. Point
+`SKEINIX_TEST_PG_URL` at an administrative database, provide the existing
+application-role password through `SKEINIX_TEST_APP_PASSWORD`, and optionally
+set `SKEINIX_TEST_PG_DATABASE` (default: `vibecanvas_test`). The fixture creates
+and later removes only that disposable database. It never migrates, truncates,
+or deletes the database named by `SKEINIX_TEST_PG_URL`, and it never alters the
+existing `vibecanvas_app` role.
+
 Tests that require a real gVisor environment are guarded and report a skip when
 the host kernel cannot provide the required isolation profile. A skipped gVisor
 test is not equivalent to release verification; production sandbox gates are

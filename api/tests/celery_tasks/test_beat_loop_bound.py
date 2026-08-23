@@ -134,27 +134,6 @@ def test_reconciler_survives_two_beat_ticks(monkeypatch, pg_url):
     assert all(s["name"] == "batch_exec" for s in sent)
 
 
-def test_cron_dispatcher_survives_two_beat_ticks(monkeypatch, pg_url):
-    """Two sequential beat ticks of the cron dispatcher must both succeed.
-
-    ``cron_dispatcher`` reaches the DB through
-    ``session_scope_admin`` -> ``get_admin_engine`` (the same process-
-    global pool). With no due crons seeded the body is a no-op read, so
-    this isolates the engine-lifecycle bug: tick #2 must not raise.
-    """
-    import vibecanvas_api.celery_tasks.cron_dispatcher as cron
-
-    _point_admin_engine_at_test_db(monkeypatch, pg_url)
-
-    monkeypatch.setattr(
-        cron.celery_app, "send_task",
-        lambda *a, **kw: None,
-    )
-
-    cron.dispatch_due_crons()
-    cron.dispatch_due_crons()
-
-
 def test_kb_gc_sweeper_survives_two_beat_ticks(monkeypatch, pg_url):
     """Two sequential beat ticks of the KB GC sweeper must both succeed.
 

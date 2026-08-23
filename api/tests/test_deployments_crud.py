@@ -10,7 +10,6 @@ Coverage matrix (each row → one test):
 
 * list: ``trigger_type`` filter narrows results.
 * patch: ``enabled`` toggle round-trips through GET (no stale read).
-* patch: invalid cron / invalid IANA tz → 422.
 * delete: soft delete hides the row from subsequent GET (404).
 * rotate-key: returns ``vc_`` plaintext + invalidates the old key against
   ``resolve_deployment_and_bind_tenant`` (the deployment-side authenticator
@@ -65,6 +64,18 @@ async def _seed_minimal_tenant_user_wf(pg_engine, app_engine):
             ),
             {"u": user_id, "t": tenant_id,
              "e": f"t5-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {
+                "t": tenant_id,
+                "u": user_id,
+                "slug": f"test-{tenant_id.hex}",
+            },
         )
     from vibecanvas_api.storage.db import session_scope
     from vibecanvas_api.storage.workflow_repo import WorkflowRepo
@@ -215,6 +226,45 @@ async def test_list_filters_by_trigger_type(pg_engine, app_engine):
         assert "hmac_secret" not in item
 
 
+@pytest.mark.asyncio
+async def test_default_list_and_summary_include_both_external_trigger_types(
+    pg_engine, app_engine,
+):
+    """The management list includes API and webhook Deployments."""
+    from vibecanvas_api.routes.deployments import list_deployments
+    from vibecanvas_api.storage.db import session_scope
+
+    tenant_id, user_id, workflow_id = await _seed_minimal_tenant_user_wf(
+        pg_engine, app_engine,
+    )
+    api_id, _ = await _seed_api_dep(
+        app_engine, tenant_id, user_id, workflow_id,
+    )
+    webhook_id = await _seed_webhook_dep(
+        app_engine, tenant_id, user_id, workflow_id,
+    )
+
+    async with session_scope(tenant_id=str(tenant_id)) as session:
+        response = await list_deployments(
+            request=_StubRequest(),
+            trigger_type=None,
+            enabled=None,
+            workflow_id=None,
+            q=None,
+            limit=50,
+            offset=0,
+            ctx=_StubCtx(tenant_id, user_id),
+            session=session,
+            service=_AllowAuthz((api_id, webhook_id)),
+        )
+
+    assert {item["trigger_type"] for item in response["items"]} == {
+        "api", "webhook",
+    }
+    assert response["summary"]["active"] == 2
+    assert "last_invoked_at" in response["summary"]
+
+
 # -------------------------------------------------------------------- patch
 
 
@@ -252,59 +302,6 @@ async def test_patch_toggle_enabled(pg_engine, app_engine):
         )
         await s.commit()
     assert resp2["enabled"] is True
-
-
-@pytest.mark.asyncio
-async def test_patch_invalid_cron_422(pg_engine, app_engine):
-    """Invalid cron expression in PATCH body → 422 (validated server-side
-    because Pydantic's per-field validator doesn't run on a partial PATCH)."""
-    from fastapi import HTTPException
-
-    from vibecanvas_api.routes.deployments import (
-        PatchDeploymentBody, patch_deployment,
-    )
-    from vibecanvas_api.storage.db import session_scope
-
-    t, u, w = await _seed_minimal_tenant_user_wf(pg_engine, app_engine)
-    dep_id, _ = await _seed_api_dep(app_engine, t, u, w)
-    ctx = _StubCtx(t, u)
-
-    async with session_scope(tenant_id=str(t)) as s:
-        with pytest.raises(HTTPException) as exc:
-            await patch_deployment(
-                dep_id=dep_id,
-                body=PatchDeploymentBody.model_validate(
-                    {"cron_expr": "not a cron"}),
-                request=_StubRequest(), ctx=ctx, session=s,
-                service=_AllowAuthz(),
-            )
-        assert exc.value.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_patch_invalid_tz_422(pg_engine, app_engine):
-    """Invalid IANA tz in PATCH body → 422."""
-    from fastapi import HTTPException
-
-    from vibecanvas_api.routes.deployments import (
-        PatchDeploymentBody, patch_deployment,
-    )
-    from vibecanvas_api.storage.db import session_scope
-
-    t, u, w = await _seed_minimal_tenant_user_wf(pg_engine, app_engine)
-    dep_id, _ = await _seed_api_dep(app_engine, t, u, w)
-    ctx = _StubCtx(t, u)
-
-    async with session_scope(tenant_id=str(t)) as s:
-        with pytest.raises(HTTPException) as exc:
-            await patch_deployment(
-                dep_id=dep_id,
-                body=PatchDeploymentBody.model_validate(
-                    {"cron_tz": "Mars/Olympus"}),
-                request=_StubRequest(), ctx=ctx, session=s,
-                service=_AllowAuthz(),
-            )
-        assert exc.value.status_code == 422
 
 
 @pytest.mark.asyncio

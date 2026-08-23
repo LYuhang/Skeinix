@@ -26,7 +26,7 @@ def _workflow_id(ctx) -> str:
         raise ToolError(
             "no_workflow",
             "No workflow is selected for this chat. Use list_workflows, then "
-            "activate /build to select or create one.",
+            "activate /workflow to select or create one.",
         )
     return workflow_id
 

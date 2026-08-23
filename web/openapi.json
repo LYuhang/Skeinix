@@ -84,135 +84,6 @@
         }
       }
     },
-    "/api/v1/auth/login/mfa/webauthn/options": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Login Mfa Webauthn Options",
-        "operationId": "login_mfa_webauthn_options_api_v1_auth_login_mfa_webauthn_options_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginMfaChallengeIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Login Mfa Webauthn Options Api V1 Auth Login Mfa Webauthn Options Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/login/mfa/totp": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Login Mfa Totp",
-        "operationId": "login_mfa_totp_api_v1_auth_login_mfa_totp_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginMfaCodeIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Login Mfa Totp Api V1 Auth Login Mfa Totp Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/login/mfa/webauthn/verify": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Login Mfa Webauthn Verify",
-        "operationId": "login_mfa_webauthn_verify_api_v1_auth_login_mfa_webauthn_verify_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginMfaWebAuthnIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Login Mfa Webauthn Verify Api V1 Auth Login Mfa Webauthn Verify Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/auth/logout": {
       "post": {
         "tags": [
@@ -575,222 +446,13 @@
         }
       }
     },
-    "/api/v1/auth/mfa": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Mfa Status",
-        "operationId": "mfa_status_api_v1_auth_mfa_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Mfa Status Api V1 Auth Mfa Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Disable Mfa",
-        "operationId": "disable_mfa_api_v1_auth_mfa_delete",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DisableMfaIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/auth/mfa/totp/enroll": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Enroll Totp",
-        "operationId": "enroll_totp_api_v1_auth_mfa_totp_enroll_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PasswordConfirmation"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Enroll Totp Api V1 Auth Mfa Totp Enroll Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/auth/mfa/totp/confirm": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Confirm Totp",
-        "operationId": "confirm_totp_api_v1_auth_mfa_totp_confirm_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MfaCodeIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Confirm Totp Api V1 Auth Mfa Totp Confirm Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/auth/mfa/challenge": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Challenge Mfa",
-        "operationId": "challenge_mfa_api_v1_auth_mfa_challenge_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MfaCodeIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Challenge Mfa Api V1 Auth Mfa Challenge Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/auth/mfa/webauthn": {
+    "/api/v1/auth/passkeys": {
       "get": {
         "tags": [
           "auth"
         ],
         "summary": "Webauthn Status",
-        "operationId": "webauthn_status_api_v1_auth_mfa_webauthn_get",
+        "operationId": "webauthn_status_api_v1_auth_passkeys_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -799,7 +461,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Webauthn Status Api V1 Auth Mfa Webauthn Get"
+                  "title": "Response Webauthn Status Api V1 Auth Passkeys Get"
                 }
               }
             }
@@ -812,13 +474,13 @@
         ]
       }
     },
-    "/api/v1/auth/mfa/webauthn/registration/options": {
+    "/api/v1/auth/passkeys/registration/options": {
       "post": {
         "tags": [
           "auth"
         ],
         "summary": "Registration Options",
-        "operationId": "registration_options_api_v1_auth_mfa_webauthn_registration_options_post",
+        "operationId": "registration_options_api_v1_auth_passkeys_registration_options_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -837,7 +499,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Registration Options Api V1 Auth Mfa Webauthn Registration Options Post"
+                  "title": "Response Registration Options Api V1 Auth Passkeys Registration Options Post"
                 }
               }
             }
@@ -860,13 +522,13 @@
         ]
       }
     },
-    "/api/v1/auth/mfa/webauthn/registration/verify": {
+    "/api/v1/auth/passkeys/registration/verify": {
       "post": {
         "tags": [
           "auth"
         ],
         "summary": "Verify Registration",
-        "operationId": "verify_registration_api_v1_auth_mfa_webauthn_registration_verify_post",
+        "operationId": "verify_registration_api_v1_auth_passkeys_registration_verify_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -885,7 +547,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Verify Registration Api V1 Auth Mfa Webauthn Registration Verify Post"
+                  "title": "Response Verify Registration Api V1 Auth Passkeys Registration Verify Post"
                 }
               }
             }
@@ -908,13 +570,13 @@
         ]
       }
     },
-    "/api/v1/auth/mfa/webauthn/authentication/options": {
+    "/api/v1/auth/passkeys/authentication/options": {
       "post": {
         "tags": [
           "auth"
         ],
         "summary": "Authentication Options",
-        "operationId": "authentication_options_api_v1_auth_mfa_webauthn_authentication_options_post",
+        "operationId": "authentication_options_api_v1_auth_passkeys_authentication_options_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -923,7 +585,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Authentication Options Api V1 Auth Mfa Webauthn Authentication Options Post"
+                  "title": "Response Authentication Options Api V1 Auth Passkeys Authentication Options Post"
                 }
               }
             }
@@ -936,13 +598,13 @@
         ]
       }
     },
-    "/api/v1/auth/mfa/webauthn/authentication/verify": {
+    "/api/v1/auth/passkeys/authentication/verify": {
       "post": {
         "tags": [
           "auth"
         ],
         "summary": "Verify Authentication",
-        "operationId": "verify_authentication_api_v1_auth_mfa_webauthn_authentication_verify_post",
+        "operationId": "verify_authentication_api_v1_auth_passkeys_authentication_verify_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -961,7 +623,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Verify Authentication Api V1 Auth Mfa Webauthn Authentication Verify Post"
+                  "title": "Response Verify Authentication Api V1 Auth Passkeys Authentication Verify Post"
                 }
               }
             }
@@ -984,13 +646,13 @@
         ]
       }
     },
-    "/api/v1/auth/mfa/webauthn/credentials/{credential_id}": {
+    "/api/v1/auth/passkeys/credentials/{credential_id}": {
       "delete": {
         "tags": [
           "auth"
         ],
         "summary": "Delete Credential",
-        "operationId": "delete_credential_api_v1_auth_mfa_webauthn_credentials__credential_id__delete",
+        "operationId": "delete_credential_api_v1_auth_passkeys_credentials__credential_id__delete",
         "security": [
           {
             "HTTPBearer": []
@@ -3431,7 +3093,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
+                "$ref": "#/components/schemas/DirectBindingGrantIn"
               }
             }
           }
@@ -5825,66 +5487,6 @@
         }
       }
     },
-    "/api/v1/chats/{chat_id}/active-diagram/view": {
-      "patch": {
-        "tags": [
-          "chats"
-        ],
-        "summary": "Update Active Diagram View",
-        "description": "Persist trusted Preview selection and canvas-space viewport context.",
-        "operationId": "update_active_diagram_view_api_v1_chats__chat_id__active_diagram_view_patch",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "chat_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Chat Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActiveDiagramViewUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Update Active Diagram View Api V1 Chats  Chat Id  Active Diagram View Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/chat-scopes/{scope_id}/chats/{chat_id}/commands/{command}": {
       "delete": {
         "tags": [
@@ -7409,7 +7011,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
+                "$ref": "#/components/schemas/DirectBindingGrantIn"
               }
             }
           }
@@ -7732,10 +7334,58 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
+              "maximum": 200,
               "minimum": 1,
-              "default": 500,
+              "default": 50,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string",
+              "default": "desc",
+              "title": "Order"
             }
           }
         ],
@@ -7876,7 +7526,7 @@
           "deployments"
         ],
         "summary": "Create Deployment",
-        "description": "Create a deployment of any trigger type. Returns ``{id, ...one-shot\nplaintext credentials...}``. Subsequent GETs (T5) MUST NOT include\nthe plaintext credentials.\n\nResolution rules for ``pinned_major`` / ``pinned_sub``:\n* ``version_pin='head'`` → both forced to ``None`` (the row tracks\n  the workflow's HEAD pointer; the dispatcher resolves at fire-time).\n* ``version_pin='specific'`` + both supplied → trust the caller (FK\n  / CHECK constraint will reject an invalid pair at INSERT time).\n* ``version_pin='specific'`` + either missing → default to the\n  workflow's current HEAD. 404 if the workflow has no versions yet\n  (a workflow with zero rows in ``workflow_versions`` is not deployable).\n\n409 on IntegrityError: global partial UNIQUE on ``slug WHERE\ndeleted_at IS NULL`` (migration 088) OR the ``wf_id`` FK to\n``workflows`` (a missing / foreign-tenant workflow). Both collapse\nto a single user-facing message so we don't leak existence.",
+        "description": "Create an API or webhook deployment. Returns ``{id, ...one-shot\nplaintext credentials...}``. Subsequent GETs (T5) MUST NOT include\nthe plaintext credentials.\n\nResolution rules for ``pinned_major`` / ``pinned_sub``:\n* ``version_pin='head'`` → both forced to ``None`` (the row tracks\n  the workflow's HEAD pointer; invocation resolves it at run time).\n* ``version_pin='specific'`` + both supplied → trust the caller (FK\n  / CHECK constraint will reject an invalid pair at INSERT time).\n* ``version_pin='specific'`` + either missing → default to the\n  workflow's current HEAD. 404 if the workflow has no versions yet\n  (a workflow with zero rows in ``workflow_versions`` is not deployable).\n\n409 on IntegrityError: global partial UNIQUE on ``slug WHERE\ndeleted_at IS NULL`` (migration 088) OR the ``wf_id`` FK to\n``workflows`` (a missing / foreign-tenant workflow). Both collapse\nto a single user-facing message so we don't leak existence.",
         "operationId": "create_deployment_api_v1_deployments_post",
         "security": [
           {
@@ -7934,6 +7584,10 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "api",
+                    "webhook"
+                  ],
                   "type": "string"
                 },
                 {
@@ -7990,16 +7644,6 @@
                 }
               ],
               "title": "Q"
-            }
-          },
-          {
-            "name": "serving_only",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Serving Only"
             }
           },
           {
@@ -8099,7 +7743,7 @@
           "deployments"
         ],
         "summary": "Patch Deployment",
-        "description": "Partial update. Each mutable field is validated INDEPENDENTLY here\n(vs T4's ``CreateDeploymentBody`` whole-object validators) because a\nPATCH may carry any subset, and Pydantic's per-field validators don't\nrun when a field is omitted. 422 on invalid cron / tz / version_pin /\nrate_limit_qps. Soft-deleted rows surface as 404 (repo filter).",
+        "description": "Partial update. Each mutable field is validated INDEPENDENTLY here\n(vs T4's ``CreateDeploymentBody`` whole-object validators) because a\nPATCH may carry any subset, and Pydantic's per-field validators don't\nrun when a field is omitted. 422 on invalid version_pin or\nrate_limit_qps. Soft-deleted rows surface as 404 (repo filter).",
         "operationId": "patch_deployment_api_v1_deployments__dep_id__patch",
         "security": [
           {
@@ -8154,7 +7798,7 @@
           "deployments"
         ],
         "summary": "Delete Deployment",
-        "description": "Soft delete. Sets ``deleted_at = now()`` AND ``enabled = FALSE``\nso the cron dispatcher / api+webhook resolvers stop returning the row\nin the same tick. The slug becomes reusable (migration-088 partial\nUNIQUE excludes soft-deleted rows). Idempotent.",
+        "description": "Soft delete. Sets ``deleted_at = now()`` AND ``enabled = FALSE``\nso the API and webhook resolvers stop returning the row\nin the same tick. The slug becomes reusable (migration-088 partial\nUNIQUE excludes soft-deleted rows). Idempotent.",
         "operationId": "delete_deployment_api_v1_deployments__dep_id__delete",
         "security": [
           {
@@ -8333,7 +7977,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
+                "$ref": "#/components/schemas/DirectBindingGrantIn"
               }
             }
           }
@@ -8634,6 +8278,54 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string",
+              "default": "desc",
+              "title": "Order"
             }
           }
         ],
@@ -9220,35 +8912,6 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/mcp-servers/platform": {
-      "get": {
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "List Platform Mcp Services",
-        "description": "Return the built-in MCP catalog generated from the live registry.\n\nBuilt-in services are immutable platform capabilities, not tenant-owned\nMCP rows. The response excludes internal URLs and signed Turn capabilities\nwhile exposing tool schemas for the read-only detail UI.",
-        "operationId": "list_platform_mcp_services_api_v1_mcp_servers_platform_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response List Platform Mcp Services Api V1 Mcp Servers Platform Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
       }
     },
     "/api/v1/mcp-servers/{server_id}": {
@@ -10315,170 +9978,74 @@
         }
       }
     },
-    "/api/v1/skills/{skill_id}/access": {
+    "/api/v1/llm-credentials/openrouter/status": {
       "get": {
         "tags": [
-          "skills"
+          "llm-credentials"
         ],
-        "summary": "List Skill Access",
-        "operationId": "list_skill_access_api_v1_skills__skill_id__access_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "skill_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Skill Id"
-            }
-          },
-          {
-            "name": "continuation_token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Continuation Token"
-            }
-          }
-        ],
+        "summary": "Get Openrouter Status",
+        "operationId": "get_openrouter_status_api_v1_llm_credentials_openrouter_status_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DirectBindingListOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpenRouterConnectionOut"
                 }
               }
             }
           }
-        }
-      },
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/llm-credentials/openrouter/start": {
       "post": {
         "tags": [
-          "skills"
+          "llm-credentials"
         ],
-        "summary": "Grant Skill Access",
-        "operationId": "grant_skill_access_api_v1_skills__skill_id__access_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "skill_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Skill Id"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200,
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
-              }
-            }
-          }
-        },
+        "summary": "Start Openrouter Connection",
+        "operationId": "start_openrouter_connection_api_v1_llm_credentials_openrouter_start_post",
         "responses": {
-          "201": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DirectBindingOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpenRouterStartOut"
                 }
               }
             }
           }
-        }
-      },
-      "delete": {
-        "tags": [
-          "skills"
-        ],
-        "summary": "Revoke Skill Access",
-        "operationId": "revoke_skill_access_api_v1_skills__skill_id__access_delete",
+        },
         "security": [
           {
             "HTTPBearer": []
           }
+        ]
+      }
+    },
+    "/api/v1/llm-credentials/openrouter/callback": {
+      "post": {
+        "tags": [
+          "llm-credentials"
         ],
-        "parameters": [
-          {
-            "name": "skill_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Skill Id"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200,
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
+        "summary": "Complete Openrouter Connection",
+        "operationId": "complete_openrouter_connection_api_v1_llm_credentials_openrouter_callback_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
+                "$ref": "#/components/schemas/OpenRouterCallbackIn"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10486,7 +10053,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DirectBindingOut"
+                  "$ref": "#/components/schemas/OpenRouterConnectionOut"
                 }
               }
             }
@@ -10501,7 +10068,57 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/llm-credentials/openrouter/refresh": {
+      "post": {
+        "tags": [
+          "llm-credentials"
+        ],
+        "summary": "Refresh Openrouter Catalog",
+        "operationId": "refresh_openrouter_catalog_api_v1_llm_credentials_openrouter_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenRouterConnectionOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/llm-credentials/openrouter": {
+      "delete": {
+        "tags": [
+          "llm-credentials"
+        ],
+        "summary": "Disconnect Openrouter",
+        "operationId": "disconnect_openrouter_api_v1_llm_credentials_openrouter_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/llm-credentials": {
@@ -10726,6 +10343,55 @@
         }
       }
     },
+    "/api/v1/llm-credentials/{credential_id}/test": {
+      "post": {
+        "tags": [
+          "llm-credentials"
+        ],
+        "summary": "Test Credential Connection",
+        "description": "Probe a provider using the stored write-only secret.\n\nThe request follows the same validated egress destination and proxy rules\nas normal model traffic. Only a bounded status classification and latency\nare returned; provider bodies, headers, and credentials are discarded.",
+        "operationId": "test_credential_connection_api_v1_llm_credentials__credential_id__test_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Credential Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialConnectionTestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/kb": {
       "get": {
         "tags": [
@@ -10768,6 +10434,53 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/KbCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/kb/import": {
+      "post": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Import Kb",
+        "description": "Create Knowledge from one complete folder upload or ZIP archive.",
+        "operationId": "import_kb_api_v1_kb_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_kb_api_v1_kb_import_post"
               }
             }
           },
@@ -10954,7 +10667,7 @@
           "kb"
         ],
         "summary": "Upload File",
-        "description": "Upload a file to the KB. 5-step DB-first ordering (spec sec 8).\n\nReturns ``{file_id, task_id, status: \"pending\"}`` on success.\nErrors:\n  * 413 ``kb_file_too_large`` — payload > 50 MB.\n  * 400 ``kb_unsupported_file_type`` — filename + MIME mismatch or\n    not in the supported set (PDF, DOCX, PPTX, XLSX, CSV/TSV, JSON,\n    HTML, Markdown, or plain text).\n  * 409 ``kb_duplicate_content_hash`` — a live file with the same\n    SHA-256 already exists in this KB (per-KB dedup). Body includes\n    ``existing_file_name`` so the UI can show \"already uploaded as\n    <name>\".\n  * 404 ``kb_not_found`` — KB missing or soft-deleted.",
+        "description": "Add one raw file to a Knowledge package.\n\nSupported document types are queued for the replaceable search index.\nOther file types remain available as authoritative package files with a\n``stored`` status.\nErrors:\n  * 413 ``kb_file_too_large`` — payload > 50 MB.\n  * 404 ``kb_not_found`` — KB missing or soft-deleted.",
         "operationId": "upload_file_api_v1_kb__kb_id__files_post",
         "security": [
           {
@@ -11072,14 +10785,14 @@
         }
       }
     },
-    "/api/v1/kb/{kb_id}/files/{file_id}/content": {
+    "/api/v1/kb/{kb_id}/files/{file_id}/raw": {
       "get": {
         "tags": [
           "kb"
         ],
-        "summary": "Get File Content",
-        "description": "Return the read-only parsed source shown to the Agent.\n\nThe original blob remains encrypted in the configured ObjectStore. The UI\nreads the same normalized, encrypted chunks exposed through the Knowledge\nAgent tools, one bounded page at a time, so Office/PDF sources do not need\nunsafe browser-side rendering or a public object URL.",
-        "operationId": "get_file_content_api_v1_kb__kb_id__files__file_id__content_get",
+        "summary": "Get File Raw",
+        "description": "Stream one authoritative package file after content authorization.",
+        "operationId": "get_file_raw_api_v1_kb__kb_id__files__file_id__raw_get",
         "security": [
           {
             "HTTPBearer": []
@@ -11105,29 +10818,6 @@
               "format": "uuid",
               "title": "File Id"
             }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
           }
         ],
         "responses": {
@@ -11135,9 +10825,7 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KbFileContentOut"
-                }
+                "schema": {}
               }
             }
           },
@@ -11192,63 +10880,6 @@
         "responses": {
           "204": {
             "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/kb/{kb_id}/files/{file_id}/reindex": {
-      "post": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Reindex File",
-        "description": "Re-index an existing file (no re-upload).\n\nWipes any existing chunks for the file, resets ``kb_files`` state\n(status='pending', error_message=NULL, deleted_at=NULL), inserts a\nnew Celery index job. Idempotent in the sense that the broker dedupes\non ``task_id``; a second click during the same indexing run is a no-op.\n\nReturns ``{file_id, task_id, status: \"pending\"}``.",
-        "operationId": "reindex_file_api_v1_kb__kb_id__files__file_id__reindex_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "kb_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Kb Id"
-            }
-          },
-          {
-            "name": "file_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
@@ -11359,7 +10990,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DirectBindingIn"
+                "$ref": "#/components/schemas/DirectBindingGrantIn"
               }
             }
           }
@@ -12282,75 +11913,6 @@
         ]
       }
     },
-    "/api/v1/previews/diagram-drafts/{draft_id}/render-revisions": {
-      "get": {
-        "tags": [
-          "previews"
-        ],
-        "summary": "Get Diagram Draft Render Revisions",
-        "description": "Return only trusted, server-compiled Ready Revisions for one owner.\n\nThe database cursor and Scene bodies live in shared durable storage, so a\ncaller may land on any API worker. Draft IDs are lookup keys, never an\nauthorization grant.",
-        "operationId": "get_diagram_draft_render_revisions_api_v1_previews_diagram_drafts__draft_id__render_revisions_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "draft_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Draft Id"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "After"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 20,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/previews/events": {
       "get": {
         "tags": [
@@ -12490,24 +12052,87 @@
         ]
       }
     },
-    "/api/v1/previews/diagram/export": {
-      "post": {
+    "/api/v1/previews/office-rendition": {
+      "get": {
         "tags": [
           "previews"
         ],
-        "summary": "Export Preview Diagram",
-        "description": "Export the exact diagram revision currently open in Preview.",
-        "operationId": "export_preview_diagram_api_v1_previews_diagram_export_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DiagramPreviewExportBody"
-              }
+        "summary": "Office Preview Rendition",
+        "description": "Render an authorized DOCX/PPTX revision as a read-only PDF.\n\nThis endpoint intentionally requires the normal Bearer session.  The\nbrowser fetches the complete bounded rendition before handing it to PDF.js,\nwhile the original short-lived VFS URL remains the download target.",
+        "operationId": "office_preview_rendition_api_v1_previews_office_rendition_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "chat",
+                "mount",
+                "run"
+              ],
+              "type": "string",
+              "title": "Scope"
             }
           },
-          "required": true
-        },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Path"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Revision"
+            }
+          },
+          {
+            "name": "chat_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chat Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -12527,12 +12152,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/previews/resource-session": {
@@ -12541,7 +12161,7 @@
           "previews"
         ],
         "summary": "Create Preview Resource Session",
-        "description": "Mint opaque resource mounts for an HTML file Preview.\n\nFileRef ownership is resolved before capabilities are issued. The iframe\nonly receives virtual path mounts and never learns workspace/object-store\nidentifiers.",
+        "description": "Mint opaque resource mounts for a file Preview's local dependencies.\n\nFileRef ownership is resolved before capabilities are issued. The iframe\nonly receives virtual path mounts and never learns workspace/object-store\nidentifiers.",
         "operationId": "create_preview_resource_session_api_v1_previews_resource_session_post",
         "requestBody": {
           "content": {
@@ -12588,6 +12208,7 @@
           "previews"
         ],
         "summary": "Write Preview File",
+        "description": "Persist an explicitly saved UTF-8 source draft with revision safety.",
         "operationId": "write_preview_file_api_v1_previews_file_put",
         "requestBody": {
           "content": {
@@ -12626,6 +12247,157 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/resource-access/shared": {
+      "get": {
+        "tags": [
+          "resource-access"
+        ],
+        "summary": "List Shared Resources",
+        "description": "List direct resource shares visible to the authenticated recipient.\n\nProjection rows locate owning tenants but never authorize access. Each\ncandidate is checked against OpenFGA at higher consistency under the\nowner's RLS context before any private metadata is decrypted.",
+        "operationId": "list_shared_resources_api_v1_resource_access_shared_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "workflow",
+                    "task",
+                    "deployment",
+                    "knowledge_base"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedResourceListOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/resource-access/{resource_type}/{resource_id}/resolve-target": {
+      "post": {
+        "tags": [
+          "resource-access"
+        ],
+        "summary": "Resolve Share Target",
+        "operationId": "resolve_share_target_api_v1_resource_access__resource_type___resource_id__resolve_target_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "resource_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Type"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareTargetLookupIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTargetLookupOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/storage/list": {
@@ -13509,534 +13281,6 @@
             "HTTPBearer": []
           }
         ]
-      }
-    },
-    "/api/v1/execution-plans": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "List Execution Plans",
-        "operationId": "list_execution_plans_api_v1_execution_plans_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "chat_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Chat Id"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ExecutionPlanCardOut"
-                  },
-                  "title": "Response List Execution Plans Api V1 Execution Plans Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-plans/{plan_id}": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Get Execution Plan",
-        "operationId": "get_execution_plan_api_v1_execution_plans__plan_id__get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "plan_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Plan Id"
-            }
-          },
-          {
-            "name": "revision",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Revision"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionPlanDetailOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-plan-runs/{plan_run_id}": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Get Execution Plan Run",
-        "operationId": "get_execution_plan_run_api_v1_execution_plan_runs__plan_run_id__get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "plan_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Plan Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionPlanRunOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-node-runs/{node_run_id}": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Get Execution Node Run",
-        "operationId": "get_execution_node_run_api_v1_execution_node_runs__node_run_id__get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "node_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Node Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionNodeRunOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-node-runs/{node_run_id}/output": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Get Execution Node Output",
-        "operationId": "get_execution_node_output_api_v1_execution_node_runs__node_run_id__output_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "node_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Node Run Id"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "After"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 200,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-plan-runs/{plan_run_id}/cancel": {
-      "post": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Cancel Execution Plan Run",
-        "operationId": "cancel_execution_plan_run_api_v1_execution_plan_runs__plan_run_id__cancel_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "plan_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Plan Run Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExecutionPlanControlBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionPlanRunOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-node-runs/{node_run_id}/cancel": {
-      "post": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Cancel Execution Node Run",
-        "operationId": "cancel_execution_node_run_api_v1_execution_node_runs__node_run_id__cancel_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "node_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Node Run Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExecutionPlanControlBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionNodeRunOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-plan-runs/{plan_run_id}/events": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Stream Execution Plan Run Events",
-        "operationId": "stream_execution_plan_run_events_api_v1_execution_plan_runs__plan_run_id__events_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "plan_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Plan Run Id"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "After"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/execution-plan-runs/{plan_run_id}/events/snapshot": {
-      "get": {
-        "tags": [
-          "execution-plans"
-        ],
-        "summary": "Get Execution Plan Run Events Snapshot",
-        "operationId": "get_execution_plan_run_events_snapshot_api_v1_execution_plan_runs__plan_run_id__events_snapshot_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "plan_run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Plan Run Id"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "After"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 200,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v1/organizations/{organization_id}/identity-providers": {
@@ -15551,55 +14795,6 @@
         ],
         "title": "ActiveAgentRun"
       },
-      "ActiveDiagramViewUpdate": {
-        "properties": {
-          "path": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 1,
-            "pattern": "^/data/diagrams/[A-Za-z0-9][A-Za-z0-9._-]{0,95}\\.vdiagram\\.json$",
-            "title": "Path"
-          },
-          "revision": {
-            "type": "string",
-            "maxLength": 160,
-            "minLength": 1,
-            "title": "Revision"
-          },
-          "source_hash": {
-            "type": "string",
-            "maxLength": 160,
-            "minLength": 1,
-            "title": "Source Hash"
-          },
-          "selected_element_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "maxItems": 100,
-            "title": "Selected Element Ids"
-          },
-          "viewport_bounds": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/DiagramViewportBounds"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "required": [
-          "path",
-          "revision",
-          "source_hash"
-        ],
-        "title": "ActiveDiagramViewUpdate",
-        "description": "Optimistic Preview context update for one exact presented revision."
-      },
       "AgentRuntimeSettingsOut": {
         "properties": {
           "default_runtime_type": {
@@ -16214,6 +15409,71 @@
           "bundle"
         ],
         "title": "Body_create_custom_skill_api_v1_skills_custom_post"
+      },
+      "Body_import_kb_api_v1_kb_import_post": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "archive": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paths"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "Body_import_kb_api_v1_kb_import_post"
       },
       "Body_upload_chat_attachment_api_v1_chat_scopes__scope_id__chats__chat_id__attachments_post": {
         "properties": {
@@ -17233,6 +16493,10 @@
           },
           "trigger_type": {
             "type": "string",
+            "enum": [
+              "api",
+              "webhook"
+            ],
             "title": "Trigger Type"
           },
           "version_pin": {
@@ -17260,22 +16524,6 @@
               }
             ],
             "title": "Pinned Sub"
-          },
-          "cron_expr": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cron Expr"
-          },
-          "cron_tz": {
-            "type": "string",
-            "title": "Cron Tz",
-            "default": "UTC"
           },
           "rate_limit_qps": {
             "type": "integer",
@@ -17351,6 +16599,47 @@
           "slug"
         ],
         "title": "CreateOrganizationBody"
+      },
+      "CredentialConnectionTestOut": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "credentials_rejected",
+              "endpoint_rejected",
+              "unreachable"
+            ],
+            "title": "Outcome"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "title": "Latency Ms"
+          },
+          "upstream_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "outcome",
+          "latency_ms"
+        ],
+        "title": "CredentialConnectionTestOut",
+        "description": "Sanitized connection-test result. Provider response bodies and secret\nmaterial never cross the API boundary."
       },
       "CredentialCreate": {
         "properties": {
@@ -17472,6 +16761,15 @@
             "type": "string",
             "title": "Provider"
           },
+          "connection_kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "openrouter_oauth"
+            ],
+            "title": "Connection Kind",
+            "default": "manual"
+          },
           "runtime_scope": {
             "type": "string",
             "enum": [
@@ -17580,6 +16878,15 @@
           "provider": {
             "type": "string",
             "title": "Provider"
+          },
+          "connection_kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "openrouter_oauth"
+            ],
+            "title": "Connection Kind",
+            "default": "manual"
           },
           "runtime_scope": {
             "type": "string",
@@ -17805,108 +17112,31 @@
         ],
         "title": "DeleteCredentialIn"
       },
-      "DiagramPreviewExportBody": {
+      "DirectBindingGrantIn": {
         "properties": {
-          "fileRef": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ChatFileRefV1"
-              },
-              {
-                "$ref": "#/components/schemas/MountFileRefV1"
-              },
-              {
-                "$ref": "#/components/schemas/RunFileRefV1"
-              }
-            ],
-            "title": "Fileref",
-            "discriminator": {
-              "propertyName": "scope",
-              "mapping": {
-                "chat": "#/components/schemas/ChatFileRefV1",
-                "mount": "#/components/schemas/MountFileRefV1",
-                "run": "#/components/schemas/RunFileRefV1"
-              }
-            }
-          },
-          "expectedRevision": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Expectedrevision"
-          },
-          "format": {
+          "relation": {
             "type": "string",
             "enum": [
-              "svg",
-              "png",
-              "pdf"
+              "viewer",
+              "editor",
+              "operator",
+              "manager"
             ],
-            "title": "Format"
+            "title": "Relation"
           },
-          "theme": {
+          "resolution_token": {
             "type": "string",
-            "const": "light",
-            "title": "Theme",
-            "default": "light"
-          },
-          "scale": {
-            "type": "number",
-            "maximum": 2.0,
-            "minimum": 0.5,
-            "title": "Scale",
-            "default": 1.0
-          },
-          "background": {
-            "type": "string",
-            "const": "white",
-            "title": "Background",
-            "default": "white"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "fileRef",
-          "expectedRevision",
-          "format"
-        ],
-        "title": "DiagramPreviewExportBody"
-      },
-      "DiagramViewportBounds": {
-        "properties": {
-          "x": {
-            "type": "number",
-            "maximum": 250000.0,
-            "minimum": -250000.0,
-            "title": "X"
-          },
-          "y": {
-            "type": "number",
-            "maximum": 250000.0,
-            "minimum": -250000.0,
-            "title": "Y"
-          },
-          "width": {
-            "type": "number",
-            "maximum": 250000.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Width"
-          },
-          "height": {
-            "type": "number",
-            "maximum": 250000.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Height"
+            "maxLength": 4096,
+            "minLength": 32,
+            "title": "Resolution Token"
           }
         },
         "type": "object",
         "required": [
-          "x",
-          "y",
-          "width",
-          "height"
+          "relation",
+          "resolution_token"
         ],
-        "title": "DiagramViewportBounds"
+        "title": "DirectBindingGrantIn"
       },
       "DirectBindingIn": {
         "properties": {
@@ -18026,6 +17256,16 @@
             "const": "direct",
             "title": "Source",
             "default": "direct"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
           }
         },
         "type": "object",
@@ -18035,28 +17275,6 @@
           "subject_id"
         ],
         "title": "DirectBindingOut"
-      },
-      "DisableMfaIn": {
-        "properties": {
-          "password": {
-            "type": "string",
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Password"
-          },
-          "code": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 6,
-            "title": "Code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "password",
-          "code"
-        ],
-        "title": "DisableMfaIn"
       },
       "EditsRequest": {
         "properties": {
@@ -18184,466 +17402,6 @@
           "started_at"
         ],
         "title": "ExecutionListItem"
-      },
-      "ExecutionNodeRunOut": {
-        "properties": {
-          "node_run_id": {
-            "type": "string",
-            "title": "Node Run Id"
-          },
-          "plan_run_id": {
-            "type": "string",
-            "title": "Plan Run Id"
-          },
-          "chat_id": {
-            "type": "string",
-            "title": "Chat Id"
-          },
-          "node_path": {
-            "type": "string",
-            "title": "Node Path"
-          },
-          "node_type": {
-            "type": "string",
-            "title": "Node Type"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "attention_status": {
-            "type": "string",
-            "title": "Attention Status"
-          },
-          "current_attempt": {
-            "type": "integer",
-            "title": "Current Attempt"
-          },
-          "current_activity": {
-            "type": "string",
-            "title": "Current Activity",
-            "default": ""
-          },
-          "definition": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Definition"
-          },
-          "result": {
-            "title": "Result"
-          },
-          "output_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Ref"
-          },
-          "error": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Error"
-          },
-          "side_effect_state": {
-            "type": "string",
-            "title": "Side Effect State"
-          },
-          "progress": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Progress"
-          },
-          "cancel_requested": {
-            "type": "boolean",
-            "title": "Cancel Requested",
-            "default": false
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "ended_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ended At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "approval": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approval"
-          },
-          "attempts": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Attempts"
-          },
-          "output": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Output"
-          }
-        },
-        "type": "object",
-        "required": [
-          "node_run_id",
-          "plan_run_id",
-          "chat_id",
-          "node_path",
-          "node_type",
-          "status",
-          "attention_status",
-          "current_attempt",
-          "side_effect_state"
-        ],
-        "title": "ExecutionNodeRunOut"
-      },
-      "ExecutionPlanCardOut": {
-        "properties": {
-          "plan_id": {
-            "type": "string",
-            "title": "Plan Id"
-          },
-          "plan_run_id": {
-            "type": "string",
-            "title": "Plan Run Id"
-          },
-          "job_id": {
-            "type": "string",
-            "title": "Job Id"
-          },
-          "chat_id": {
-            "type": "string",
-            "title": "Chat Id"
-          },
-          "revision": {
-            "type": "integer",
-            "title": "Revision"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "node_count": {
-            "type": "integer",
-            "title": "Node Count"
-          },
-          "parallel_branch_count": {
-            "type": "integer",
-            "title": "Parallel Branch Count"
-          },
-          "progress": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Progress"
-          },
-          "last_event_seq": {
-            "type": "integer",
-            "title": "Last Event Seq",
-            "default": 0
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "preview_resource": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Preview Resource"
-          }
-        },
-        "type": "object",
-        "required": [
-          "plan_id",
-          "plan_run_id",
-          "job_id",
-          "chat_id",
-          "revision",
-          "title",
-          "status",
-          "node_count",
-          "parallel_branch_count",
-          "preview_resource"
-        ],
-        "title": "ExecutionPlanCardOut"
-      },
-      "ExecutionPlanControlBody": {
-        "properties": {
-          "idempotency_key": {
-            "type": "string",
-            "maxLength": 160,
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 256,
-            "title": "Reason",
-            "default": "user_requested"
-          }
-        },
-        "type": "object",
-        "required": [
-          "idempotency_key"
-        ],
-        "title": "ExecutionPlanControlBody"
-      },
-      "ExecutionPlanDetailOut": {
-        "properties": {
-          "plan_id": {
-            "type": "string",
-            "title": "Plan Id"
-          },
-          "chat_id": {
-            "type": "string",
-            "title": "Chat Id"
-          },
-          "revision": {
-            "type": "integer",
-            "title": "Revision"
-          },
-          "lifecycle_status": {
-            "type": "string",
-            "title": "Lifecycle Status"
-          },
-          "definition": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Definition"
-          },
-          "validation": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Validation"
-          },
-          "source_plan_path": {
-            "type": "string",
-            "title": "Source Plan Path"
-          },
-          "definition_hash": {
-            "type": "string",
-            "title": "Definition Hash"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "runs": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Runs"
-          }
-        },
-        "type": "object",
-        "required": [
-          "plan_id",
-          "chat_id",
-          "revision",
-          "lifecycle_status",
-          "definition",
-          "source_plan_path",
-          "definition_hash"
-        ],
-        "title": "ExecutionPlanDetailOut"
-      },
-      "ExecutionPlanRunOut": {
-        "properties": {
-          "plan_run_id": {
-            "type": "string",
-            "title": "Plan Run Id"
-          },
-          "job_id": {
-            "type": "string",
-            "title": "Job Id"
-          },
-          "plan_id": {
-            "type": "string",
-            "title": "Plan Id"
-          },
-          "revision": {
-            "type": "integer",
-            "title": "Revision"
-          },
-          "chat_id": {
-            "type": "string",
-            "title": "Chat Id"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "approval_mode": {
-            "type": "string",
-            "title": "Approval Mode"
-          },
-          "budget": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Budget"
-          },
-          "progress": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Progress"
-          },
-          "last_event_seq": {
-            "type": "integer",
-            "title": "Last Event Seq",
-            "default": 0
-          },
-          "cancel_requested": {
-            "type": "boolean",
-            "title": "Cancel Requested",
-            "default": false
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "ended_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ended At"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "nodes": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Nodes"
-          },
-          "approval": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approval"
-          }
-        },
-        "type": "object",
-        "required": [
-          "plan_run_id",
-          "job_id",
-          "plan_id",
-          "revision",
-          "chat_id",
-          "status",
-          "approval_mode"
-        ],
-        "title": "ExecutionPlanRunOut"
       },
       "ExecutionRequest": {
         "properties": {
@@ -19790,6 +18548,10 @@
             "title": "Retrieval Strategy",
             "default": "agentic_lexical"
           },
+          "package_version": {
+            "type": "integer",
+            "title": "Package Version"
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -19800,6 +18562,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           },
           "file_count": {
             "type": "integer",
@@ -19820,89 +18585,16 @@
           "name",
           "description",
           "summary",
+          "package_version",
           "created_at",
           "updated_at",
           "access",
+          "provenance",
           "file_count",
           "chunk_count",
           "latest_updated_at"
         ],
         "title": "KbDetailOut"
-      },
-      "KbFileContentChunkOut": {
-        "properties": {
-          "index": {
-            "type": "integer",
-            "title": "Index"
-          },
-          "text": {
-            "type": "string",
-            "title": "Text"
-          }
-        },
-        "type": "object",
-        "required": [
-          "index",
-          "text"
-        ],
-        "title": "KbFileContentChunkOut"
-      },
-      "KbFileContentOut": {
-        "properties": {
-          "file_id": {
-            "type": "string",
-            "title": "File Id"
-          },
-          "file_name": {
-            "type": "string",
-            "title": "File Name"
-          },
-          "parser_type": {
-            "type": "string",
-            "title": "Parser Type"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "next_offset": {
-            "type": "integer",
-            "title": "Next Offset"
-          },
-          "total_chunks": {
-            "type": "integer",
-            "title": "Total Chunks"
-          },
-          "has_more": {
-            "type": "boolean",
-            "title": "Has More"
-          },
-          "chunks": {
-            "items": {
-              "$ref": "#/components/schemas/KbFileContentChunkOut"
-            },
-            "type": "array",
-            "title": "Chunks"
-          }
-        },
-        "type": "object",
-        "required": [
-          "file_id",
-          "file_name",
-          "parser_type",
-          "status",
-          "offset",
-          "next_offset",
-          "total_chunks",
-          "has_more",
-          "chunks"
-        ],
-        "title": "KbFileContentOut",
-        "description": "One bounded page of the normalized text that the Agent can read."
       },
       "KbFileOut": {
         "properties": {
@@ -19917,6 +18609,10 @@
           "parser_type": {
             "type": "string",
             "title": "Parser Type"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type"
           },
           "file_size": {
             "type": "integer",
@@ -19947,6 +18643,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -19954,12 +18653,14 @@
           "id",
           "name",
           "parser_type",
+          "mime_type",
           "file_size",
           "status",
           "error_message",
           "chunk_count",
           "created_at",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "KbFileOut"
       },
@@ -20000,6 +18701,10 @@
             "title": "Retrieval Strategy",
             "default": "agentic_lexical"
           },
+          "package_version": {
+            "type": "integer",
+            "title": "Package Version"
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -20011,6 +18716,9 @@
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
           },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
+          },
           "file_count": {
             "type": "integer",
             "title": "File Count",
@@ -20019,6 +18727,11 @@
           "chunk_count": {
             "type": "integer",
             "title": "Chunk Count",
+            "default": 0
+          },
+          "stored_count": {
+            "type": "integer",
+            "title": "Stored Count",
             "default": 0
           },
           "pending_count": {
@@ -20052,9 +18765,11 @@
           "name",
           "description",
           "summary",
+          "package_version",
           "created_at",
           "updated_at",
           "access",
+          "provenance",
           "latest_updated_at"
         ],
         "title": "KbListOut"
@@ -20096,6 +18811,10 @@
             "title": "Retrieval Strategy",
             "default": "agentic_lexical"
           },
+          "package_version": {
+            "type": "integer",
+            "title": "Package Version"
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -20106,6 +18825,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -20114,9 +18836,11 @@
           "name",
           "description",
           "summary",
+          "package_version",
           "created_at",
           "updated_at",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "KbOut"
       },
@@ -20174,64 +18898,6 @@
           "password"
         ],
         "title": "LoginIn"
-      },
-      "LoginMfaChallengeIn": {
-        "properties": {
-          "login_challenge": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 32,
-            "title": "Login Challenge"
-          }
-        },
-        "type": "object",
-        "required": [
-          "login_challenge"
-        ],
-        "title": "LoginMfaChallengeIn"
-      },
-      "LoginMfaCodeIn": {
-        "properties": {
-          "login_challenge": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 32,
-            "title": "Login Challenge"
-          },
-          "code": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 6,
-            "title": "Code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "login_challenge",
-          "code"
-        ],
-        "title": "LoginMfaCodeIn"
-      },
-      "LoginMfaWebAuthnIn": {
-        "properties": {
-          "login_challenge": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 32,
-            "title": "Login Challenge"
-          },
-          "credential": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Credential"
-          }
-        },
-        "type": "object",
-        "required": [
-          "login_challenge",
-          "credential"
-        ],
-        "title": "LoginMfaWebAuthnIn"
       },
       "MeOut": {
         "properties": {
@@ -20368,21 +19034,6 @@
         "type": "object",
         "title": "MessagePostBody"
       },
-      "MfaCodeIn": {
-        "properties": {
-          "code": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 6,
-            "title": "Code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "code"
-        ],
-        "title": "MfaCodeIn"
-      },
       "MintIn": {
         "properties": {
           "wf_id": {
@@ -20467,6 +19118,198 @@
           "return_origin"
         ],
         "title": "OAuthStartBody"
+      },
+      "OpenRouterCallbackIn": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Code"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 32,
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "state"
+        ],
+        "title": "OpenRouterCallbackIn"
+      },
+      "OpenRouterConnectionOut": {
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/OpenRouterModelOut"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "catalog_refreshed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Refreshed At"
+          },
+          "catalog_stale": {
+            "type": "boolean",
+            "title": "Catalog Stale",
+            "default": false
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connected"
+        ],
+        "title": "OpenRouterConnectionOut"
+      },
+      "OpenRouterModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "context_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Length"
+          },
+          "input_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Input Modalities"
+          },
+          "output_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Output Modalities"
+          },
+          "supports_tools": {
+            "type": "boolean",
+            "title": "Supports Tools",
+            "default": false
+          },
+          "supported_reasoning_efforts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Reasoning Efforts"
+          },
+          "default_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Reasoning Effort"
+          },
+          "pricing": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Pricing"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OpenRouterModelOut"
+      },
+      "OpenRouterStartOut": {
+        "properties": {
+          "authorization_url": {
+            "type": "string",
+            "title": "Authorization Url"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "authorization_url",
+          "expires_at"
+        ],
+        "title": "OpenRouterStartOut"
       },
       "OrganizationListOut": {
         "properties": {
@@ -20967,21 +19810,6 @@
         ],
         "title": "Page[WorkflowMetaOut]"
       },
-      "PasswordConfirmation": {
-        "properties": {
-          "password": {
-            "type": "string",
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Password"
-          }
-        },
-        "type": "object",
-        "required": [
-          "password"
-        ],
-        "title": "PasswordConfirmation"
-      },
       "PatchBody": {
         "properties": {
           "name": {
@@ -21129,28 +19957,6 @@
               }
             ],
             "title": "Rate Limit Qps"
-          },
-          "cron_expr": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cron Expr"
-          },
-          "cron_tz": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cron Tz"
           },
           "version_pin": {
             "anyOf": [
@@ -21350,7 +20156,7 @@
               "image",
               "audio",
               "video",
-              "diagram",
+              "drawio",
               "unsupported"
             ],
             "title": "Renderer"
@@ -21373,6 +20179,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/PreviewContent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rendition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewRendition"
               },
               {
                 "type": "null"
@@ -21558,6 +20374,37 @@
           "content"
         ],
         "title": "PreviewFileWriteV1"
+      },
+      "PreviewRendition": {
+        "properties": {
+          "format": {
+            "type": "string",
+            "const": "pdf",
+            "title": "Format"
+          },
+          "contentType": {
+            "type": "string",
+            "const": "application/pdf",
+            "title": "Contenttype"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "sourceRevision": {
+            "type": "string",
+            "title": "Sourcerevision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "format",
+          "contentType",
+          "url",
+          "sourceRevision"
+        ],
+        "title": "PreviewRendition"
       },
       "PreviewResolveBody": {
         "properties": {
@@ -21858,6 +20705,53 @@
         ],
         "title": "ResetReqIn"
       },
+      "ResolvedShareTargetOut": {
+        "properties": {
+          "target_type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "group",
+              "organization"
+            ],
+            "title": "Target Type"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "resolution_token": {
+            "type": "string",
+            "title": "Resolution Token"
+          },
+          "allowed_relations": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "editor",
+                "operator",
+                "manager"
+              ]
+            },
+            "type": "array",
+            "title": "Allowed Relations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_type",
+          "display_name",
+          "resolution_token",
+          "allowed_relations"
+        ],
+        "title": "ResolvedShareTargetOut"
+      },
       "ResourceAccessOut": {
         "properties": {
           "capabilities": {
@@ -21887,6 +20781,74 @@
         "type": "object",
         "title": "ResourceAccessOut"
       },
+      "ResourcePartyOut": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "organization",
+              "platform"
+            ],
+            "title": "Type"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "display_name"
+        ],
+        "title": "ResourcePartyOut"
+      },
+      "ResourceProvenanceOut": {
+        "properties": {
+          "ownership_scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "organization",
+              "platform"
+            ],
+            "title": "Ownership Scope"
+          },
+          "origin_type": {
+            "type": "string",
+            "enum": [
+              "created",
+              "uploaded",
+              "imported",
+              "catalog_install",
+              "derived",
+              "system"
+            ],
+            "title": "Origin Type"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ResourcePartyOut"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourcePartyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "ownership_scope",
+          "origin_type",
+          "owner"
+        ],
+        "title": "ResourceProvenanceOut"
+      },
       "ResourceType": {
         "type": "string",
         "enum": [
@@ -21897,7 +20859,6 @@
           "chat",
           "chat_message",
           "agent_run",
-          "agent_plan",
           "hitl_request",
           "interactive_artifact",
           "background_job",
@@ -22016,11 +20977,6 @@
             ],
             "title": "Error Code"
           },
-          "chat_configuration_locked": {
-            "type": "boolean",
-            "title": "Chat Configuration Locked",
-            "default": false
-          },
           "bound_agent_settings": {
             "anyOf": [
               {
@@ -22059,6 +21015,28 @@
             "title": "Description",
             "default": ""
           },
+          "api_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Source"
+          },
+          "api_protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Protocol"
+          },
           "provider": {
             "anyOf": [
               {
@@ -22069,6 +21047,81 @@
               }
             ],
             "title": "Provider"
+          },
+          "provider_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Model Id"
+          },
+          "context_length": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Length"
+          },
+          "input_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Input Modalities"
+          },
+          "output_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Output Modalities"
+          },
+          "supports_tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Tools"
+          },
+          "input_price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Price"
+          },
+          "output_price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Price"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": true
           },
           "is_default": {
             "type": "boolean",
@@ -22557,6 +21610,119 @@
         "type": "object",
         "title": "SetGroupMemberBody"
       },
+      "ShareTargetLookupIn": {
+        "properties": {
+          "target_type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "group",
+              "organization"
+            ],
+            "title": "Target Type"
+          },
+          "identifier": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Identifier",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_type"
+        ],
+        "title": "ShareTargetLookupIn"
+      },
+      "ShareTargetLookupOut": {
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResolvedShareTargetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ShareTargetLookupOut"
+      },
+      "SharedResourceListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedResourceOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "type": "object",
+        "title": "SharedResourceListOut"
+      },
+      "SharedResourceOut": {
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "workflow",
+              "task",
+              "deployment",
+              "knowledge_base"
+            ],
+            "title": "Resource Type"
+          },
+          "resource_id": {
+            "type": "string",
+            "title": "Resource Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "access": {
+            "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_id",
+          "name",
+          "updated_at",
+          "access",
+          "provenance"
+        ],
+        "title": "SharedResourceOut",
+        "description": "Recipient-safe card projection for one explicitly shared root.\n\nThe owning tenant is deliberately absent. The backend uses it only to\nlocate and re-authorize the resource; exposing it would leak an internal\ntenancy identifier without helping the recipient navigate the product."
+      },
       "SkillCatalogInstall": {
         "properties": {
           "source": {
@@ -22685,6 +21851,9 @@
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
           },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
+          },
           "body": {
             "type": "string",
             "title": "Body"
@@ -22725,6 +21894,7 @@
           "allowed_tools",
           "version",
           "access",
+          "provenance",
           "body",
           "skill_md",
           "files"
@@ -22785,6 +21955,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -22795,7 +21968,8 @@
           "body",
           "files",
           "has_changes",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "SkillDraftOut"
       },
@@ -22918,6 +22092,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -22927,7 +22104,8 @@
           "description",
           "allowed_tools",
           "version",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "SkillOut",
         "description": "Installed Skill response row."
@@ -22975,6 +22153,9 @@
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
           },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
+          },
           "name": {
             "type": "string",
             "title": "Name"
@@ -23008,6 +22189,7 @@
           "files",
           "size_bytes",
           "access",
+          "provenance",
           "name",
           "description",
           "allowed_tools",
@@ -23058,6 +22240,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -23068,7 +22253,8 @@
           "is_latest",
           "files",
           "size_bytes",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "SkillRevisionOut"
       },
@@ -24180,6 +23366,9 @@
           },
           "access": {
             "$ref": "#/components/schemas/ResourceAccessOut"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ResourceProvenanceOut"
           }
         },
         "type": "object",
@@ -24191,7 +23380,8 @@
           "active_sv",
           "updated_at",
           "created_at",
-          "access"
+          "access",
+          "provenance"
         ],
         "title": "WorkflowMetaOut"
       },

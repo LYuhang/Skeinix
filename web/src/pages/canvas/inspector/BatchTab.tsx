@@ -106,6 +106,7 @@ export interface BatchTabProps {
   wfId: string;
   workflow?: Record<string, unknown> | null;
   showTaskList?: boolean;
+  active?: boolean;
   onSubmitted?: (taskId: string) => void;
 }
 
@@ -113,6 +114,7 @@ export function BatchTab({
   wfId,
   workflow,
   showTaskList = true,
+  active = true,
   onSubmitted,
 }: BatchTabProps) {
   const { t } = useTranslation();
@@ -184,7 +186,10 @@ export function BatchTab({
     [columns],
   );
 
-  const tasksQuery = useWorkflowTasks(wfId);
+  // RightInspector keeps this form mounted so an uploaded file is not lost
+  // when the user checks Run. Pause the 5 s task polling while the hidden tab
+  // is inactive; hidden work must not compete with the canvas main thread.
+  const tasksQuery = useWorkflowTasks(wfId, active && showTaskList);
   const qc = useQueryClient();
 
   function clearParsed() {

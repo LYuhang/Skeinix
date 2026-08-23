@@ -40,6 +40,7 @@ class PermissionSpec:
     action: Action | None
     selector: str
     parent_resolver: str
+    resource_type_options: frozenset[ResourceType] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,12 +101,6 @@ _EXTERNAL_CREDENTIAL_ENDPOINTS = frozenset({
     "webhook",
 })
 
-_LOGIN_MFA_ENDPOINTS = frozenset({
-    "login_mfa_totp",
-    "login_mfa_webauthn_options",
-    "login_mfa_webauthn_verify",
-})
-
 _OIDC_PUBLIC_ENDPOINTS = frozenset({
     "discover_organization_sso",
     "start_sso_login",
@@ -150,13 +145,6 @@ _EXPLICIT_ACTIONS = {
     "create_interactive_resource_session": Action.VIEW,
     "list_chat_background_jobs": Action.VIEW,
     "get_agent_run_by_client_request": Action.INSPECT_RUNS,
-    "list_execution_plans": Action.VIEW,
-    "get_execution_plan": Action.VIEW,
-    "get_execution_plan_run": Action.VIEW,
-    "get_execution_node_run": Action.VIEW,
-    "get_execution_node_output": Action.VIEW,
-    "stream_execution_plan_run_events": Action.VIEW,
-    "get_execution_plan_run_events_snapshot": Action.VIEW,
     "tasks_summary": Action.VIEW_METADATA,
     "list_scheduled_run_executions": Action.INSPECT_RUNS,
     "get_scheduled_run_execution": Action.INSPECT_RUNS,
@@ -269,6 +257,7 @@ def _spec(
     action: Action | None,
     selector: str,
     parent_resolver: str,
+    resource_type_options: frozenset[ResourceType] = frozenset(),
 ) -> PermissionSpec:
     return PermissionSpec(
         admission=admission,
@@ -276,6 +265,7 @@ def _spec(
         action=action,
         selector=selector,
         parent_resolver=parent_resolver,
+        resource_type_options=resource_type_options,
     )
 
 
@@ -293,14 +283,6 @@ def permission_for_route(
             action=Action.USE,
             selector="body:single_use_exchange_code",
             parent_resolver="session_exchange_code",
-        )
-    if endpoint in _LOGIN_MFA_ENDPOINTS:
-        return _spec(
-            admission=AdmissionKind.EXTERNAL_CREDENTIAL,
-            resource_type=ResourceType.IDENTITY,
-            action=Action.USE,
-            selector="body:password_verified_login_challenge",
-            parent_resolver="login_mfa_challenge",
         )
     if endpoint in _OIDC_CREDENTIAL_ENDPOINTS:
         return _spec(
@@ -431,6 +413,28 @@ def permission_for_route(
             action=action,
             selector=selector,
             parent_resolver=parent,
+        )
+    if endpoint == "list_shared_resources":
+        return _spec(
+            admission=AdmissionKind.SESSION,
+            resource_type=ResourceType.IDENTITY,
+            action=Action.VIEW_METADATA,
+            selector="session:user_id",
+            parent_resolver="recipient_projection_to_authoritative_resource",
+        )
+    if path.startswith("/api/v1/resource-access"):
+        return _spec(
+            admission=AdmissionKind.RESOURCE,
+            resource_type=None,
+            action=Action.MANAGE_ACCESS,
+            selector="path:resource_type+resource_id",
+            parent_resolver="shareable_resource_direct",
+            resource_type_options=frozenset({
+                ResourceType.WORKFLOW,
+                ResourceType.TASK,
+                ResourceType.DEPLOYMENT,
+                ResourceType.KNOWLEDGE_BASE,
+            }),
         )
     if path.startswith("/api/v1/workflows"):
         return _spec(
@@ -586,7 +590,7 @@ def permission_for_route(
                 else "direct_or_collection"
             ),
         )
-    if path.startswith("/api/v1/mcp-servers/catalog") or path == "/api/v1/mcp-servers/platform":
+    if path.startswith("/api/v1/mcp-servers/catalog"):
         return _spec(
             admission=AdmissionKind.SESSION,
             resource_type=ResourceType.PLATFORM_CATALOG,
@@ -664,33 +668,12 @@ def permission_for_route(
             parent_resolver="vfs_scope_to_chat_workflow_or_storage",
         )
     if path.startswith("/api/v1/previews"):
-        if "/diagram-drafts/" in path:
-            return _spec(
-                admission=AdmissionKind.RESOURCE,
-                resource_type=ResourceType.CHAT,
-                action=Action.VIEW,
-                selector="path:draft_id",
-                parent_resolver="diagram_draft_to_owner_chat",
-            )
         return _spec(
             admission=AdmissionKind.RESOURCE,
             resource_type=ResourceType.VFS_PATH,
             action=action,
             selector="body_or_query:file_ref",
             parent_resolver="file_ref_to_chat_run_or_storage",
-        )
-
-    if (
-        path.startswith("/api/v1/execution-plans")
-        or path.startswith("/api/v1/execution-plan-runs")
-        or path.startswith("/api/v1/execution-node-runs")
-    ):
-        return _spec(
-            admission=AdmissionKind.RESOURCE,
-            resource_type=ResourceType.AGENT_PLAN,
-            action=action,
-            selector="path_or_query:plan_id+plan_run_id+node_run_id+chat_id",
-            parent_resolver="execution_plan_to_chat",
         )
 
     if (
@@ -823,7 +806,10 @@ def route_permission_manifest(app: FastAPI) -> tuple[RoutePermission, ...]:
                     f"{method} {path} ({endpoint})"
                 )
             if permission.admission is not AdmissionKind.PUBLIC and (
-                permission.resource_type is None
+                (
+                    permission.resource_type is None
+                    and not permission.resource_type_options
+                )
                 or permission.action is None
                 or permission.selector in {"", "none"}
                 or permission.parent_resolver in {"", "none"}
@@ -855,10 +841,6 @@ WORKER_PERMISSION_MANIFEST = (
         "deployments.concurrency_reconciler", "platform_worker",
         ResourceType.DEPLOYMENT, Action.INSPECT_RUNS,
         "deployment_lease_inventory",
-    ),
-    WorkerPermission(
-        "deployments.cron_dispatcher", "service_account",
-        ResourceType.DEPLOYMENT, Action.EXECUTE, "schedule_to_deployment",
     ),
     WorkerPermission(
         "deployment_invoke", "service_account", ResourceType.DEPLOYMENT,
@@ -912,12 +894,7 @@ def _mcp_action(tool_name: str) -> Action:
     if (
         name.endswith("_get")
         or name.startswith(("get_", "check_"))
-        or name in {
-            "get_config",
-            "search_diagram_assets",
-            "inspect_diagram",
-            "review_diagram",
-        }
+        or name == "get_config"
     ):
         return Action.VIEW
     if "cancel" in name:
@@ -926,7 +903,7 @@ def _mcp_action(tool_name: str) -> Action:
         return Action.RESUME
     if "execute" in name or name.startswith(("run_", "batch_execute")):
         return Action.EXECUTE
-    if name.startswith(("task_create_", "create_workflow", "create_execution_plan")):
+    if name.startswith(("task_create_", "create_workflow")):
         return Action.CREATE
     if name == "deployment_create":
         return Action.DEPLOY
@@ -950,8 +927,6 @@ def platform_mcp_permission_manifest() -> tuple[McpToolPermission, ...]:
     from vibecanvas_api.services.platform_mcp.interactive_tools import (
         INTERACTIVE_TOOLS,
     )
-    from vibecanvas_api.services.platform_mcp.diagram_tools import DIAGRAM_TOOLS
-    from vibecanvas_api.services.platform_mcp.plan_tools import PLAN_TOOLS
     from vibecanvas_api.services.platform_mcp.resource_tools import (
         DEPLOYMENT_MCP_TOOLS,
         KNOWLEDGE_MCP_TOOLS,
@@ -997,16 +972,6 @@ def platform_mcp_permission_manifest() -> tuple[McpToolPermission, ...]:
             [set_workflow, create_workflow, *BUILD_TOOLS, *RUN_TOOLS],
             ResourceType.WORKFLOW,
             "tool_argument_or_chat_binding_to_workflow",
-        ),
-        "plan": (
-            PLAN_TOOLS,
-            ResourceType.AGENT_PLAN,
-            "platform_capability_to_chat_execution_plan",
-        ),
-        "diagram": (
-            DIAGRAM_TOOLS,
-            ResourceType.CHAT,
-            "platform_capability_to_chat",
         ),
     }
     return tuple(

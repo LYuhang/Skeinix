@@ -54,10 +54,10 @@ describe('chat client state identity', () => {
     writeChatViewPreferences(storageKey, {
       ...EMPTY_CHAT_VIEW_STATE,
       previewOpen: true,
-      activePreviewId: 'file:chat:chat-1:/data/diagrams/example.vdiagram.json',
+      activePreviewId: 'file:chat:chat-1:/data/diagrams/example.drawio',
       previewItems: [{
-        id: 'file:chat:chat-1:/data/diagrams/example.vdiagram.json',
-        title: 'example.vdiagram.json',
+        id: 'file:chat:chat-1:/data/diagrams/example.drawio',
+        title: 'example.drawio',
         resource: {
           schemaVersion: 1,
           kind: 'file',
@@ -65,7 +65,7 @@ describe('chat client state identity', () => {
             schemaVersion: 1,
             scope: 'chat',
             chatId: 'chat-1',
-            path: '/data/diagrams/example.vdiagram.json',
+            path: '/data/diagrams/example.drawio',
           },
         },
       }],
@@ -78,8 +78,8 @@ describe('chat client state identity', () => {
     window.localStorage.setItem(storageKey, JSON.stringify(raw));
 
     expect(readChatViewPreferences(storageKey)?.previewItems).toEqual([{
-      id: 'file:chat:chat-1:/data/diagrams/example.vdiagram.json',
-      title: 'example.vdiagram.json',
+      id: 'file:chat:chat-1:/data/diagrams/example.drawio',
+      title: 'example.drawio',
       resource: {
         schemaVersion: 1,
         kind: 'file',
@@ -87,7 +87,7 @@ describe('chat client state identity', () => {
           schemaVersion: 1,
           scope: 'chat',
           chatId: 'chat-1',
-          path: '/data/diagrams/example.vdiagram.json',
+          path: '/data/diagrams/example.drawio',
         },
       },
     }]);

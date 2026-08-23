@@ -143,13 +143,12 @@ def test_turn_settings_are_runtime_neutral_and_per_turn() -> None:
         reasoning_effort="ultra",
         approval_mode="always_ask",
         active_platform_mcps=["workflow"],
-        mcp_servers=[{
+        mcp_host_servers=[{
             "name": "workflow",
             "source": "platform",
             "connection": {
-                "transport": "streamable_http",
-                "url": "http://platform.test/workflow/",
-                "headers": {"Authorization": "Bearer private"},
+                "transport": "host_gateway",
+                "capability": "private",
             },
         }],
     )
@@ -192,8 +191,8 @@ def test_runtime_instructions_are_backend_resolved_and_match_active_modes() -> N
         "runtime_root": "/runtime/langchain/chats/chat",
         "message": {"role": "user", "content": "build a workflow"},
         "command_context": {
-            "active_modes": ["build"],
-            "activated_this_turn": ["build"],
+            "active_modes": ["workflow"],
+            "activated_this_turn": ["workflow"],
         },
     }
     with pytest.raises(ValidationError, match="exactly match active_modes"):
@@ -205,7 +204,7 @@ def test_runtime_instructions_are_backend_resolved_and_match_active_modes() -> N
             "instruction_id": "command:build:v1",
             "kind": "command_context",
             "scope": "chat",
-            "name": "build",
+            "name": "workflow",
             "version": 1,
             "content": "backend resolved build instructions",
             "activated_this_turn": True,
@@ -217,7 +216,7 @@ def test_runtime_instructions_are_backend_resolved_and_match_active_modes() -> N
     mismatched = {
         **common,
         "command_context": {
-            "active_modes": ["build"],
+            "active_modes": ["workflow"],
             "activated_this_turn": [],
         },
     }
@@ -237,19 +236,19 @@ def test_runtime_turn_requires_exact_platform_descriptor_set() -> None:
         "runtime_type": "langchain",
         "runtime_session_id": "session",
         "runtime_root": "/runtime/langchain/chats/chat",
-        "message": {"role": "user", "content": "/build"},
+        "message": {"role": "user", "content": "/workflow"},
     }
     with pytest.raises(ValidationError, match="exactly match"):
         RuntimeTurnRequest(**common, active_platform_mcps=["workflow"])
     with pytest.raises(ValidationError, match="exactly match"):
         RuntimeTurnRequest(
             **common,
-            mcp_servers=[{
+            mcp_host_servers=[{
                 "name": "workflow",
                 "source": "platform",
                 "connection": {
-                    "transport": "streamable_http",
-                    "url": "http://platform.test/workflow/",
+                    "transport": "host_gateway",
+                    "capability": "private",
                 },
             }],
         )
@@ -265,10 +264,10 @@ def test_runtime_command_context_rejects_backend_domain_objects() -> None:
             runtime_type="langchain",
             runtime_session_id="session",
             runtime_root="/runtime/langchain/chats/chat",
-            message={"role": "user", "content": "/build"},
+            message={"role": "user", "content": "/workflow"},
             command_context={
                 "workspace_scope_id": "workspace",
-                "active_modes": ["build"],
+                "active_modes": ["workflow"],
                 "workflow": {"node_1": {"node_type": "StartNode"}},
             },
         )

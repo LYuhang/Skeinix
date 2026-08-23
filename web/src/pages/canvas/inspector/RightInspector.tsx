@@ -22,16 +22,16 @@
  *   - run-start auto-focus: on the idle→running EDGE we
  *     `requestInspectorTab('workflow', 'run')`.
  *
- * Layout: the inspector is a flex *sibling* of the canvas (see
- * `CanvasPage.tsx`), never absolutely positioned. Open width is fixed at 380px.
- * Open/closed is the shared `useUIStore.inspectorOpen` slice (#12): the toolbar
- * "Toggle inspector" button and the in-panel collapse chevron flip the same
- * flag. When closed the inspector renders no visible panel (only the always-
- * mounted Check dialog) so the canvas reclaims the full width; the toolbar
- * button reopens it.
+ * Layout: on desktop the inspector remains a resizable flex sibling of the
+ * canvas. On narrow viewports it becomes a bottom sheet with compact and
+ * expanded heights so the canvas stays usable. Open/closed is the shared
+ * `useUIStore.inspectorOpen` slice (#12): the toolbar button and the in-panel
+ * close/collapse controls update the same flag. When closed the inspector
+ * renders no visible panel (only the always-mounted Check dialog), so the
+ * canvas reclaims the available area.
  */
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
 import { useNodes } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -82,6 +82,7 @@ export function RightInspector({ wfId, readOnly = false, canExecute = false, var
   // inspector renders nothing and the canvas reclaims the space.
   const open = useUIStore((s) => s.inspectorOpen);
   const setInspectorOpen = useUIStore((s) => s.setInspectorOpen);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
 
   // ── Scope resolution ───────────────────────────────────────────────────
   const nodes = useNodes();
@@ -172,8 +173,8 @@ export function RightInspector({ wfId, readOnly = false, canExecute = false, var
         />
         <div
           className={variant === 'embedded'
-            ? 'pane-enter-from-right relative flex shrink-0 select-text flex-col bg-surface-work max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-modal max-lg:h-[min(78dvh,42rem)] max-lg:!w-full max-lg:rounded-t-2xl max-lg:border max-lg:border-b-0 max-lg:shadow-modal'
-            : 'pane-enter-from-right surface-sidepanel relative flex shrink-0 select-text flex-col border-y-0 border-r-0 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-modal max-lg:h-[min(78dvh,42rem)] max-lg:!w-full max-lg:rounded-t-2xl max-lg:border max-lg:border-b-0 max-lg:shadow-modal'}
+            ? `pane-enter-from-right relative flex shrink-0 select-text flex-col bg-surface-work max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-modal max-lg:!w-full max-lg:rounded-t-2xl max-lg:border max-lg:border-b-0 max-lg:shadow-modal ${mobileExpanded ? 'max-lg:h-[min(92dvh,50rem)]' : 'max-lg:h-[min(56dvh,34rem)]'}`
+            : `pane-enter-from-right surface-sidepanel relative flex shrink-0 select-text flex-col border-y-0 border-r-0 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-modal max-lg:!w-full max-lg:rounded-t-2xl max-lg:border max-lg:border-b-0 max-lg:shadow-modal ${mobileExpanded ? 'max-lg:h-[min(92dvh,50rem)]' : 'max-lg:h-[min(56dvh,34rem)]'}`}
           style={{ width }}
           role="dialog"
           aria-modal={false}
@@ -189,19 +190,39 @@ export function RightInspector({ wfId, readOnly = false, canExecute = false, var
         label={t('inspector.resize', 'Resize Inspector')}
         className="max-lg:hidden"
       />
-      <div className="flex h-12 shrink-0 items-center justify-between border-b px-3">
+      <div className="grid h-6 shrink-0 place-items-center rounded-t-2xl lg:hidden" aria-hidden="true">
+        <span className="h-1 w-10 rounded-full bg-content-tertiary/45" />
+      </div>
+      <div className="flex h-12 shrink-0 items-center justify-between border-b px-3 max-lg:h-11">
         <div className="text-section">{t('inspector.title', 'Inspector')}</div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="toolbar-icon-button"
-          aria-label={t('inspector.collapse', 'Collapse inspector')}
-          title={t('inspector.collapse', 'Collapse inspector')}
-          data-action="inspector-collapse"
-          onClick={() => setInspectorOpen(false)}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="toolbar-icon-button lg:hidden"
+            aria-label={mobileExpanded
+              ? t('inspector.compact', 'Use compact inspector height')
+              : t('inspector.expand', 'Expand inspector')}
+            title={mobileExpanded
+              ? t('inspector.compact', 'Use compact inspector height')
+              : t('inspector.expand', 'Expand inspector')}
+            onClick={() => setMobileExpanded((expanded) => !expanded)}
+          >
+            {mobileExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="toolbar-icon-button"
+            aria-label={t('inspector.collapse', 'Close inspector')}
+            title={t('inspector.collapse', 'Close inspector')}
+            data-action="inspector-collapse"
+            onClick={() => setInspectorOpen(false)}
+          >
+            <X className="h-4 w-4 lg:hidden" />
+            <ChevronRight className="hidden h-4 w-4 lg:block" />
+          </Button>
+        </div>
       </div>
 
       <Tabs
@@ -282,7 +303,7 @@ export function RightInspector({ wfId, readOnly = false, canExecute = false, var
                 value="batch"
                 className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 data-[state=inactive]:hidden"
               >
-                <BatchTab wfId={wfId} />
+                <BatchTab wfId={wfId} active={activeTab === 'batch'} />
               </TabsContent>
             </>
           ) : null}

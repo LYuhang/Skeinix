@@ -1,5 +1,6 @@
 import type { VfsReadOut } from '@/lib/api/vfs';
 import { parseDelimitedTable } from '@/lib/files/delimited';
+import { useTranslation } from 'react-i18next';
 
 function parseRows(entry: VfsReadOut): Record<string, unknown>[] {
   const ct = entry.content_type.toLowerCase();
@@ -19,8 +20,9 @@ function parseRows(entry: VfsReadOut): Record<string, unknown>[] {
 }
 
 export function TableRenderer({ entry }: { entry: VfsReadOut }) {
+  const { t } = useTranslation();
   const rows = parseRows(entry);
-  if (rows.length === 0) return <div className="text-sm text-muted-foreground">No rows.</div>;
+  if (rows.length === 0) return <div className="text-sm text-muted-foreground">{t('table.empty', 'No rows.')}</div>;
   const cols = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
   return (
     <div className="overflow-auto">

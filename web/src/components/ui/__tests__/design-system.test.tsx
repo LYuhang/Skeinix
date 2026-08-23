@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SearchSelect } from '@/components/ui/search-select';
-import { StatusBadge } from '@/components/ui/status';
+import { ProgressState, StatusBadge } from '@/components/ui/status';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   PaneResizeHandle,
@@ -15,6 +15,7 @@ import { AsyncState } from '@/components/ui/async-state';
 beforeEach(() => {
   window.localStorage.clear();
   Element.prototype.scrollIntoView = vi.fn();
+  setLocale('en');
 });
 
 describe('semantic design primitives', () => {
@@ -35,6 +36,35 @@ describe('semantic design primitives', () => {
     render(<StatusBadge status="warning">Awaiting approval</StatusBadge>);
     expect(screen.getByText('Awaiting approval')).toBeInTheDocument();
     expect(screen.getByText('Awaiting approval')).toHaveClass('text-state-warning');
+  });
+
+  it('uses the rendered ReactNode label as the progressbar accessible name', () => {
+    render(
+      <ProgressState
+        label={<span>任务进度</span>}
+        value={50}
+      />,
+    );
+
+    expect(screen.getByRole('progressbar', { name: '任务进度' }))
+      .toHaveAttribute('aria-labelledby');
+    expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-label', 'Progress');
+  });
+
+  it.each([
+    ['en', 'Technical details'],
+    ['zh', '技术详情'],
+  ] as const)('localizes the AsyncState technical-details fallback in %s', (locale, label) => {
+    setLocale(locale);
+    render(
+      <AsyncState
+        kind="error"
+        title="Failure"
+        technicalDetails="Internal diagnostics"
+      />,
+    );
+
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 
   it('supports explicit underline and vertical tab grammars', () => {
@@ -83,6 +113,22 @@ describe('semantic design primitives', () => {
     await user.keyboard('{ArrowDown}{Enter}');
     expect(combobox).not.toBeInTheDocument();
     expect(onValueChange).toHaveBeenCalledWith('b');
+  });
+
+  it('gives the SearchSelect input a localized accessible name', async () => {
+    setLocale('zh');
+    const user = userEvent.setup();
+    render(
+      <SearchSelect
+        value=""
+        placeholder="选择模型"
+        options={[]}
+        onValueChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '选择模型' }));
+    expect(screen.getByRole('combobox', { name: '搜索' })).toBeInTheDocument();
   });
 
   it('keeps document language synchronized with the selected locale', () => {

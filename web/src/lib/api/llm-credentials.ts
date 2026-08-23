@@ -32,6 +32,7 @@ export interface CredentialPublic {
   name: string;
   description: string | null;
   provider: string;
+  connection_kind?: 'manual' | 'openrouter_oauth';
   runtime_scope: 'langchain' | 'codex';
   model_context_tokens: number | null;
   created_at: string;
@@ -45,6 +46,7 @@ export interface CredentialOwner {
   name: string;
   description: string | null;
   provider: string;
+  connection_kind?: 'manual' | 'openrouter_oauth';
   runtime_scope: 'langchain' | 'codex';
   model_name: string;
   model_context_tokens: number | null;
@@ -85,6 +87,41 @@ export interface UpdateCredentialBody {
   api_key?: string;
 }
 
+export interface CredentialConnectionTest {
+  ok: boolean;
+  outcome: 'connected' | 'credentials_rejected' | 'endpoint_rejected' | 'unreachable';
+  latency_ms: number;
+  upstream_status: number | null;
+}
+
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  description: string;
+  context_length: number | null;
+  input_modalities: string[];
+  output_modalities: string[];
+  supports_tools: boolean;
+  supported_reasoning_efforts: string[];
+  default_reasoning_effort: string | null;
+  pricing: { prompt?: string | null; completion?: string | null };
+  available: boolean;
+}
+
+export interface OpenRouterConnection {
+  connected: boolean;
+  credential_id: string | null;
+  models: OpenRouterModel[];
+  catalog_refreshed_at: string | null;
+  catalog_stale: boolean;
+  error_code: string | null;
+}
+
+export interface OpenRouterStart {
+  authorization_url: string;
+  expires_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Internal: same `authedFetch` shim as `mcp-servers.ts`.
 // ---------------------------------------------------------------------------
@@ -114,17 +151,24 @@ async function authedFetch(
 async function jsonOrThrow<T>(resp: Response, label: string): Promise<T> {
   if (!resp.ok) {
     let detail = '';
+    let code: string | null = null;
     try {
       const j = await resp.json();
       if (j && typeof j === 'object' && 'detail' in j) {
-        detail = ` — ${String((j as { detail: unknown }).detail)}`;
+        const rawDetail = (j as { detail: unknown }).detail;
+        if (typeof rawDetail === 'string') {
+          detail = ` — ${rawDetail}`;
+        } else if (rawDetail && typeof rawDetail === 'object' && 'code' in rawDetail) {
+          code = String((rawDetail as { code: unknown }).code);
+          detail = ` — ${code}`;
+        }
       }
     } catch {
       // ignore non-JSON bodies
     }
-    throw new Error(
+    throw Object.assign(new Error(
       `${label} failed: ${resp.status} ${resp.statusText}${detail}`,
-    );
+    ), { code });
   }
   return (await resp.json()) as T;
 }
@@ -172,5 +216,53 @@ export async function deleteLlmCredential(id: string): Promise<void> {
     throw new Error(
       `deleteLlmCredential failed: ${resp.status} ${resp.statusText}`,
     );
+  }
+}
+
+export async function testLlmCredentialConnection(
+  id: string,
+): Promise<CredentialConnectionTest> {
+  const resp = await authedFetch(`/api/v1/llm-credentials/${id}/test`, {
+    method: 'POST',
+  });
+  return jsonOrThrow<CredentialConnectionTest>(resp, 'testLlmCredentialConnection');
+}
+
+export async function getOpenRouterConnection(): Promise<OpenRouterConnection> {
+  const resp = await authedFetch('/api/v1/llm-credentials/openrouter/status');
+  return jsonOrThrow<OpenRouterConnection>(resp, 'getOpenRouterConnection');
+}
+
+export async function startOpenRouterConnection(): Promise<OpenRouterStart> {
+  const resp = await authedFetch('/api/v1/llm-credentials/openrouter/start', {
+    method: 'POST',
+  });
+  return jsonOrThrow<OpenRouterStart>(resp, 'startOpenRouterConnection');
+}
+
+export async function completeOpenRouterConnection(
+  code: string,
+  state: string,
+): Promise<OpenRouterConnection> {
+  const resp = await authedFetch('/api/v1/llm-credentials/openrouter/callback', {
+    method: 'POST',
+    body: JSON.stringify({ code, state }),
+  });
+  return jsonOrThrow<OpenRouterConnection>(resp, 'completeOpenRouterConnection');
+}
+
+export async function refreshOpenRouterModels(): Promise<OpenRouterConnection> {
+  const resp = await authedFetch('/api/v1/llm-credentials/openrouter/refresh', {
+    method: 'POST',
+  });
+  return jsonOrThrow<OpenRouterConnection>(resp, 'refreshOpenRouterModels');
+}
+
+export async function disconnectOpenRouter(): Promise<void> {
+  const resp = await authedFetch('/api/v1/llm-credentials/openrouter', {
+    method: 'DELETE',
+  });
+  if (!resp.ok) {
+    throw new Error(`disconnectOpenRouter failed: ${resp.status} ${resp.statusText}`);
   }
 }

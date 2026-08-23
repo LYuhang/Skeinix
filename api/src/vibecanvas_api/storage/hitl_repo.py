@@ -16,13 +16,6 @@ from .models_agent_runs import (
     HitlRequest,
     InteractiveArtifact,
 )
-from .models_execution_plans import (
-    ExecutionNodeRun,
-    ExecutionPlan,
-    ExecutionPlanControl,
-    ExecutionPlanRun,
-    ExecutionPlanRunEvent,
-)
 
 
 def _uuid(value: str | uuid.UUID) -> uuid.UUID:
@@ -202,16 +195,11 @@ class HitlRepo:
         ui_payload_json: dict,
         agent_payload_json: dict,
         runtime_correlation_json: dict,
-        execution_plan_run_id: str | None = None,
-        execution_node_run_id: str | None = None,
         resume_payload_json: dict | None = None,
         mark_run_waiting: bool = True,
     ) -> HitlRequest:
-        if sum(
-            bool(value)
-            for value in (run_id, execution_plan_run_id, execution_node_run_id)
-        ) != 1:
-            raise ValueError("HITL request requires exactly one durable owner")
+        if not run_id:
+            raise ValueError("HITL request requires an Agent Run owner")
         existing = await self.session.get(HitlRequest, hitl_request_id)
         if existing is not None:
             materialized = await self._materialize_request(existing)
@@ -221,9 +209,7 @@ class HitlRepo:
             hitl_request_id=hitl_request_id,
             tenant_id=_uuid(tenant_id),
             chat_id=chat_id,
-            run_id=run_id or None,
-            execution_plan_run_id=execution_plan_run_id or None,
-            execution_node_run_id=execution_node_run_id or None,
+            run_id=run_id,
             artifact_id=artifact_id,
             hitl_type=hitl_type,
         )
@@ -503,28 +489,7 @@ class HitlRepo:
         decision: str,
         decision_payload: dict,
         interaction_result: dict | None = None,
-        actor_id: str | None = None,
     ) -> tuple[HitlRequest | None, bool]:
-        owner_probe = (
-            await self.session.execute(
-                select(
-                    HitlRequest.execution_plan_run_id,
-                    HitlRequest.hitl_type,
-                ).where(HitlRequest.hitl_request_id == hitl_request_id)
-            )
-        ).one_or_none()
-        if (
-            owner_probe is not None
-            and owner_probe.execution_plan_run_id
-            and owner_probe.hitl_type == "plan_start_approval"
-        ):
-            return await self._resolve_plan_start(
-                hitl_request_id=hitl_request_id,
-                decision=decision,
-                decision_payload=decision_payload,
-                interaction_result=interaction_result,
-                actor_id=actor_id,
-            )
         # Multiple open frontends may submit the same card. Lock the durable
         # request so exactly one transition emits the resolution event; later
         # submissions receive the already-frozen terminal projection.
@@ -583,166 +548,6 @@ class HitlRepo:
                 if run.status == "waiting_approval":
                     run.status = "running"
                 run.updated_at = now
-        await self._store_request_private(req)
-        await self.session.flush()
-        return req, True
-
-    async def _resolve_plan_start(
-        self,
-        *,
-        hitl_request_id: str,
-        decision: str,
-        decision_payload: dict,
-        interaction_result: dict | None,
-        actor_id: str | None,
-    ) -> tuple[HitlRequest | None, bool]:
-        """Resolve Plan Start with Plan -> Run -> HITL lock ordering.
-
-        This continuation is entirely database-owned; it never resumes the
-        planner Turn and can therefore survive refreshes and worker restarts.
-        """
-        plan_run_id = (
-            await self.session.execute(
-                select(HitlRequest.execution_plan_run_id).where(
-                    HitlRequest.hitl_request_id == hitl_request_id
-                )
-            )
-        ).scalar_one_or_none()
-        if not plan_run_id:
-            return None, False
-        plan_id = (
-            await self.session.execute(
-                select(ExecutionPlanRun.plan_id).where(
-                    ExecutionPlanRun.plan_run_id == plan_run_id
-                )
-            )
-        ).scalar_one_or_none()
-        if not plan_id:
-            return None, False
-        plan = (
-            await self.session.execute(
-                select(ExecutionPlan)
-                .where(ExecutionPlan.plan_id == plan_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        ).scalar_one_or_none()
-        run = (
-            await self.session.execute(
-                select(ExecutionPlanRun)
-                .where(ExecutionPlanRun.plan_run_id == plan_run_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        ).scalar_one_or_none()
-        req = (
-            await self.session.execute(
-                select(HitlRequest)
-                .where(HitlRequest.hitl_request_id == hitl_request_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        ).scalar_one_or_none()
-        if plan is None or run is None or req is None:
-            return None, False
-        await self._materialize_request(req)
-        if req.status != "pending" or run.status != "awaiting_approval":
-            return req, False
-
-        normalized = {
-            "approve": "approved",
-            "approved": "approved",
-            "deny": "denied",
-            "denied": "denied",
-            "cancel": "cancelled",
-            "cancelled": "cancelled",
-        }.get(decision, decision)
-        if normalized not in {"approved", "denied", "cancelled"}:
-            raise ValueError("Plan Start accepts only approve, deny, or cancel")
-        now = _now()
-        req.status = normalized
-        req.decision_payload_json = _safe_json(decision_payload)
-        req.interaction_result_json = _safe_json(
-            interaction_result or decision_payload
-        )
-        req.is_interacted = True
-        req.resolved_at = now
-        req.updated_at = now
-
-        if normalized == "approved":
-            run.status = "queued"
-            plan.lifecycle_status = "approved"
-            start_node = (
-                await self.session.execute(
-                    select(ExecutionNodeRun)
-                    .where(
-                        ExecutionNodeRun.plan_run_id == run.plan_run_id,
-                        ExecutionNodeRun.node_type == "start",
-                        ExecutionNodeRun.status == "pending",
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            if start_node is not None:
-                start_node.status = "ready"
-                start_node.updated_at = now
-            event_type = "run_approved"
-            event_payload = {"status": "queued", "approved_by": "user"}
-            control_id = f"planctl_{uuid.uuid4().hex}"
-            control_private = await content_encryption_service().encrypt_json(
-                self.session,
-                tenant_id=run.tenant_id,
-                resource_type="chat",
-                resource_id=run.chat_id,
-                purpose="execution_plan_control",
-                record_id=control_id,
-                value={"decision": "approved", "hitl_request_id": hitl_request_id},
-            )
-            self.session.add(ExecutionPlanControl(
-                control_id=control_id,
-                tenant_id=run.tenant_id,
-                plan_id=run.plan_id,
-                plan_run_id=run.plan_run_id,
-                action="approve_start",
-                actor_type="user",
-                actor_id=actor_id or "unknown_user",
-                expected_revision=run.revision,
-                idempotency_key=f"approve-start:{hitl_request_id}",
-                hitl_request_id=hitl_request_id,
-                delivery_status="applied",
-                private_ciphertext=control_private.ciphertext,
-                private_nonce=control_private.nonce,
-                private_key_id=control_private.key_id,
-                applied_at=now,
-            ))
-        else:
-            run.status = "not_started"
-            run.ended_at = now
-            event_type = "run_not_started"
-            event_payload = {
-                "status": "not_started",
-                "reason": "denied" if normalized == "denied" else "cancelled",
-            }
-        run.updated_at = now
-        run.last_event_seq += 1
-        event = await content_encryption_service().encrypt_json(
-            self.session,
-            tenant_id=run.tenant_id,
-            resource_type="chat",
-            resource_id=run.chat_id,
-            purpose="execution_plan_run_event",
-            record_id=f"{run.plan_run_id}:{run.last_event_seq}",
-            value=event_payload,
-        )
-        self.session.add(ExecutionPlanRunEvent(
-            plan_run_id=run.plan_run_id,
-            seq=run.last_event_seq,
-            tenant_id=run.tenant_id,
-            event_type=event_type,
-            payload_ciphertext=event.ciphertext,
-            payload_nonce=event.nonce,
-            payload_key_id=event.key_id,
-        ))
         await self._store_request_private(req)
         await self.session.flush()
         return req, True

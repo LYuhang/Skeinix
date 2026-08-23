@@ -129,12 +129,12 @@ def test_platform_mcp_capability_rejects_incomplete_identity() -> None:
 
 def test_platform_mcp_capability_binds_trusted_approval_mode() -> None:
     token = mint_platform_mcp_capability(
-        server="plan",
+        server="build",
         approval_mode="always_ask",
         **_KWARGS,
     )
     capability = verify_platform_mcp_capability(
-        token, secret="secret", server="plan", now=120,
+        token, secret="secret", server="build", now=120,
     )
     assert capability is not None
     assert capability.approval_mode == "always_ask"
@@ -142,5 +142,5 @@ def test_platform_mcp_capability_binds_trusted_approval_mode() -> None:
     payload = _payload(token)
     payload["am"] = "untrusted"
     assert verify_platform_mcp_capability(
-        _resign(payload), secret="secret", server="plan", now=120,
+        _resign(payload), secret="secret", server="build", now=120,
     ) is None

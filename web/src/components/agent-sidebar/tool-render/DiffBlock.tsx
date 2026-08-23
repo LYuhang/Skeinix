@@ -1,6 +1,7 @@
 import { CopyButton } from './CopyButton';
 import { Button } from '@/components/ui/button';
 import { ExternalLink } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface DiffBlockProps {
   diff: string;
@@ -19,6 +20,7 @@ function lineTone(line: string): string {
 }
 
 export function DiffBlock({ diff, path, onOpenFile }: DiffBlockProps) {
+  const { t } = useTranslation();
   const lines = diff.split('\n');
   return (
     <section
@@ -39,10 +41,10 @@ export function DiffBlock({ diff, path, onOpenFile }: DiffBlockProps) {
             onClick={() => onOpenFile(path)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            Open file
+            {t('tool.diff.openFile', 'Open file')}
           </Button>
         )}
-        <CopyButton value={diff} label="Copy diff" />
+        <CopyButton value={diff} label={t('tool.diff.copy', 'Copy diff')} />
       </header>
       <div className="max-h-96 overflow-auto py-1 font-mono text-xs leading-5">
         {lines.map((line, index) => (

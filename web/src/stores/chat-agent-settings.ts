@@ -4,13 +4,12 @@ import { getAgentSettings, type AgentSettings } from '@/stores/agent-settings';
 
 interface ChatAgentSettingsEntry {
   settings: AgentSettings;
-  locked: boolean;
 }
 
 interface ChatAgentSettingsState {
   entries: Record<string, ChatAgentSettingsEntry>;
   initializeDraft: (chatId: string) => void;
-  hydrateLocked: (chatId: string, settings: AgentSettings) => void;
+  hydrateBound: (chatId: string, settings: AgentSettings) => void;
   set: (chatId: string, patch: Partial<AgentSettings>) => void;
 }
 
@@ -21,21 +20,21 @@ export const useChatAgentSettingsStore = create<ChatAgentSettingsState>((set) =>
     : {
         entries: {
           ...state.entries,
-          [chatId]: { settings: getAgentSettings(), locked: false },
+          [chatId]: { settings: getAgentSettings() },
         },
       }),
-  hydrateLocked: (chatId, settings) => set((state) => ({
-    entries: {
-      ...state.entries,
-      [chatId]: { settings, locked: true },
-    },
-  })),
+  hydrateBound: (chatId, settings) => set((state) => state.entries[chatId]
+    ? state
+    : {
+        entries: {
+          ...state.entries,
+          [chatId]: { settings },
+        },
+      }),
   set: (chatId, patch) => set((state) => {
     const current = state.entries[chatId] ?? {
       settings: getAgentSettings(),
-      locked: false,
     };
-    if (current.locked) return state;
     return {
       entries: {
         ...state.entries,

@@ -1,12 +1,13 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
-
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 import { E2ECookieSession } from './cookie-session';
-
-type RuntimeName = 'langchain' | 'codex';
+import {
+  loadCompleteChatHistory,
+  provisionRealRuntime,
+  selectRuntimeModel,
+  type RealRuntimeName,
+  type RealRuntimeProfile,
+} from './real-runtime-profile';
 type DeploymentRow = {
   id: string;
   name: string;
@@ -34,7 +35,7 @@ const MINIMAL_WORKFLOW = {
 
 test.setTimeout(1_800_000);
 
-for (const runtime of ['langchain', 'codex'] as const satisfies readonly RuntimeName[]) {
+for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRuntimeName[]) {
   test.describe(`${runtime} /deployment every tool`, () => {
     const session = new E2ECookieSession();
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -43,8 +44,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
     const updatedName = `${deploymentName}-updated`;
     const slug = `accept-${runtime}-${Date.now().toString(36)}-${Math.random()
       .toString(36).slice(2, 8)}`;
-    const accountRoots: string[] = [];
-    let accountModelLabel: string | null = null;
+    let runtimeProfile: RealRuntimeProfile | null = null;
     let workflowId = '';
     let deploymentId = '';
     let chatId = '';
@@ -52,46 +52,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
     test.beforeAll(async () => {
       console.log(`[${runtime}-deployment] registering disposable user`);
       await session.register(`command-deployment-${runtime}`);
-      await session.api('/api/v1/agent-runtime/settings', {
-        method: 'PUT',
-        body: JSON.stringify({ default_runtime_type: runtime }),
-      });
-      if (runtime === 'codex') {
-        const source = join(homedir(), '.codex', 'auth.json');
-        if (!existsSync(source)) throw new Error(`host Codex identity is missing: ${source}`);
-        const me = await session.api('/api/v1/auth/me').then((response) => response.json()) as {
-          tenant_id: string; user_id: string;
-        };
-        const runtimeRoot = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        const accountRoot = resolve(runtimeRoot, me.tenant_id, me.user_id, 'codex-account-v1');
-        if (!accountRoot.startsWith(`${runtimeRoot}${sep}`)) {
-          throw new Error('refusing to create Codex identity outside AGENT_RUNTIME_ROOT');
-        }
-        const accountHome = join(accountRoot, '.codex');
-        mkdirSync(accountHome, { recursive: true, mode: 0o700 });
-        chmodSync(accountHome, 0o700);
-        copyFileSync(source, join(accountHome, 'auth.json'));
-        chmodSync(join(accountHome, 'auth.json'), 0o600);
-        accountRoots.push(accountRoot);
-        const capabilities = await session.api('/api/v1/agent-runtime/capabilities')
-          .then((response) => response.json()) as {
-            authenticated: boolean | null;
-            default_model_id: string | null;
-            models: Array<{ id: string; label: string; provider?: string }>;
-          };
-        expect(capabilities.authenticated).toBe(true);
-        const model = capabilities.models.find((candidate) => candidate.provider === 'chatgpt')
-          ?? capabilities.models.find((candidate) => (
-            candidate.id === 'codex:default' || candidate.id.startsWith('codex:managed:')
-          ))
-          ?? capabilities.models[0];
-        if (!model) throw new Error('Codex exposes no configured model');
-        accountModelLabel = capabilities.default_model_id === model.id
-          ? null
-          : `${model.label}${model.provider ? ` (${model.provider})` : ''}`;
-      }
+      runtimeProfile = await provisionRealRuntime(session, runtime);
       const workflow = await session.api('/api/v1/workflows', {
         method: 'POST',
         body: JSON.stringify({ name: workflowName, description: 'Deployment acceptance', tags: [] }),
@@ -126,14 +87,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
           method: 'DELETE',
         }, true);
       }
-      for (const accountRoot of accountRoots) {
-        const root = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        if (resolve(accountRoot).startsWith(`${root}${sep}`)) {
-          rmSync(accountRoot, { recursive: true, force: true });
-        }
-      }
+      runtimeProfile?.cleanup();
     });
 
     test.beforeEach(async ({ context }: { context: BrowserContext }) => {
@@ -144,10 +98,8 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       await page.goto('/chat');
       await expect(page.locator('[data-role="agent-composer-input"]')).toBeVisible({ timeout: 30_000 });
       await page.locator('[data-action="chat-new"]').click();
-      if (runtime === 'codex' && accountModelLabel) {
-        await page.locator('[data-role="chat-model-select"]').click();
-        await page.getByRole('option', { name: accountModelLabel, exact: true }).click();
-      }
+      if (!runtimeProfile) throw new Error(`${runtime} Runtime profile was not provisioned`);
+      await selectRuntimeModel(page, runtimeProfile);
       await page.locator('[data-role="chat-composer-options-toggle"]').click();
       await expect(page.locator('[data-role="chat-approval-mode-select"]')).toHaveCount(0);
       await expect(page.locator('[data-role="agent-composer-input"]')).toBeEditable({
@@ -265,6 +217,8 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       deploymentId = '';
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator(`button[data-chat-id="${chatId}"]`).click();
+      await loadCompleteChatHistory(page, chatId);
       const persisted = page.locator('[data-tool-activity="true"]');
       await expect(persisted).toHaveCount(5, { timeout: 60_000 });
       for (let index = 0; index < 5; index += 1) {

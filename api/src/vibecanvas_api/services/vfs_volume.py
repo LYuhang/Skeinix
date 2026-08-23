@@ -277,6 +277,12 @@ class EncryptedObjectStoreChatRuntimeVolumeProvider:
                 relative = os.path.relpath(path, root).replace(os.sep, "/")
                 if relative.startswith("../") or relative in {"", ".", ".."}:
                     raise ValueError("Chat Runtime Volume path escaped its root")
+                # Account auth is staged into the private Runtime so Codex can
+                # atomically refresh it, but its durable authority remains the
+                # user-scoped account cache. Never duplicate credentials into
+                # every Chat Runtime snapshot.
+                if relative == ".codex/auth.json":
+                    continue
                 files[relative] = path
         return files
 

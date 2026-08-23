@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain.tools import ToolRuntime
@@ -12,19 +13,45 @@ from vibecanvas_api.services.platform_mcp.resource_tools import (
     deployment_delete,
     deployment_list,
     deployment_update,
-    get_knowledge_base,
-    list_knowledge_bases,
-    list_knowledge_files,
-    read_knowledge_file,
-    search_knowledge,
+    knowledge_get,
+    knowledge_create,
+    knowledge_update,
+    knowledge_list,
+    knowledge_search,
     task_create_scheduled_run,
     task_delete_scheduled_run,
     task_list,
     task_update_scheduled_run,
 )
+from vibecanvas_api.services.knowledge_packages import package_snapshot
 from vibecanvas_api.storage.db import session_scope
-from vibecanvas_api.storage.models_kb import KbChunk
-from vibecanvas_api.storage.repo_kb import KbRepo
+
+
+KNOWLEDGE_FORMAT_FIXTURES = {
+    "README.md": b"# Format matrix\n\nAuthoritative package fixtures.",
+    "docs/report.pdf": b"%PDF-1.7\nknowledge-pdf\n%%EOF",
+    "slides/deck.pptx": b"PK\x03\x04knowledge-pptx",
+    "images/diagram.png": b"\x89PNG\r\n\x1a\nknowledge-image",
+    "media/brief.mp3": b"ID3knowledge-audio",
+    "media/demo.mp4": b"\x00\x00\x00\x18ftypmp42knowledge-video",
+    "notes/guide.md": b"# Guide\n\nKnowledge markdown.",
+    "tables/metrics.csv": b"name,value\nalpha,1\n",
+}
+
+KNOWLEDGE_FORMAT_CONTRACT = {
+    "README.md": ("text/markdown", "markdown", "pending"),
+    "docs/report.pdf": ("application/pdf", "pdf", "pending"),
+    "slides/deck.pptx": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pptx",
+        "pending",
+    ),
+    "images/diagram.png": ("image/png", "binary", "stored"),
+    "media/brief.mp3": ("audio/mpeg", "binary", "stored"),
+    "media/demo.mp4": ("video/mp4", "binary", "stored"),
+    "notes/guide.md": ("text/markdown", "markdown", "pending"),
+    "tables/metrics.csv": ("table/csv", "csv", "pending"),
+}
 
 
 async def _register(client) -> tuple[dict[str, str], dict]:
@@ -42,7 +69,39 @@ async def _register(client) -> tuple[dict[str, str], dict]:
     return headers, me
 
 
-def _runtime(me: dict, *, authorization_client) -> ToolRuntime:
+class _Sandbox:
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = dict(files or {})
+
+    async def list_dir(self, path: str) -> dict:
+        prefix = path.rstrip("/") + "/"
+        entries: dict[str, dict] = {}
+        for file_path, data in self.files.items():
+            if not file_path.startswith(prefix):
+                continue
+            relative = file_path[len(prefix):]
+            name, separator, _rest = relative.partition("/")
+            entries[name] = {
+                "name": name,
+                "is_dir": bool(separator),
+                "size": 0 if separator else len(data),
+            }
+        return {"ok": True, "entries": sorted(entries.values(), key=lambda item: item["name"])}
+
+    async def read_bytes(self, path: str) -> dict:
+        if path not in self.files:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, "data": self.files[path]}
+
+    async def write_bytes(self, path: str, data: bytes) -> dict:
+        self.files[path] = data
+        return {"ok": True, "bytes": len(data)}
+
+
+def _runtime(me: dict, *, authorization_client, sandbox=None) -> ToolRuntime:
+    async def sandbox_session():
+        return sandbox
+
     return ToolRuntime(
         state={},
         context=SimpleNamespace(
@@ -55,6 +114,7 @@ def _runtime(me: dict, *, authorization_client) -> ToolRuntime:
             authorization_membership_status="active",
             authorization_session_generation=1,
             authorization_authentication_strength="test",
+            sandbox_session=sandbox_session,
         ),
         config={"configurable": {"thread_id": "resource-tools"}},
         stream_writer=lambda _chunk: None,
@@ -87,12 +147,14 @@ async def test_knowledge_platform_mcp_uses_platform_database(
     )
     assert created.status_code == 201, created.text
     knowledge_base_id = created.json()["id"]
+    sandbox = _Sandbox()
     runtime = _runtime(
         me,
         authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
     )
 
-    content, artifact = await list_knowledge_bases.coroutine(
+    content, artifact = await knowledge_list.coroutine(
         runtime=runtime,
     )
     listed = json.loads(content)
@@ -100,56 +162,17 @@ async def test_knowledge_platform_mcp_uses_platform_database(
     assert [item["id"] for item in listed] == [knowledge_base_id]
     assert listed[0]["access"]["effective_role"] == "manager"
 
-    content, _ = await get_knowledge_base.coroutine(
+    content, _ = await knowledge_get.coroutine(
         kb_id=knowledge_base_id,
         runtime=runtime,
     )
-    assert json.loads(content)["id"] == knowledge_base_id
+    materialized = json.loads(content)
+    assert materialized["id"] == knowledge_base_id
+    assert materialized["package_version"] == 1
+    assert materialized["readme"].endswith("/README.md")
+    assert sandbox.files[materialized["readme"]].startswith(b"# Platform knowledge")
 
-    async with session_scope(tenant_id=me["tenant_id"]) as database:
-        repo = KbRepo(database)
-        knowledge = await repo.get_active(uuid.UUID(knowledge_base_id))
-        assert knowledge is not None
-        source = await repo.create_file(
-            kb_id=knowledge.id,
-            tenant_id=uuid.UUID(me["tenant_id"]),
-            user_id=uuid.UUID(me["user_id"]),
-            name="handbook.md",
-            parser_type="markdown",
-            mime_type="text/markdown",
-            file_size=20,
-            content_hash="a" * 64,
-            status="indexed",
-        )
-        await repo.bulk_insert_chunks([KbChunk(
-            file_id=source.id,
-            kb_id=knowledge.id,
-            tenant_id=uuid.UUID(me["tenant_id"]),
-            chunk_index=0,
-            text="The exact handbook identifier is AGENTIC_FOLDER_OK.",
-            chunk_metadata={"heading": "Verification"},
-        )])
-        await database.commit()
-        source_id = str(source.id)
-
-    content, _ = await list_knowledge_files.coroutine(
-        kb_id=knowledge_base_id,
-        runtime=runtime,
-    )
-    folder = json.loads(content)
-    assert folder["virtual_root"] == f"/knowledge/{knowledge_base_id}"
-    assert folder["files"][0]["virtual_path"].endswith("/handbook.md")
-
-    content, _ = await read_knowledge_file.coroutine(
-        kb_id=knowledge_base_id,
-        file_id=source_id,
-        runtime=runtime,
-    )
-    page = json.loads(content)
-    assert page["has_more"] is False
-    assert page["chunks"][0]["text"].endswith("AGENTIC_FOLDER_OK.")
-
-    content, _ = await search_knowledge.coroutine(
+    content, _ = await knowledge_search.coroutine(
         kb_ids=[knowledge_base_id],
         query="anything",
         top_k=5,
@@ -157,6 +180,188 @@ async def test_knowledge_platform_mcp_uses_platform_database(
     )
     results = json.loads(content)["results"]
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_knowledge_package_create_update_get_and_conflict(client) -> None:
+    headers, me = await _register(client)
+    sandbox = _Sandbox({
+        "/data/new-package/README.md": b"# Evaluation\n\nPackage guide.",
+        "/data/new-package/notes/findings.md": b"Initial finding.",
+    })
+    runtime = _runtime(
+        me,
+        authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
+    )
+    with patch(
+        "vibecanvas_api.services.platform_mcp.resource_tools.enqueue_package_indexing",
+        new=AsyncMock(),
+    ):
+        content, _ = await knowledge_create.coroutine(
+            name="Evaluation notes",
+            description="Reusable evaluation research",
+            source_path="/data/new-package",
+            runtime=runtime,
+        )
+        created = json.loads(content)
+        assert created["package_version"] == 1
+        assert created["file_count"] == 2
+
+        package_files = await client.get(
+            f"/api/v1/kb/{created['id']}/files",
+            headers=headers,
+        )
+        assert package_files.status_code == 200, package_files.text
+        assert {
+            item["name"]: (item["mime_type"], item["parser_type"])
+            for item in package_files.json()
+        } == {
+            "README.md": ("text/markdown", "markdown"),
+            "notes/findings.md": ("text/markdown", "markdown"),
+        }
+
+        sandbox.files["/data/new-package/notes/findings.md"] = b"Updated finding."
+        content, _ = await knowledge_update.coroutine(
+            kb_id=created["id"],
+            source_path="/data/new-package",
+            expected_version=1,
+            runtime=runtime,
+        )
+        updated = json.loads(content)
+        assert updated["package_version"] == 2
+
+        with pytest.raises(RuntimeError, match="knowledge_version_conflict"):
+            await knowledge_update.coroutine(
+                kb_id=created["id"],
+                source_path="/data/new-package",
+                expected_version=1,
+                runtime=runtime,
+            )
+
+        content, _ = await knowledge_get.coroutine(
+            kb_id=created["id"],
+            destination_path="/data/reopened",
+            runtime=runtime,
+        )
+        reopened = json.loads(content)
+        assert reopened["package_version"] == 2
+        assert sandbox.files["/data/reopened/notes/findings.md"] == b"Updated finding."
+
+
+@pytest.mark.asyncio
+async def test_knowledge_format_matrix_create_update_snapshot_and_raw_preview(
+    client,
+) -> None:
+    """Known office/media/text types keep canonical MIME and parser status."""
+    headers, me = await _register(client)
+    source_root = "/data/format-matrix"
+    sandbox = _Sandbox({
+        f"{source_root}/{path}": data
+        for path, data in KNOWLEDGE_FORMAT_FIXTURES.items()
+    })
+    runtime = _runtime(
+        me,
+        authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
+    )
+    with patch(
+        "vibecanvas_api.services.platform_mcp.resource_tools.enqueue_package_indexing",
+        new=AsyncMock(),
+    ):
+        content, _ = await knowledge_create.coroutine(
+            name="Format matrix",
+            source_path=source_root,
+            runtime=runtime,
+        )
+        created = json.loads(content)
+        assert created["package_version"] == 1
+
+        listed = await client.get(
+            f"/api/v1/kb/{created['id']}/files",
+            headers=headers,
+        )
+        assert listed.status_code == 200, listed.text
+        rows = {item["name"]: item for item in listed.json()}
+        assert {
+            path: (row["mime_type"], row["parser_type"], row["status"])
+            for path, row in rows.items()
+        } == KNOWLEDGE_FORMAT_CONTRACT
+
+        for path, expected_bytes in KNOWLEDGE_FORMAT_FIXTURES.items():
+            raw = await client.get(
+                f"/api/v1/kb/{created['id']}/files/{rows[path]['id']}/raw",
+                headers=headers,
+            )
+            assert raw.status_code == 200, (path, raw.text)
+            assert raw.content == expected_bytes
+            assert raw.headers["content-type"].split(";", 1)[0] == (
+                KNOWLEDGE_FORMAT_CONTRACT[path][0]
+            )
+
+        revision_two = {
+            path: data + b"\nrevision-two"
+            for path, data in KNOWLEDGE_FORMAT_FIXTURES.items()
+        }
+        sandbox.files = {
+            f"{source_root}/{path}": data
+            for path, data in revision_two.items()
+        }
+        updated_content, _ = await knowledge_update.coroutine(
+            kb_id=created["id"],
+            source_path=source_root,
+            expected_version=1,
+            runtime=runtime,
+        )
+        assert json.loads(updated_content)["package_version"] == 2
+
+        updated_list = await client.get(
+            f"/api/v1/kb/{created['id']}/files",
+            headers=headers,
+        )
+        assert updated_list.status_code == 200, updated_list.text
+        assert {
+            item["name"]: (
+                item["mime_type"],
+                item["parser_type"],
+                item["status"],
+            )
+            for item in updated_list.json()
+        } == KNOWLEDGE_FORMAT_CONTRACT
+
+    async with session_scope(tenant_id=me["tenant_id"]) as session:
+        snapshot = await package_snapshot(session, uuid.UUID(created["id"]))
+    assert {
+        item.path: (item.content_type, item.data)
+        for item in snapshot
+    } == {
+        path: (KNOWLEDGE_FORMAT_CONTRACT[path][0], data)
+        for path, data in revision_two.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_knowledge_create_validates_before_persisting_resource(client) -> None:
+    headers, me = await _register(client)
+    sandbox = _Sandbox({
+        "/data/invalid-package/notes/findings.md": b"Missing root README.",
+    })
+    runtime = _runtime(
+        me,
+        authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
+    )
+
+    with pytest.raises(ValueError, match="README.md"):
+        await knowledge_create.coroutine(
+            name="Must not persist",
+            source_path="/data/invalid-package",
+            runtime=runtime,
+        )
+
+    listed = await client.get("/api/v1/kb", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json() == []
 
 
 @pytest.mark.asyncio

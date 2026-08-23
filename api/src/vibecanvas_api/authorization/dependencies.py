@@ -54,6 +54,30 @@ def context_for_auth(
     """
     return AuthzRequestContext(
         active_organization_id=auth.active_organization_id,
+        admitted_resource_organization_id=str(
+            getattr(
+                getattr(request, "state", None),
+                "admitted_resource_organization_id",
+                "",
+            )
+            or ""
+        ),
+        admitted_resource_type=str(
+            getattr(
+                getattr(request, "state", None),
+                "admitted_resource_type",
+                "",
+            )
+            or ""
+        ),
+        admitted_resource_id=str(
+            getattr(
+                getattr(request, "state", None),
+                "admitted_resource_id",
+                "",
+            )
+            or ""
+        ),
         request_id=str(
             getattr(getattr(request, "state", None), "request_id", "") or ""
         ),

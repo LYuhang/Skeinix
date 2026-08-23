@@ -47,6 +47,16 @@ def identity_lookup_digest(provider: str, provider_uid: str) -> str:
     )
 
 
+def profile_email_lookup_digest(email: str) -> str:
+    """Return the global exact-email lookup used by explicit sharing search.
+
+    Password identities already use this domain, so existing password users
+    can be backfilled without decrypting their profiles. The value remains a
+    keyed, case-insensitive digest and is never returned to clients.
+    """
+    return identity_lookup_digest("password", email)
+
+
 async def encrypt_user_profile(
     session: AsyncSession,
     *,

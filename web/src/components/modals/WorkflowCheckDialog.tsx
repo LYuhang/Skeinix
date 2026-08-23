@@ -23,6 +23,7 @@
  *     onError toast still fires for parity with other failure paths.
  */
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Copy, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -51,6 +52,7 @@ export function WorkflowCheckDialog({
   onOpenChange,
   wfId,
 }: WorkflowCheckDialogProps) {
+  const { t } = useTranslation();
   const check = useCheckWorkflow(wfId);
 
   // Fire-on-open. Re-running on `wfId` change covers the (rare) case of
@@ -84,9 +86,9 @@ export function WorkflowCheckDialog({
         <DialogHeader>
           <div className="flex items-start justify-between gap-2 pr-6">
             <div className="space-y-1">
-              <DialogTitle>Workflow check</DialogTitle>
+              <DialogTitle>{t('workflowCheck.title', 'Workflow check')}</DialogTitle>
               <DialogDescription>
-                Server-side validation of the current draft.
+                {t('workflowCheck.description', 'Server-side validation of the current draft.')}
               </DialogDescription>
             </div>
             {errorText && (
@@ -94,11 +96,11 @@ export function WorkflowCheckDialog({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 shrink-0"
-                aria-label="Copy error"
-                title="Copy error"
+                aria-label={t('workflowCheck.copyError', 'Copy error')}
+                title={t('workflowCheck.copyError', 'Copy error')}
                 onClick={() => {
                   void navigator.clipboard.writeText(errorText);
-                  toast.success('Error copied');
+                  toast.success(t('workflowCheck.errorCopied', 'Error copied'));
                 }}
               >
                 <Copy className="h-4 w-4" />
@@ -126,7 +128,7 @@ export function WorkflowCheckDialog({
               data-role="check-ok"
             >
               <CheckCircle2 className="h-5 w-5 shrink-0" />
-              <p className="text-sm font-medium">Workflow valid</p>
+              <p className="text-sm font-medium">{t('workflowCheck.valid', 'Workflow valid')}</p>
             </div>
           ) : (
             <div
@@ -151,6 +153,7 @@ export function WorkflowCheckDialog({
  * makes the existing message readable.
  */
 function CheckFailBody({ raw }: { raw: string | null | undefined }) {
+  const { t } = useTranslation();
   const { headline, detail, hint } = formatCheckError(raw);
   // Rewrite bare `node_<n>` ids in the displayed strings to `node_name(node_id)`
   // so the user can locate the offending node. The draft is the id→name source.
@@ -173,7 +176,7 @@ function CheckFailBody({ raw }: { raw: string | null | undefined }) {
           className="text-xs text-foreground/80"
           data-testid="check-fail-hint"
         >
-          What to fix: {hint}
+          {t('workflowCheck.whatToFix', 'What to fix:')} {hint}
         </p>
       )}
     </div>

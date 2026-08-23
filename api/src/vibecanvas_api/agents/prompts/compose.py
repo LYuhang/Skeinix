@@ -5,7 +5,7 @@ DETERMINISTIC order so the prompt prefix is byte-stable when active_modes is
 unchanged (prompt-prefix cache friendly).
 
   Base      : IDENTITY + MEMORY + CONVERSATION + SURFACE
-  /build and /browser are persistent command contexts injected by
+  /workflow and /browser are persistent command contexts injected by
   CommandContextEdit, not system prompt fragments.
   (+ MCP catalog when MCPs are installed, always at a fixed tail position)
   (+ skill catalog when skills are available, always at a fixed tail position)

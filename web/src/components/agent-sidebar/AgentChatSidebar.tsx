@@ -52,6 +52,8 @@ import {
 import { queryClient } from '@/app/query-client';
 import { cn } from '@/lib/utils';
 import { mergeHistoryWindow, type ChatHistoryWindow } from '@/pages/chat/history-window';
+import { fileRefFromAgentPath } from '@/lib/preview/protocol';
+import { standalonePreviewHref } from '@/lib/preview/standalone-preview';
 
 const AGENT_WIDTH_KEY = 'vibecanvas.agentWidth';
 const MIN_AGENT_WIDTH = 320;
@@ -166,6 +168,15 @@ export function AgentChatSidebar({
         'This chat is currently controlling a browser in another window. Cancel control there, then continue here.',
       )
     : null;
+  const openFilePreview = useCallback((path: string) => {
+    const fileRef = fileRefFromAgentPath(path, { chatId: activeChatId });
+    if (!fileRef) return;
+    window.open(
+      standalonePreviewHref(fileRef),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }, [activeChatId]);
   const selectedHistory = useChatHistory(
     lastWfId,
     selectedChatIsPersisted ? activeChatId : null,
@@ -380,7 +391,7 @@ export function AgentChatSidebar({
       <Button
         variant="outline"
         size="icon"
-        aria-label="Open agent sidebar"
+        aria-label={t('agentSidebar.open', 'Open agent sidebar')}
         title={running ? t('agent_running', 'Agent is running…') : t('agent', 'Agent')}
         data-action="agent-sidebar-expand"
         data-agent-running={running || undefined}
@@ -516,7 +527,7 @@ export function AgentChatSidebar({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Close agent sidebar"
+            aria-label={t('agentSidebar.close', 'Close agent sidebar')}
             data-action="agent-sidebar-collapse"
             onClick={() => setCollapsed(true)}
           >
@@ -546,6 +557,7 @@ export function AgentChatSidebar({
           hasOlderHistory={hasOlderHistory}
           olderHistoryLoading={olderHistoryLoading}
           onLoadOlderHistory={loadOlderHistory}
+          onOpenFilePreview={openFilePreview}
           onSubmitInteractiveAsNewMessage={submitInteractiveAsNewMessage}
         />
         <div className={cn('relative flex-none', embedded && 'bg-surface-work before:pointer-events-none before:absolute before:-top-5 before:inset-x-0 before:h-5 before:bg-gradient-to-t before:from-surface-work before:to-transparent')}>

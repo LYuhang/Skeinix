@@ -11,7 +11,7 @@ describe('interactive artifact renderer contract', () => {
     expect(interactiveArtifactRenderError({
       kind: 'interactive_artifact',
       component_type: 'file_preview',
-      props: { path: '/mount/report.pdf', mime: 'application/pdf' },
+      props: { path: '/mount/report.pdf', file_type: 'pdf' },
     })).toBeNull();
   });
 

@@ -89,6 +89,23 @@ class LlmCredentialsRepo:
         ).mappings().all()
         return [dict(row) for row in rows]
 
+    async def get_openrouter_for_user(
+        self,
+        user_id: str | uuid.UUID,
+    ) -> Optional[dict]:
+        row = (
+            await self.session.execute(
+                text(
+                    "SELECT * FROM llm_credentials "
+                    "WHERE user_id = :user_id "
+                    "AND connection_kind = 'openrouter_oauth' "
+                    "AND deleted_at IS NULL LIMIT 1"
+                ),
+                {"user_id": user_id},
+            )
+        ).mappings().one_or_none()
+        return dict(row) if row else None
+
     async def list_authorized(
         self,
         authorized_ids: tuple[str, ...] | list[str] | set[str],

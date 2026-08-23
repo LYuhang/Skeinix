@@ -7,15 +7,14 @@ the same body validation + secret generation + version-head resolution
 + tenant assertion without standing up the auth DI stack.
 
 Coverage:
-* Pydantic body validation: slug regex, trigger enum, version_pin enum,
-  cron presence + syntax, cron_tz IANA, rate_limit_qps nonneg.
+* Pydantic body validation: slug regex, API/webhook trigger enum,
+  version_pin enum, and non-negative rate_limit_qps.
 * G4b trust boundary: smuggled ``tenant_id`` / ``user_id`` /
   ``api_key_hash`` in the body are silently dropped by
   ``ConfigDict(extra='ignore')``.
 * Create-api → returns ``api_key`` plaintext + endpoint_url; stores
   the SHA-256 hash (NOT the plaintext) in ``deployments.api_key_hash``.
 * Create-webhook → returns ``hmac_secret`` plaintext + webhook_url.
-* Create-cron → returns no plaintext credential.
 * Version-head resolution: ``version_pin='specific'`` without pinned
   fields ⇒ defaults to current HEAD; 404 if no versions yet.
 * Tenant binding: row created under ``ctx.tenant_id``, NOT body's
@@ -55,6 +54,18 @@ async def _seed_tenant_and_user(pg_engine, tenant_id, user_id) -> None:
             ),
             {"u": user_id, "t": tenant_id,
              "e": f"t4-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO organizations("
+                "tenant_id, kind, slug, name, created_by"
+                ") VALUES (:t, 'personal', :slug, 'Test account', :u)"
+            ),
+            {
+                "t": tenant_id,
+                "u": user_id,
+                "slug": f"test-{tenant_id.hex}",
+            },
         )
 
 
@@ -189,11 +200,12 @@ def test_slug_validation():
 
 def test_trigger_type_validation():
     import pydantic
-    with pytest.raises(pydantic.ValidationError):
-        CreateDeploymentBody.model_validate({
-            "wf_id": "wf_x", "name": "B", "slug": "bot",
-            "trigger_type": "ssh", "version_pin": "head",
-        })
+    for unsupported in ("ssh", "cron"):
+        with pytest.raises(pydantic.ValidationError):
+            CreateDeploymentBody.model_validate({
+                "wf_id": "wf_x", "name": "B", "slug": "bot",
+                "trigger_type": unsupported, "version_pin": "head",
+            })
 
 
 def test_version_pin_validation():
@@ -203,46 +215,6 @@ def test_version_pin_validation():
             "wf_id": "wf_x", "name": "B", "slug": "bot",
             "trigger_type": "api", "version_pin": "main",
         })
-
-
-def test_cron_expr_validation():
-    import pydantic
-    # Missing cron_expr for trigger_type='cron'
-    with pytest.raises(pydantic.ValidationError):
-        CreateDeploymentBody.model_validate({
-            "wf_id": "wf_x", "name": "C", "slug": "c",
-            "trigger_type": "cron", "version_pin": "head",
-        })
-    # Invalid cron syntax
-    with pytest.raises(pydantic.ValidationError):
-        CreateDeploymentBody.model_validate({
-            "wf_id": "wf_x", "name": "C", "slug": "c",
-            "trigger_type": "cron", "version_pin": "head",
-            "cron_expr": "not a cron",
-        })
-    # Valid cron passes
-    body = CreateDeploymentBody.model_validate({
-        "wf_id": "wf_x", "name": "C", "slug": "c",
-        "trigger_type": "cron", "version_pin": "head",
-        "cron_expr": "0 9 * * *",
-    })
-    assert body.cron_expr == "0 9 * * *"
-
-
-def test_cron_tz_validation():
-    import pydantic
-    with pytest.raises(pydantic.ValidationError):
-        CreateDeploymentBody.model_validate({
-            "wf_id": "wf_x", "name": "C", "slug": "c",
-            "trigger_type": "cron", "version_pin": "head",
-            "cron_expr": "0 9 * * *", "cron_tz": "Mars/Olympus",
-        })
-    body = CreateDeploymentBody.model_validate({
-        "wf_id": "wf_x", "name": "C", "slug": "c",
-        "trigger_type": "cron", "version_pin": "head",
-        "cron_expr": "0 9 * * *", "cron_tz": "Asia/Shanghai",
-    })
-    assert body.cron_tz == "Asia/Shanghai"
 
 
 def test_rate_limit_qps_nonneg():
@@ -376,51 +348,6 @@ async def test_create_webhook_returns_hmac_secret(pg_engine, app_engine):
 
         deployment = await DeploymentsRepo(s).get(uuid.UUID(resp["id"]))
         assert await resolve_deployment_hmac_secret(s, deployment) == secret
-
-
-@pytest.mark.asyncio
-async def test_create_cron_no_plaintext_credential(pg_engine, app_engine):
-    """``trigger_type='cron'`` returns no plaintext credential —
-    the dispatcher (T10) iterates rows under admin scope."""
-    from vibecanvas_api.storage.db import session_scope
-
-    tenant_id = uuid.uuid4()
-    user_id = uuid.uuid4()
-    wf_id = f"wf_{uuid.uuid4().hex[:8]}"
-    await _seed_tenant_and_user(pg_engine, tenant_id, user_id)
-    await _seed_workflow(app_engine, wf_id, tenant_id, user_id)
-
-    ctx = _StubCtx(tenant_id, user_id)
-    body = CreateDeploymentBody.model_validate({
-        "wf_id": wf_id, "name": "Daily", "slug": "daily-1",
-        "trigger_type": "cron", "version_pin": "head",
-        "cron_expr": "0 9 * * *", "cron_tz": "Asia/Shanghai",
-    })
-
-    async with session_scope(tenant_id=str(tenant_id)) as s:
-        resp = await create_deployment(
-            body=body, request=_StubRequest(), ctx=ctx, session=s,
-            service=_AllowAuthz(),
-        )
-        await s.commit()
-
-    assert "id" in resp
-    assert "api_key" not in resp
-    assert "hmac_secret" not in resp
-    assert "endpoint_url" not in resp
-    assert "webhook_url" not in resp
-
-    async with pg_engine.connect() as c:
-        row = (await c.execute(
-            text(
-                "SELECT cron_expr, cron_tz, trigger_type "
-                "FROM deployments WHERE id = :id"
-            ),
-            {"id": uuid.UUID(resp["id"])},
-        )).one()
-    assert row.cron_expr == "0 9 * * *"
-    assert row.cron_tz == "Asia/Shanghai"
-    assert row.trigger_type == "cron"
 
 
 @pytest.mark.asyncio

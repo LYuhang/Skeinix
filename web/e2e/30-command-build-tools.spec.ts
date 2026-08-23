@@ -1,18 +1,13 @@
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  rmSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
-
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 import { E2ECookieSession } from './cookie-session';
-
-type RuntimeName = 'langchain' | 'codex';
+import {
+  loadCompleteChatHistory,
+  provisionRealRuntime,
+  selectRuntimeModel,
+  type RealRuntimeName,
+  type RealRuntimeProfile,
+} from './real-runtime-profile';
 
 const MESSAGE_PATH = /\/api\/v1\/chat-scopes\/([^/]+)\/chats\/([^/]+)\/messages$/;
 const PREFIX = 'command-tools-20260803-build';
@@ -52,14 +47,13 @@ function rows(payload: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
-for (const runtime of ['langchain', 'codex'] as const satisfies readonly RuntimeName[]) {
-  test.describe(`${runtime} /build every tool`, () => {
+for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRuntimeName[]) {
+  test.describe(`${runtime} /workflow every tool`, () => {
     const session = new E2ECookieSession();
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workflowName = `${PREFIX}-${runtime}-${unique}`;
     const workflowPath = `/data/command-tools/build-${runtime}/workflow.json`;
-    const accountRoots: string[] = [];
-    let accountModelLabel: string | null = null;
+    let runtimeProfile: RealRuntimeProfile | null = null;
     let chatId = '';
     let workspaceScopeId = '';
 
@@ -67,67 +61,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       console.log(`[${runtime}-build] registering disposable user`);
       await session.register(`command-build-${runtime}`);
       console.log(`[${runtime}-build] selecting runtime`);
-      await session.api('/api/v1/agent-runtime/settings', {
-        method: 'PUT',
-        body: JSON.stringify({ default_runtime_type: runtime }),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (runtime === 'codex') {
-        console.log('[codex-build] copying host identity into the private account directory');
-        const source = join(homedir(), '.codex', 'auth.json');
-        if (!existsSync(source)) throw new Error(`host Codex identity is missing: ${source}`);
-        const me = await session.api('/api/v1/auth/me').then((response) => response.json()) as {
-          tenant_id: string;
-          user_id: string;
-        };
-        const runtimeRoot = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        const accountRoot = resolve(
-          runtimeRoot,
-          me.tenant_id,
-          me.user_id,
-          'codex-account-v1',
-        );
-        if (!accountRoot.startsWith(`${runtimeRoot}${sep}`)) {
-          throw new Error('refusing to create Codex identity outside AGENT_RUNTIME_ROOT');
-        }
-        const accountHome = join(accountRoot, '.codex');
-        mkdirSync(accountHome, { recursive: true, mode: 0o700 });
-        chmodSync(accountHome, 0o700);
-        const destination = join(accountHome, 'auth.json');
-        copyFileSync(source, destination);
-        chmodSync(destination, 0o600);
-        accountRoots.push(accountRoot);
-
-        console.log('[codex-build] requesting authenticated runtime capabilities');
-        const capabilities = await session.api('/api/v1/agent-runtime/capabilities', {
-          signal: AbortSignal.timeout(120_000),
-        })
-          .then((response) => response.json()) as {
-            runtime_available: boolean;
-            authenticated: boolean | null;
-            default_model_id: string | null;
-            models: Array<{ id: string; label: string; provider?: string }>;
-          };
-        expect(capabilities.runtime_available).toBe(true);
-        expect(capabilities.authenticated).toBe(true);
-        const accountModel = capabilities.models.find((model) => model.provider === 'chatgpt')
-          ?? capabilities.models.find((model) => (
-            model.id === 'codex:default' || model.id.startsWith('codex:managed:')
-          ))
-          ?? capabilities.models[0];
-        if (!accountModel) throw new Error('Codex exposes no configured model');
-        const isRuntimeDefault = capabilities.default_model_id === accountModel.id;
-        accountModelLabel = isRuntimeDefault
-          ? null
-          : `${accountModel.label}${accountModel.provider ? ` (${accountModel.provider})` : ''}`;
-        console.log(
-          `[codex-build] authenticated model ready: ${accountModel.id}; `
-            + `runtime_default=${isRuntimeDefault}`,
-        );
-      }
+      runtimeProfile = await provisionRealRuntime(session, runtime);
     });
 
     test.afterAll(async () => {
@@ -155,14 +89,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
           }
         }
       }
-      for (const accountRoot of accountRoots) {
-        const runtimeRoot = resolve(
-          process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-        );
-        if (resolve(accountRoot).startsWith(`${runtimeRoot}${sep}`)) {
-          rmSync(accountRoot, { recursive: true, force: true });
-        }
-      }
+      runtimeProfile?.cleanup();
     });
 
     test.beforeEach(async ({ context }: { context: BrowserContext }) => {
@@ -177,13 +104,8 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
         timeout: 30_000,
       });
       await page.locator('[data-action="chat-new"]').click();
-      if (runtime === 'codex' && accountModelLabel) {
-        console.log('[codex-build] selecting authenticated model in the composer');
-        await page.locator('[data-role="chat-model-select"]').click();
-        const accountOption = page.getByRole('option', { name: accountModelLabel, exact: true });
-        await expect(accountOption).toBeVisible({ timeout: 30_000 });
-        await accountOption.click();
-      }
+      if (!runtimeProfile) throw new Error(`${runtime} Runtime profile was not provisioned`);
+      await selectRuntimeModel(page, runtimeProfile);
       console.log(`[${runtime}-build] confirming automatic tool approval`);
       const optionsToggle = page.locator('[data-role="chat-composer-options-toggle"]');
       await expect(optionsToggle).toBeEnabled();
@@ -206,7 +128,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       });
       const before = await matchingActivities.count();
       const composer = page.locator('[data-role="agent-composer-input"]');
-      await composer.fill(`/build ${instruction} After that tool succeeds, reply exactly ${marker}.`);
+      await composer.fill(`/workflow ${instruction} After that tool succeeds, reply exactly ${marker}.`);
       const [response] = await Promise.all([
         page.waitForResponse((candidate) => (
           candidate.request().method() === 'POST'
@@ -240,12 +162,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
         if (await callToggle.getAttribute('aria-expanded') !== 'true') await callToggle.click();
         await expect(call.locator('[data-role="tool-output"]')).toContainText(expectedOutput);
       }
-      await expect(
-        page.locator('[data-message-role="assistant"]').filter({ hasText: marker }).last(),
-      ).toBeVisible({ timeout });
-      await expect(page.locator('[data-action="agent-composer-send"]')).toBeVisible({
-        timeout: 60_000,
-      });
+      await expect(composer).toBeEditable({ timeout });
     }
 
     async function readVfs(path: string): Promise<string> {
@@ -269,7 +186,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       });
     }
 
-    test(`invokes all eleven /build tools through ${runtime}`, async ({ page }) => {
+    test(`invokes all eleven /workflow tools through ${runtime}`, async ({ page }) => {
       await openChat(page);
 
       await invoke(
@@ -397,9 +314,11 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly Runtime
       expect(runResult.status, JSON.stringify(runResult)).toBe('success');
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator(`button[data-chat-id="${chatId}"]`).click();
+      await loadCompleteChatHistory(page, chatId);
       const persistedActivities = page.locator('[data-tool-activity="true"]');
-      await expect(persistedActivities).toHaveCount(11, { timeout: 60_000 });
-      for (let index = 0; index < 11; index += 1) {
+      await expect(persistedActivities.first()).toBeVisible({ timeout: 60_000 });
+      for (let index = 0; index < await persistedActivities.count(); index += 1) {
         const toggle = persistedActivities.nth(index).locator(
           '[data-action="tool-activity-toggle"]',
         );

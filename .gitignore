@@ -37,7 +37,14 @@ build/
 web/screenshots/
 web/playwright-report/
 web/test-results/
-output/playwright/
+# Generated acceptance evidence and local rendering fixtures.
+output/
+
+# A Windows artifact path passed to a WSL-hosted browser controller becomes a
+# literal Linux filename (for example, `C:\\Temp\\capture.png`). Keep these
+# cross-OS acceptance artifacts out of source control as well.
+**/C:\\*.png
+**/C:\\Temp\\*
 
 # Private development documentation
 # Keep public user/contributor documentation directly under docs/. Put local

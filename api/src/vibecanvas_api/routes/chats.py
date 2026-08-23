@@ -60,11 +60,10 @@ from ..authorization.types import (
     ResourceType,
 )
 from ..config import config as app_config
-from ..diagrams.validator import parse_and_validate
 from ..security.upload_scanner import require_clean_upload
 from ..schemas.access import access_from_decision, decision_allows_content
 from ..schemas.chat import (
-    ActiveAgentRun, ActiveDiagramViewUpdate, Attachment,
+    ActiveAgentRun, Attachment,
     BackgroundJobCancelBody, BackgroundJobOut,
     BackgroundResultsControl,
     BrowserBindingOut, ChatInventoryItem, ChatListItem, ChatRenameBody,
@@ -76,8 +75,6 @@ from ..schemas.chat import (
 from ..schemas.pagination import Page, PageRequest
 from ..services.user_mount_workspace import mount_scope_id as _mount_scope_id
 from ..storage.chat_repo import ChatRepo
-from ..storage.models import VfsArtifact
-from ..storage.execution_plan_repo import ExecutionPlanRepo
 from ..storage.db import session_scope
 from ..storage.background_jobs_repo import (
     BackgroundJobsRepo,
@@ -96,7 +93,6 @@ from ..streaming.turn_runtime import (
 # turn and the `/browser` handoff producer with the frozen started/done envelope.
 from ..services.llm_credentials_inject import merge_agent_settings_override
 from ..services.object_store import get_object_store
-from ..services.file_revision import vfs_row_revision
 from ..services.sandbox.manager import get_sandbox_manager
 from ..services.vfs_volume import get_chat_runtime_volume_provider
 from ..services.agent_runtime.capabilities import (
@@ -104,8 +100,10 @@ from ..services.agent_runtime.capabilities import (
     codex_capabilities,
     codex_credential_id,
     codex_managed_model,
+    codex_openrouter_model,
     langchain_capabilities,
     langchain_credential_id,
+    langchain_openrouter_model,
     runtime_model_connection_id,
     validate_model_effort,
 )
@@ -118,11 +116,11 @@ from ..services.agent_runtime.orchestrator import (
     AgentRuntimeOrchestrator,
     private_runtime_root,
 )
-from ..services.agent_runtime.mcp import (
+from ..services.agent_runtime.mcp_host_resolution import (
     McpSelectionError,
-    custom_mcp_descriptors,
     platform_mcp_names_for_modes,
-    platform_mcp_descriptors,
+    resolve_custom_mcp_authority,
+    resolve_platform_mcp_authority,
 )
 from ..services.agent_runtime.instructions import command_instructions_for_modes
 from ..services.runtime_skills import runtime_skill_descriptors
@@ -163,15 +161,13 @@ SSE_HEADERS = {
 }
 
 AVAILABLE_COMMANDS_BY_SURFACE: dict[str, set[str]] = {
-    "chat": {"task", "deployment", "knowledge", "build", "diagram"},
-    "browser": {"task", "deployment", "knowledge", "build", "browser", "diagram"},
+    "chat": {"task", "deployment", "knowledge", "workflow", "diagram", "document"},
+    "browser": {"task", "deployment", "knowledge", "workflow", "browser", "diagram", "document"},
 }
 
 def _available_commands(surface: str, runtime_type: str | None = None) -> set[str]:
-    commands = set(AVAILABLE_COMMANDS_BY_SURFACE.get(surface, set()))
-    if runtime_type == "langchain":
-        commands.add("plan")
-    return commands
+    del runtime_type
+    return set(AVAILABLE_COMMANDS_BY_SURFACE.get(surface, set()))
 
 
 def _chat_carrier_scope_id(user_id: str) -> str:
@@ -1714,7 +1710,6 @@ async def decide_hitl_request(
         decision=effective_decision,
         decision_payload=body.decision_payload,
         interaction_result=body.interaction_result,
-        actor_id=auth.user_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"hitl request {hitl_request_id} not found")
@@ -1934,97 +1929,6 @@ async def get_chat_state(
         mcp_server_ids=(selection or {}).get("mcp_server_ids", []),
         mcp_config_revision=(selection or {}).get("mcp_config_revision", 0),
     )
-
-
-@router.patch(
-    "/chats/{chat_id}/active-diagram/view",
-    dependencies=[Depends(current_user)],
-)
-async def update_active_diagram_view(
-    chat_id: str,
-    body: ActiveDiagramViewUpdate,
-    request: Request,
-    chat_repo: ChatRepo = Depends(get_chat_repo),
-    session: AsyncSession = Depends(tenant_db),
-    auth: AuthContext = Depends(current_user),
-    service: AuthzService = Depends(get_authz_service),
-) -> dict:
-    """Persist trusted Preview selection and canvas-space viewport context."""
-    await _authorize_chat(
-        request=request,
-        auth=auth,
-        service=service,
-        chat_id=chat_id,
-        action=Action.EXECUTE,
-        consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-    )
-    active = await chat_repo.get_active_diagram(chat_id)
-    diagram_ref = active.get("diagram_ref") if isinstance(active, dict) else None
-    if not isinstance(diagram_ref, dict):
-        raise HTTPException(status_code=409, detail="active_diagram_missing")
-    if any((
-        diagram_ref.get("path") != body.path,
-        diagram_ref.get("revision") != body.revision,
-        diagram_ref.get("source_hash") != body.source_hash,
-    )):
-        raise HTTPException(
-            status_code=409,
-            detail="active_diagram_revision_conflict",
-        )
-
-    workspace_scope = _chat_workspace_scope_id(chat_id)
-    row = await session.get(VfsArtifact, (workspace_scope, body.path))
-    if (
-        row is None
-        or vfs_row_revision(row) != body.revision
-        or not row.object_key
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="active_diagram_revision_conflict",
-        )
-    raw = get_object_store().fetch_bytes(row.object_key)
-    if f"sha256:{hashlib.sha256(raw).hexdigest()}" != body.source_hash:
-        raise HTTPException(
-            status_code=409,
-            detail="active_diagram_revision_conflict",
-        )
-    document, issues = parse_and_validate(raw)
-    if document is None or any(issue.severity == "error" for issue in issues):
-        raise HTTPException(status_code=409, detail="active_diagram_invalid")
-    known_ids = {
-        *[node.id for node in document.model.nodes],
-        *[edge.id for edge in document.model.edges],
-        *[group.id for group in document.model.groups],
-    }
-    unknown = [
-        element_id
-        for element_id in body.selected_element_ids
-        if element_id not in known_ids
-    ]
-    if unknown:
-        raise HTTPException(
-            status_code=422,
-            detail="active_diagram_selection_not_found",
-        )
-    try:
-        updated = await chat_repo.update_active_diagram_view(
-            chat_id,
-            expected_path=body.path,
-            expected_revision=body.revision,
-            expected_source_hash=body.source_hash,
-            selected_element_ids=body.selected_element_ids,
-            viewport_bounds=(
-                body.viewport_bounds.model_dump()
-                if body.viewport_bounds is not None
-                else None
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail="chat_not_found") from exc
-    return {"active_diagram": updated}
 
 
 @router.delete(
@@ -2379,7 +2283,7 @@ async def post_message(
         cmd = None
     else:
         # `/command` parsing (Design §6 — a tool cannot do this; it lives at the
-        # routes layer). Resolve a LEADING /build|/browser token, strip it from
+        # routes layer). Resolve a leading slash command, strip it from
         # the content, and reconcile the persisted active_modes for this chat.
         cmd, stripped = parse_command(body.content)
     agent_surface = body.agent_surface or "chat"
@@ -2400,12 +2304,7 @@ async def post_message(
         notice_payload = {
             "level": "info",
             "code": "command_not_available",
-            "message": (
-                "/plan is available only with the LangChain Runtime. Switch "
-                "the Runtime before starting a new Plan."
-                if cmd == "plan"
-                else f"/{cmd} is not available on the {agent_surface} surface."
-            ),
+            "message": f"/{cmd} is not available on the {agent_surface} surface.",
             "turn_disposition": "cancel",
         }
 
@@ -2696,14 +2595,6 @@ async def post_message(
     # Runtime capabilities are Turn-scoped, so allocate the durable Run id
     # before constructing any custom MCP or model descriptor.
     turn_id = new_turn_id()
-    execution_plan_controls = await ExecutionPlanRepo(
-        session
-    ).claim_control_projections(
-        chat_id=chat_id,
-        creator_user_id=auth.user_id,
-        delivered_to_turn_id=turn_id,
-    )
-
     if control_projection is not None:
         existing_selection = await chat_repo.get_mcp_selection(chat_id)
         if existing_selection is None:
@@ -2716,7 +2607,7 @@ async def post_message(
     except ValueError as exc:  # schema validation normally catches this
         raise HTTPException(status_code=422, detail="invalid MCP server id") from exc
     try:
-        selected_custom_mcp_servers = await custom_mcp_descriptors(
+        selected_custom_mcp_authority = await resolve_custom_mcp_authority(
             auth.tenant_id,
             user_id=auth.user_id,
             chat_id=chat_id,
@@ -2782,32 +2673,13 @@ async def post_message(
     # relay.
 
     thread_id = ChatRepo.checkpointer_thread_id(auth.user_id, scope_id, chat_id)
-    model_message_content = stripped
-    if execution_plan_controls:
-        control_json = json.dumps(
-            {"controls": execution_plan_controls},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        model_message_content = (
-            "<system-reminder>\n"
-            '<execution-plan-controls schema-version="1">\n'
-            "These durable control outcomes were requested by the user. "
-            "Treat cancellation as authoritative, do not continue cancelled "
-            "work, and use the identifiers to correlate the affected Plan or "
-            "subagent node.\n"
-            f"{control_json}\n"
-            "</execution-plan-controls>\n"
-            "</system-reminder>"
-            + (f"\n\n{stripped}" if stripped else "")
-        )
     user_message = {
         "role": "user",
         # Slash commands are platform control syntax, not Agent dialogue. The
         # Runtime receives only the command-stripped body; the Runtime-neutral
         # product transcript below persists the exact original text for display
         # and audit.
-        "content": model_message_content,
+        "content": stripped,
     }
     if cmd is not None:
         cfg = COMMAND_MODES.get(cmd)
@@ -2824,11 +2696,6 @@ async def post_message(
         user_message.setdefault("additional_kwargs", {})["control"] = (
             control_projection
         )
-    if execution_plan_controls:
-        user_message.setdefault("additional_kwargs", {})[
-            "execution_plan_controls"
-        ] = execution_plan_controls
-
     # Resolve and validate the Chat-bound model/effort against the SAME runtime
     # catalog rendered by the composer. A stale or cross-runtime choice is a
     # protocol error, never a silent fallback to a different model.
@@ -2839,30 +2706,13 @@ async def post_message(
         if stored_settings_payload is not None
         else None
     )
-    if stored_settings is not None and requested_settings is not None:
-        # Older clients may keep sending the already-rendered selection. Accept
-        # identical explicit fields, but never let a Settings change or another
-        # Chat's local state mutate this Chat after its first accepted Turn.
-        requested_values = requested_settings.model_dump(exclude_none=True)
-        stored_values = stored_settings.model_dump()
-        if any(
-            stored_values.get(field) != value
-            for field, value in requested_values.items()
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "runtime_configuration_immutable",
-                    "runtime_type": runtime_binding["runtime_type"],
-                },
-            )
+    # A request may explicitly change the model or reasoning effort between
+    # Turns. If it omits settings, Resume keeps the Chat's last accepted
+    # selection instead of re-evaluating the account-wide defaults.
     settings = stored_settings or requested_settings
+    if requested_settings is not None:
+        settings = requested_settings
     runtime_type = RuntimeType(runtime_binding["runtime_type"])
-    if runtime_type != RuntimeType.LANGCHAIN and "plan" in active_modes:
-        # Fail closed for a historical sticky value created before a Runtime
-        # change or by direct metadata manipulation.
-        active_modes = active_modes - {"plan"}
-        await chat_repo.set_active_modes(chat_id, active_modes)
     requested_model_id = settings.model_id if settings is not None else None
     # A missing picker value means "keep this Chat's model" after the first
     # Turn.  Re-evaluating the global default here can silently move a resumed
@@ -2920,7 +2770,7 @@ async def post_message(
                 },
             )
         try:
-            validate_model_effort(
+            selected_runtime_model = validate_model_effort(
                 runtime_capabilities,
                 model_id=selected_model_id,
                 reasoning_effort=selected_effort,
@@ -2935,6 +2785,9 @@ async def post_message(
                 if account_model_id is not None or managed_model is not None
                 else codex_credential_id(effective_codex_model_id)
             )
+            selected_openrouter_model = codex_openrouter_model(
+                effective_codex_model_id
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=409,
@@ -2943,7 +2796,7 @@ async def post_message(
     else:
         runtime_capabilities = langchain_capabilities(credential_rows)
         try:
-            validate_model_effort(
+            selected_runtime_model = validate_model_effort(
                 runtime_capabilities,
                 model_id=selected_model_id,
                 reasoning_effort=selected_effort,
@@ -2966,6 +2819,9 @@ async def post_message(
             ) from exc
         account_model_id = None
         managed_model = None
+        selected_openrouter_model = langchain_openrouter_model(
+            effective_langchain_model_id
+        )
     effective_runtime_model_id = (
         selected_model_id or runtime_capabilities.default_model_id
     )
@@ -2980,45 +2836,6 @@ async def post_message(
     runtime_connection_id = runtime_model_connection_id(
         runtime_type,
         effective_runtime_model_id,
-    )
-    try:
-        persisted_runtime_binding = await runtime_repo.set_runtime_model_id(
-            chat_id,
-            runtime_type=runtime_type.value,
-            model_id=effective_runtime_model_id,
-            connection_id=runtime_connection_id,
-            agent_settings={
-                "model_id": effective_runtime_model_id,
-                "temperature": settings.temperature if settings is not None else None,
-                "max_tokens": settings.max_tokens if settings is not None else None,
-                "timeout": settings.timeout if settings is not None else None,
-                "reasoning_effort": (
-                    settings.reasoning_effort if settings is not None else None
-                ),
-            },
-        )
-    except ValueError as exc:
-        if str(exc) not in {
-            "runtime connection is immutable after first turn",
-            "runtime configuration is immutable after first turn",
-        }:
-            raise
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": (
-                    "runtime_connection_immutable"
-                    if "connection" in str(exc)
-                    else "runtime_configuration_immutable"
-                ),
-                "runtime_type": runtime_type.value,
-            },
-        ) from exc
-    if persisted_runtime_binding is None:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    runtime_binding = persisted_runtime_binding
-    settings = AgentSettings.model_validate(
-        runtime_binding["runtime_agent_settings"]
     )
     credential_row = (
         await LlmCredentialsRepo(session).get_for_user(
@@ -3035,6 +2852,19 @@ async def post_message(
                 "runtime_type": runtime_type.value,
             },
         )
+    if selected_openrouter_model is not None and credential_row is not None:
+        if credential_row.get("connection_kind") != "openrouter_oauth":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "model_not_available_for_runtime",
+                    "runtime_type": runtime_type.value,
+                },
+            )
+        credential_row = {
+            **credential_row,
+            "model_name": selected_openrouter_model,
+        }
 
     if runtime_type == RuntimeType.LANGCHAIN:
         if settings is not None and any(
@@ -3096,20 +2926,20 @@ async def post_message(
             model=model_name,
             updated_at=f"managed:{managed_profile_id}",
         )
-    elif runtime_type == RuntimeType.CODEX:
-        # Codex API mode must always resolve to an explicitly configured
-        # managed profile or a user-owned saved credential.  Falling through
-        # to ``config.agent`` here would silently recreate the removed
-        # platform-default API path and let an unconnected Codex Chat run with
-        # credentials the user never selected.
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "model_not_available_for_runtime",
-                "runtime_type": runtime_type.value,
-            },
-        )
     elif credential_row is None:
+        if runtime_type == RuntimeType.CODEX:
+            # Codex API mode must always resolve to an explicitly configured
+            # managed profile or a user-owned saved credential. Falling
+            # through to ``config.agent`` here would silently recreate the
+            # removed platform-default API path. A real personal credential
+            # continues through the shared broker branch below.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "model_not_available_for_runtime",
+                    "runtime_type": runtime_type.value,
+                },
+            )
         configured_model = str(app_config.agent.model or "")
         configured_provider, separator, configured_name = (
             configured_model.partition(":")
@@ -3209,9 +3039,9 @@ async def post_message(
         effective_active_modes,
         runtime_type=runtime_type.value,
     )
-    runtime_mcp_servers = [
-        *selected_custom_mcp_servers,
-        *platform_mcp_descriptors(
+    host_mcp_authority = [
+        *selected_custom_mcp_authority,
+        *resolve_platform_mcp_authority(
             active_platform_mcps,
             tenant_id=auth.tenant_id,
             user_id=auth.user_id,
@@ -3259,7 +3089,7 @@ async def post_message(
         ),
         message=user_message,
         instructions=runtime_instructions,
-        mcp_servers=runtime_mcp_servers,
+        mcp_servers=host_mcp_authority,
         skills=runtime_skills,
         todo_items=todo_state["items"],
         artifact_refs=interactive_artifact_refs,
@@ -3304,7 +3134,8 @@ async def post_message(
         approval_mode=body.approval_mode,
         surface=body.surface,
         active_platform_mcps=active_platform_mcps,
-        mcp_servers=runtime_mcp_servers,
+        mcp_config_revision=int(mcp_selection["mcp_config_revision"]),
+        mcp_host_servers=host_mcp_authority,
         skills=runtime_skills,
         todo_items=todo_state["items"],
         todo_revision=todo_state["revision"],
@@ -3402,7 +3233,12 @@ async def post_message(
                 "runtime_type": runtime_binding["runtime_type"],
                 "runtime_session_id": runtime_binding["runtime_session_id"],
                 "runtime_version": runtime_binding["runtime_version"],
-                "model_id": settings.model_id if settings is not None else None,
+                "runtime_connection_id": runtime_connection_id,
+                "model_id": effective_runtime_model_id,
+                "provider_model_id": selected_runtime_model.provider_model_id,
+                "model_provider": selected_runtime_model.provider,
+                "api_source": selected_runtime_model.api_source,
+                "api_protocol": selected_runtime_model.api_protocol,
                 "reasoning_effort": (
                     settings.reasoning_effort if settings is not None else None
                 ),
@@ -3434,7 +3270,7 @@ async def post_message(
                     ).hexdigest(),
                     "server_config_revisions": {
                         item.server_id: item.config_revision
-                        for item in runtime_mcp_servers
+                        for item in host_mcp_authority
                         if item.server_id is not None
                     },
                 },
@@ -3472,6 +3308,28 @@ async def post_message(
                 "X-Turn-Id": reserved_run.run_id,
             },
         )
+
+    # Only an accepted, newly reserved Turn may advance the Chat's Resume
+    # selection. An active-run rejection or an idempotent POST replay must not
+    # overwrite the model/source chosen by the already-authoritative Turn.
+    persisted_runtime_binding = await runtime_repo.set_runtime_model_selection(
+        chat_id,
+        runtime_type=runtime_type.value,
+        model_id=effective_runtime_model_id,
+        connection_id=runtime_connection_id,
+        agent_settings={
+            "model_id": effective_runtime_model_id,
+            "temperature": settings.temperature if settings is not None else None,
+            "max_tokens": settings.max_tokens if settings is not None else None,
+            "timeout": settings.timeout if settings is not None else None,
+            "reasoning_effort": (
+                settings.reasoning_effort if settings is not None else None
+            ),
+        },
+    )
+    if persisted_runtime_binding is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    runtime_binding = persisted_runtime_binding
 
     # Product transcript is authoritative and Runtime-neutral. Persist the
     # completed user message exactly once, in the same transaction that made
@@ -3575,7 +3433,7 @@ async def post_message(
         chat_id=chat_id,
         turn_id=turn_id,
         first_turn=is_first,
-        custom_mcp_count=len(selected_custom_mcp_servers),
+        custom_mcp_count=len(selected_custom_mcp_authority),
         platform_mcp_count=len(active_platform_mcps),
         skill_count=len(runtime_skills),
     )

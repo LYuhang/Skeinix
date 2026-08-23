@@ -91,6 +91,13 @@ class PreviewContent(_PreviewModel):
     range_supported: bool = Field(default=False, alias="rangeSupported")
 
 
+class PreviewRendition(_PreviewModel):
+    format: Literal["pdf"]
+    content_type: Literal["application/pdf"] = Field(alias="contentType")
+    url: str
+    source_revision: str = Field(alias="sourceRevision")
+
+
 class PreviewTextMetadata(_PreviewModel):
     encoding: Literal["utf-8"] = "utf-8"
     bom: bool = False
@@ -113,13 +120,15 @@ class PreviewDescriptorV1(_PreviewModel):
     revision: str
     renderer: Literal[
         "text", "markdown", "html", "pdf", "docx", "pptx",
-        "spreadsheet", "image", "audio", "video", "diagram", "unsupported",
+        "spreadsheet", "image", "audio", "video", "drawio",
+        "unsupported",
     ]
     load_policy: Literal[
         "inline", "stream", "range", "manual", "unsupported",
     ] = Field(alias="loadPolicy")
     capabilities: PreviewCapabilities
     content: PreviewContent | None = None
+    rendition: PreviewRendition | None = None
     text: PreviewTextMetadata | None = None
     diagram: dict[str, Any] | None = None
     error: PreviewErrorInfo | None = None
@@ -137,12 +146,3 @@ class PreviewFileWriteOut(_PreviewModel):
     revision: str
     size_bytes: int = Field(alias="sizeBytes")
     content_type: str = Field(alias="contentType")
-
-
-class DiagramPreviewExportBody(_PreviewModel):
-    file_ref: FileRefV1 = Field(alias="fileRef")
-    expected_revision: str = Field(alias="expectedRevision", min_length=1)
-    format: Literal["svg", "png", "pdf"]
-    theme: Literal["light"] = "light"
-    scale: float = Field(default=1.0, ge=0.5, le=2.0)
-    background: Literal["white"] = "white"

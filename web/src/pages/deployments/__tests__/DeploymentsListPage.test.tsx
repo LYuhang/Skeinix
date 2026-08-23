@@ -37,10 +37,26 @@ vi.mock('@/lib/api/deployments', () => ({
         rate_limit_qps: 10,
         invoke_count: 42,
         last_invoked_at: null,
-        last_fire_at: null,
-        cron_expr: null,
-        cron_tz: null,
         created_at: '2026-05-24T00:00:00Z',
+        updated_at: null,
+        deleted_at: null,
+      },
+      {
+        id: '00000000-0000-0000-0000-000000000002',
+        tenant_id: '00000000-0000-0000-0000-0000000000aa',
+        user_id: '00000000-0000-0000-0000-0000000000bb',
+        wf_id: 'wf_43',
+        name: 'Webhook receiver',
+        slug: 'webhook-receiver',
+        trigger_type: 'webhook',
+        version_pin: 'head',
+        pinned_major: null,
+        pinned_sub: null,
+        enabled: true,
+        rate_limit_qps: 10,
+        invoke_count: 7,
+        last_invoked_at: '2026-08-22T01:00:00Z',
+        created_at: '2026-08-21T00:00:00Z',
         updated_at: null,
         deleted_at: null,
       },
@@ -95,5 +111,8 @@ describe('<DeploymentsListPage>', () => {
     expect(screen.getByRole('button', {
       name: 'Open actions menu for API bot',
     })).toBeInTheDocument();
+    expect(screen.getByText('Webhook receiver')).toBeInTheDocument();
+    expect(screen.getByText('/api/v1/deployments/webhook-receiver/webhook')).toBeInTheDocument();
+    expect(screen.getByText('Webhook')).toBeInTheDocument();
   });
 });

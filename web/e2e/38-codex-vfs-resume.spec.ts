@@ -1,19 +1,12 @@
-import { createHash, randomUUID } from 'node:crypto';
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 import { E2ECookieSession } from './cookie-session';
+import {
+  provisionRealRuntime,
+  type RealRuntimeProfile,
+} from './real-runtime-profile';
 
 test.setTimeout(900_000);
 
@@ -23,39 +16,10 @@ type AuthMode = 'chatgpt_account' | 'managed_api';
 type ModelOption = { id: string; label: string; provider?: string };
 
 const modelOptions = new Map<AuthMode, ModelOption>();
-let accountRoot: string | null = null;
+let runtimeProfile: RealRuntimeProfile | null = null;
 
 function workspaceScope(chatId: string) {
   return `__chatws_v2_${Buffer.from(chatId, 'utf8').toString('base64url')}`;
-}
-
-function runtimeVolumeDir(
-  runtimeRoot: string,
-  tenantId: string,
-  userId: string,
-  scopeId: string,
-) {
-  const digest = createHash('sha256')
-    .update(`vibecanvas:chat-runtime-volume:v1\0${tenantId}\0${userId}\0${scopeId}`)
-    .digest('hex');
-  return resolve(runtimeRoot, tenantId, userId, 'chat-runtime-v1', digest);
-}
-
-function sessionFiles(runtimeDir: string) {
-  const root = join(runtimeDir, '.codex', 'sessions');
-  if (!existsSync(root)) return [];
-  const found: string[] = [];
-  const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) visit(path);
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        found.push(relative(root, path));
-      }
-    }
-  };
-  visit(root);
-  return found.sort();
 }
 
 async function send(page: Page, prompt: string) {
@@ -93,28 +57,7 @@ async function send(page: Page, prompt: string) {
 
 test.beforeAll(async () => {
   await session.register('codex-vfs-resume-e2e');
-  await session.api('/api/v1/agent-runtime/settings', {
-    method: 'PUT',
-    body: JSON.stringify({ default_runtime_type: 'codex' }),
-  });
-  const source = join(homedir(), '.codex', 'auth.json');
-  if (!existsSync(source)) throw new Error(`host Codex identity is missing: ${source}`);
-  const me = await session.api('/api/v1/auth/me').then((response) => response.json()) as {
-    tenant_id: string;
-    user_id: string;
-  };
-  const runtimeRoot = resolve(
-    process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-  );
-  accountRoot = resolve(runtimeRoot, me.tenant_id, me.user_id, 'codex-account-v1');
-  if (!accountRoot.startsWith(`${runtimeRoot}${sep}`)) {
-    throw new Error('refusing to create Codex identity outside AGENT_RUNTIME_ROOT');
-  }
-  const accountHome = join(accountRoot, '.codex');
-  mkdirSync(accountHome, { recursive: true, mode: 0o700 });
-  chmodSync(accountHome, 0o700);
-  copyFileSync(source, join(accountHome, 'auth.json'));
-  chmodSync(join(accountHome, 'auth.json'), 0o600);
+  runtimeProfile = await provisionRealRuntime(session, 'codex');
 
   const capabilities = await session.api('/api/v1/agent-runtime/capabilities')
     .then((response) => response.json()) as {
@@ -126,20 +69,12 @@ test.beforeAll(async () => {
   const managed = capabilities.models.find((model) => (
     model.id === 'codex:default' || model.id.startsWith('codex:managed:')
   ));
-  if (!account) throw new Error('Codex account exposes no ChatGPT model');
-  if (!managed) throw new Error('Codex exposes no enterprise-managed API model');
-  modelOptions.set('chatgpt_account', account);
-  modelOptions.set('managed_api', managed);
+  if (account) modelOptions.set('chatgpt_account', account);
+  if (managed) modelOptions.set('managed_api', managed);
 });
 
 test.afterAll(() => {
-  if (!accountRoot) return;
-  const runtimeRoot = resolve(
-    process.env.AGENT_RUNTIME_ROOT ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-  );
-  if (resolve(accountRoot).startsWith(`${runtimeRoot}${sep}`)) {
-    rmSync(accountRoot, { recursive: true, force: true });
-  }
+  runtimeProfile?.cleanup();
 });
 
 test.beforeEach(async ({ context }: { context: BrowserContext }) => {
@@ -147,28 +82,19 @@ test.beforeEach(async ({ context }: { context: BrowserContext }) => {
 });
 
 for (const authMode of ['chatgpt_account', 'managed_api'] as const satisfies readonly AuthMode[]) {
-test(`Codex ${authMode} restores one Chat from its direct Runtime Volume after sandbox loss`, async ({
+test(`Codex ${authMode} restores one Chat from encrypted Runtime state after sandbox loss`, async ({
     page,
   }, testInfo) => {
+  const selectedModel = modelOptions.get(authMode);
+  test.skip(!selectedModel, `Codex ${authMode} is not configured in this environment`);
+  if (!selectedModel) return;
   const marker = `CHAT_VFS_RESUME_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
-  const me = await session.api('/api/v1/auth/me').then((response) => response.json()) as {
-    tenant_id: string;
-    user_id: string;
-  };
-  const runtimeRoot = resolve(
-    process.env.VFS_VOLUME_ROOT
-      ?? process.env.AGENT_RUNTIME_ROOT
-      ?? join(homedir(), '.vibecanvas', 'agent-runtime'),
-  );
-
   await page.goto('/chat', { timeout: 30_000 });
   await page.waitForLoadState('networkidle', { timeout: 30_000 });
   await expect(page.locator('[data-role="agent-composer-input"]')).toBeVisible({
     timeout: 30_000,
   });
   await page.locator('[data-action="chat-new"]').click({ timeout: 30_000 });
-  const selectedModel = modelOptions.get(authMode);
-  if (!selectedModel) throw new Error(`missing ${authMode} model option`);
   await expect(page.locator('[data-role="chat-model-select"]')).toBeEnabled({
     timeout: 30_000,
   });
@@ -201,16 +127,16 @@ test(`Codex ${authMode} restores one Chat from its direct Runtime Volume after s
   });
 
   const scopeId = workspaceScope(first.chatId);
-  const localRuntime = runtimeVolumeDir(
-    runtimeRoot,
-    me.tenant_id,
-    me.user_id,
-    scopeId,
-  );
-  const resolvedRuntime = resolve(localRuntime);
-  expect(resolvedRuntime.startsWith(`${runtimeRoot}${sep}`)).toBe(true);
-  const firstSessionFiles = sessionFiles(resolvedRuntime);
-  expect(firstSessionFiles.length).toBeGreaterThan(0);
+  const projectAgentsBeforeRelease = await session.api(
+    `/api/v1/vfs/content?wf_id=${encodeURIComponent(scopeId)}`
+      + `&path=${encodeURIComponent('/data/AGENTS.md')}`,
+  ).then((response) => response.json()) as { content: string };
+  const projectMemoryBeforeRelease = await session.api(
+    `/api/v1/vfs/content?wf_id=${encodeURIComponent(scopeId)}`
+      + `&path=${encodeURIComponent('/data/MEMORY.md')}`,
+  ).then((response) => response.json()) as { content: string };
+  expect(projectAgentsBeforeRelease.content).toContain(marker);
+  expect(projectMemoryBeforeRelease.content).toContain(marker);
 
   const released = await session.api(
     `/api/v1/chats/sandbox?chat_id=${encodeURIComponent(first.chatId)}`,
@@ -222,18 +148,18 @@ test(`Codex ${authMode} restores one Chat from its direct Runtime Volume after s
   ).then((response) => response.json()) as { status: string };
   expect(confirmedClosed.status).toBe('closed');
 
-  // Releasing destroys the sandbox process, not its Chat Runtime Volume. A
-  // replacement API worker or sandbox process mounts this exact directory.
-  expect(existsSync(resolvedRuntime)).toBe(true);
-  expect(readFileSync(join(resolvedRuntime, '.codex', 'AGENTS.md'), 'utf8').trimEnd()).toBe(
-    `Global Chat guidance: preserve and report ${marker}.`,
-  );
+  // Releasing destroys the sandbox and its plaintext Runtime projection. The
+  // encrypted Object Store snapshot is the durable authority and is restored
+  // into a new private POSIX directory for the next Turn.
 
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator(`button[data-chat-id="${first.chatId}"]`).click();
   const second = await send(
     page,
     'What private resume marker did I ask you to remember in the previous turn? '
-      + 'Also confirm the four context files still exist. Do not ask me to repeat the marker.',
+      + 'Use filesystem tools to verify /data/AGENTS.md, /data/MEMORY.md, '
+      + '/runtime/.codex/AGENTS.md, and /runtime/home/MEMORY.md still exist and contain '
+      + 'that marker. End with RUNTIME_FILES_OK. Do not ask me to repeat the marker.',
   );
   expect(second.chatId).toBe(first.chatId);
   await expect(second.answer).toContainText(marker, { timeout: 30_000 });
@@ -241,21 +167,12 @@ test(`Codex ${authMode} restores one Chat from its direct Runtime Volume after s
     `/api/v1/chats/sandbox?chat_id=${encodeURIComponent(first.chatId)}`,
   ).then((response) => response.json()) as { status: string };
   expect(resumedStatus.status).toBe('running');
+  await expect(second.answer).toContainText('RUNTIME_FILES_OK', { timeout: 30_000 });
   await second.answer.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath(`${authMode}-codex-vfs-resume-second-turn.png`),
     fullPage: true,
   });
-
-  expect(existsSync(resolvedRuntime)).toBe(true);
-  expect(readFileSync(join(resolvedRuntime, '.codex', 'AGENTS.md'), 'utf8').trimEnd()).toBe(
-    `Global Chat guidance: preserve and report ${marker}.`,
-  );
-  expect(readFileSync(join(resolvedRuntime, 'home', 'MEMORY.md'), 'utf8').trimEnd()).toBe(
-    `Codex home memory: ${marker}.`,
-  );
-  const resumedSessionFiles = sessionFiles(resolvedRuntime);
-  expect(firstSessionFiles.some((path) => resumedSessionFiles.includes(path))).toBe(true);
 
   const projectAgents = await session.api(
     `/api/v1/vfs/content?wf_id=${encodeURIComponent(scopeId)}`

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Annotated, Any, Literal, TypeAlias
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -52,11 +53,19 @@ class FilePreviewView(_StrictModel):
     path: str = Field(
         min_length=1,
         description=(
-            "Absolute local file path returned by a file tool. HTML files are rendered in the "
-            "same isolated dynamic HTML runtime; other formats use their native file preview."
+            "Absolute local file path returned by a file tool. The Preview service detects "
+            "the file type and selects the appropriate read-only renderer."
         ),
     )
-    mime: str = ""
+    file_type: str = Field(
+        default="auto",
+        min_length=1,
+        max_length=64,
+        description=(
+            "Optional file-type hint passed unchanged to Preview. Use 'auto' unless the file "
+            "has no reliable extension or MIME metadata."
+        ),
+    )
     description: str = ""
 
     @field_validator("path")
@@ -65,8 +74,29 @@ class FilePreviewView(_StrictModel):
         return _validate_local_path(value)
 
 
+class UrlPreviewView(_StrictModel):
+    type: Literal["url_preview"]
+    url: str = Field(
+        min_length=1,
+        max_length=8192,
+        description=(
+            "Absolute HTTP(S) page URL opened in an isolated interactive WebView. "
+            "No domain allowlist is applied; the destination may still refuse browser embedding."
+        ),
+    )
+    description: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("url must be an absolute HTTP(S) URL")
+        return value
+
+
 InteractiveView: TypeAlias = Annotated[
-    HtmlPreviewView | FilePreviewView,
+    HtmlPreviewView | FilePreviewView | UrlPreviewView,
     Field(discriminator="type"),
 ]
 

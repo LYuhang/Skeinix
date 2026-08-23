@@ -74,11 +74,12 @@ DEPLOYMENT_TOOL_ACTIONS: dict[str, Action] = {
 }
 
 KNOWLEDGE_TOOL_ACTIONS: dict[str, Action] = {
-    "list_knowledge_bases": Action.VIEW_METADATA,
-    "get_knowledge_base": Action.VIEW,
-    "list_knowledge_files": Action.VIEW,
-    "search_knowledge": Action.USE,
-    "read_knowledge_file": Action.USE,
+    "knowledge_list": Action.VIEW_METADATA,
+    "knowledge_get": Action.USE,
+    "knowledge_create": Action.CREATE,
+    "knowledge_update": Action.UPDATE,
+    "knowledge_delete": Action.DELETE,
+    "knowledge_search": Action.USE,
 }
 
 
@@ -669,27 +670,13 @@ async def prepare_platform_tool(
             arguments=arguments,
         )
         return
-    if server == "diagram":
-        if tool_name in {"get_diagram_spec", "search_diagram_assets"}:
-            return
-        action = (
-            Action.UPDATE
-            if tool_name in {"check_diagram", "present_diagram", "export_diagram"}
-            else Action.VIEW
-        )
-        await require_chat_action(
-            ctx,
-            action,
-            consistency=ConsistencyPreference.HIGHER_CONSISTENCY,
-        )
-        return
     if server not in {"task", "deployment", "knowledge"}:
         return
     action = platform_resource_tool_action(server, tool_name)
     if tool_name in {
         "task_list",
         "deployment_list",
-        "list_knowledge_bases",
+        "knowledge_list",
     }:
         # The implementation performs ListObjects + tenant SQL intersection.
         return
@@ -709,7 +696,10 @@ async def prepare_platform_tool(
             Action.DEPLOY,
         )
         return
-    if tool_name == "search_knowledge":
+    if tool_name == "knowledge_create":
+        await require_organization_create(ctx)
+        return
+    if tool_name == "knowledge_search":
         knowledge_base_ids = arguments.get("kb_ids")
         if not isinstance(knowledge_base_ids, list) or not knowledge_base_ids:
             raise _permission_error()

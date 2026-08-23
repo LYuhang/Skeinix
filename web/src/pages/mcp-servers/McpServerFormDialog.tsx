@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { SectionBlock } from '@/components/layout/section-block';
 import {
   Dialog,
   DialogContent,
@@ -249,7 +250,12 @@ export function McpServerFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+          <SectionBlock
+            title={t('mcp.form.identity', 'Identity')}
+            description={t('mcp.form.identityHelp', 'Name the server and define the prefix agents use for its tools.')}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="mcp-name">{t('mcp.name', 'Name')}</Label>
             <Input
@@ -283,7 +289,13 @@ export function McpServerFormDialog({
               )}
             </span>
           </div>
+          </SectionBlock>
 
+          <SectionBlock
+            title={t('mcp.form.connection', 'Connection')}
+            description={t('mcp.form.connectionHelp', 'Choose how Skeinix reaches this server and provide its address or command.')}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="mcp-transport">
               {t('mcp.transport', 'Transport')}
@@ -380,8 +392,14 @@ export function McpServerFormDialog({
               </div>
             </>
           )}
+          </SectionBlock>
 
           {form.transport !== 'stdio' && (
+          <SectionBlock
+            title={t('mcp.form.authentication', 'Authentication')}
+            description={t('mcp.form.authenticationHelp', 'Credentials are encrypted after saving and are not displayed again.')}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="mcp-auth">{t('mcp.auth', 'Authentication')}</Label>
             <Select
@@ -401,9 +419,9 @@ export function McpServerFormDialog({
               </SelectContent>
             </Select>
           </div>
-          )}
 
-          {form.transport !== 'stdio' && form.authType !== NO_AUTH && (
+
+          {form.authType !== NO_AUTH && (
             <div className="flex flex-col gap-1">
               <Label htmlFor="mcp-token">{t('mcp.token', 'Token')}</Label>
               <Input
@@ -423,12 +441,13 @@ export function McpServerFormDialog({
               />
             </div>
           )}
+          </SectionBlock>
+          )}
 
-          <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">
-                {t('mcp.test_title', 'Test connection')}
-              </span>
+          <SectionBlock
+            title={t('mcp.test_title', 'Test connection')}
+            description={t('mcp.form.testHelp', 'Verify the endpoint and inspect how many tools it exposes before saving.')}
+            actions={(
               <Button
                 type="button"
                 variant="outline"
@@ -441,7 +460,8 @@ export function McpServerFormDialog({
                   ? t('mcp.testing', 'Testing…')
                   : t('mcp.test', 'Test')}
               </Button>
-            </div>
+            )}
+          >
             {testResult && (
               <p
                 data-testid="mcp-test-result"
@@ -462,7 +482,12 @@ export function McpServerFormDialog({
                     })}
               </p>
             )}
-          </div>
+            {!testResult ? (
+              <p className="text-xs text-content-tertiary">
+                {t('mcp.form.testPending', 'No connection test has been run for these values yet.')}
+              </p>
+            ) : null}
+          </SectionBlock>
         </div>
 
         <DialogFooter>

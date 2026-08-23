@@ -125,7 +125,10 @@ export function VfsFilesSection({
             tabIndex={isSelected ? 0 : -1}
             className="interactive-row flex w-full items-start gap-2 rounded py-1.5 text-left text-ui aria-selected:bg-surface-hover aria-selected:text-content-primary"
             style={{ paddingLeft: depth * 12 + 8 }}
-            onClick={() => selectItem(node.path)}
+            onClick={() => {
+              selectItem(node.path);
+              onOpenFile(e.path);
+            }}
             onDoubleClick={() => onOpenFile(e.path)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {

@@ -31,9 +31,6 @@ const DEP_ID = '00000000-0000-4000-8000-000000000201';
 const MCP_ID = 'mcp-review';
 const SKILL_ID = 'skill-review';
 const KB_ID = 'kb-review';
-const PLAN_ID = 'plan-review';
-const PLAN_RUN_ID = 'plan-run-review';
-const NODE_RUN_ID = 'node-run-research';
 const now = new Date().toISOString();
 
 const results = [];
@@ -131,8 +128,7 @@ const deployment = {
   id: DEP_ID, tenant_id: 'review-org', user_id: 'review-user', wf_id: WF_ID,
   name: 'Review API', slug: 'review-api', trigger_type: 'api', version_pin: 'head',
   pinned_major: null, pinned_sub: null, enabled: true, rate_limit_qps: 10,
-  invoke_count: 42, last_invoked_at: now, last_fire_at: null,
-  cron_expr: null, cron_tz: null, created_at: now, updated_at: now,
+  invoke_count: 42, last_invoked_at: now, created_at: now, updated_at: now,
   deleted_at: null, access,
 };
 
@@ -199,41 +195,6 @@ const backgroundJob = {
   updated_at: now,
 };
 
-const planDefinitions = [
-  { id: 'start', type: 'start', title: 'Start', next: ['research', 'critique'] },
-  { id: 'research', type: 'subagent', title: 'Research evidence', task: 'Collect primary evidence', next: ['synthesize'] },
-  { id: 'critique', type: 'subagent', title: 'Challenge evidence', task: 'Challenge the primary findings', next: ['synthesize'] },
-  { id: 'synthesize', type: 'subagent', title: 'Synthesize findings', task: 'Combine the research and critique', next: ['end'] },
-  { id: 'end', type: 'end', title: 'Final report' },
-];
-
-const planNodes = planDefinitions.map((definition, index) => ({
-  node_run_id: definition.id === 'research' ? NODE_RUN_ID : `node-run-${definition.id}`,
-  node_path: definition.id,
-  node_type: definition.type,
-  status: definition.id === 'research' ? 'running' : definition.id === 'start' ? 'succeeded' : 'pending',
-  attention_status: 'none', current_attempt: definition.id === 'research' ? 1 : 0,
-  current_activity: definition.id === 'research' ? 'Reading primary sources' : '',
-  definition, result: definition.id === 'start' ? { topic: 'Agent UX' } : null,
-  output_ref: null, error: {}, side_effect_state: 'none',
-  progress: definition.id === 'research' ? { current: 3, total: 5 } : {},
-  cancel_requested: false, approval: null,
-  started_at: index < 2 ? now : null, ended_at: index === 0 ? now : null, updated_at: now,
-}));
-
-const planCard = {
-  plan_id: PLAN_ID, plan_run_id: PLAN_RUN_ID, job_id: 'plan:job-review', chat_id: 'chat-review', revision: 1,
-  title: 'Deep Research Plan', status: 'running', node_count: 5, parallel_branch_count: 2,
-  progress: { completed_nodes: 1, total_nodes: 5 }, last_event_seq: 2, created_at: now, updated_at: now, approval: null,
-};
-
-const planRun = {
-  plan_run_id: PLAN_RUN_ID, job_id: planCard.job_id, plan_id: PLAN_ID, revision: 1, chat_id: 'chat-review',
-  status: 'running', approval_mode: 'always_ask', budget: { max_nodes: 12 },
-  progress: planCard.progress, last_event_seq: 2, cancel_requested: false,
-  started_at: now, ended_at: null, created_at: now, updated_at: now, nodes: planNodes, approval: null,
-};
-
 const state = {
   workflows: [workflowMeta],
   tasks: [task, { ...task, id: `${TASK_ID.slice(0, -1)}2`, status: 'finished', progress: 1, workflow_id: 'wf_finished', result: { rows_total: 10, rows_ok: 9, rows_failed: 1 } }],
@@ -293,10 +254,11 @@ async function installProtocol(page, { enterpriseSsoEnabled = false } = {}) {
     }
     if (p === `/kb/${KB_ID}`) return json(route, knowledge);
     if (p === `/kb/${KB_ID}/files` && method === 'GET') return json(route, [
-      { id: 'kb-file-1', name: 'handbook.pdf', parser_type: 'pdf', file_size: 1024, status: 'indexed', error_message: null, chunk_count: 12, created_at: now },
-      { id: 'kb-file-2', name: 'broken.txt', parser_type: 'text', file_size: 20, status: 'failed', error_message: 'Unsupported encoding', chunk_count: 0, created_at: now },
+      { id: 'kb-file-1', name: 'README.md', parser_type: 'markdown', mime_type: 'text/markdown', file_size: 86, status: 'indexed', error_message: null, chunk_count: 1, created_at: now },
+      { id: 'kb-file-2', name: 'notes/releases.md', parser_type: 'markdown', mime_type: 'text/markdown', file_size: 42, status: 'indexed', error_message: null, chunk_count: 1, created_at: now },
     ]);
-    if (p.includes('/files/') && p.endsWith('/reindex')) return json(route, { status: 'queued' });
+    if (p === `/kb/${KB_ID}/files/kb-file-1/raw`) return route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Review Handbook\n\nBrowse the source files in this package.' });
+    if (p === `/kb/${KB_ID}/files/kb-file-2/raw`) return route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Release schedule\n\nReleases ship every Tuesday.' });
     if (p.includes('/files/') && method === 'DELETE') return json(route, {});
     if (p.endsWith('/files') && method === 'POST') return json(route, { id: 'kb-upload', name: 'uploaded.txt', status: 'pending' }, 201);
     return json(route, {});
@@ -316,14 +278,14 @@ async function installProtocol(page, { enterpriseSsoEnabled = false } = {}) {
     if (p === '/api/v1/kb' && method === 'GET') return json(route, state.knowledge);
     if (p === `/api/v1/kb/${KB_ID}`) return json(route, knowledge);
     if (p === `/api/v1/kb/${KB_ID}/files` && method === 'GET') return json(route, [
-      { id: 'kb-file-1', name: 'handbook.pdf', parser_type: 'pdf', file_size: 1024, status: 'indexed', error_message: null, chunk_count: 12, created_at: now, access },
-      { id: 'kb-file-2', name: 'broken.txt', parser_type: 'text', file_size: 20, status: 'failed', error_message: 'Unsupported encoding', chunk_count: 0, created_at: now, access },
+      { id: 'kb-file-1', name: 'README.md', parser_type: 'markdown', mime_type: 'text/markdown', file_size: 86, status: 'indexed', error_message: null, chunk_count: 1, created_at: now, access },
+      { id: 'kb-file-2', name: 'notes/releases.md', parser_type: 'markdown', mime_type: 'text/markdown', file_size: 42, status: 'indexed', error_message: null, chunk_count: 1, created_at: now, access },
     ]);
-    if (p.includes('/api/v1/kb/') && p.endsWith('/reindex')) return json(route, { status: 'queued' });
+    if (p === `/api/v1/kb/${KB_ID}/files/kb-file-1/raw`) return route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Review Handbook\n\nBrowse the source files in this package.' });
+    if (p === `/api/v1/kb/${KB_ID}/files/kb-file-2/raw`) return route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Release schedule\n\nReleases ship every Tuesday.' });
     if (p.includes('/api/v1/kb/') && p.includes('/files/') && method === 'DELETE') return route.fulfill({ status: 204, body: '' });
     if (p.endsWith('/auth/me')) return json(route, { user_id: 'review-user', tenant_id: 'review-org', email: 'review@example.com', platform_management_role: 'platform_security_admin' });
-    if (p.includes('/auth/mfa/webauthn')) return json(route, { credentials: [] });
-    if (p.includes('/auth/mfa/totp')) return json(route, { enabled: false });
+    if (p.includes('/auth/passkeys')) return json(route, { credentials: [] });
     if (p.includes('/auth/login') || p.includes('/auth/register') || p.includes('/auth/password')) return json(route, { access_token: 'review-token', token: 'review-token' });
     if (p === '/api/v1/auth/sso/organizations/review-company/providers') return json(route, { items: [{ provider_id: 'idp-review', display_name: 'Review Identity' }] });
     if (p === '/api/v1/platform-management/overview') return json(route, {
@@ -364,26 +326,7 @@ async function installProtocol(page, { enterpriseSsoEnabled = false } = {}) {
     if (p === '/api/v1/agent-runtime/codex/account') return json(route, { cli_available: true, authenticated: false });
     if (p === '/api/v1/agent-runtime/codex/managed-profile') return json(route, { ...runtimeSettings('codex'), codex_managed_profile_id: bodyJson(request).profile_id ?? 'company-primary' });
     if (p === '/api/v1/agent-runtime/capabilities') return json(route, { protocol_version: 1, runtime_type: 'langchain', runtime_available: true, authenticated: true, source: 'review', models: [{ id: 'gpt-4o', label: 'GPT-4o' }], default_model_id: 'gpt-4o', error_code: null });
-    if (p === '/api/v1/execution-plans') return json(route, [planCard]);
-    if (p === `/api/v1/execution-plans/${PLAN_ID}`) return json(route, {
-      plan_id: PLAN_ID, chat_id: 'chat-review', revision: 1, lifecycle_status: 'active',
-      definition: { schema_version: 1, title: planCard.title, nodes: planDefinitions, budgets: { max_nodes: 12 } },
-      validation: { valid: true }, source_plan_path: '/data/plans/review.plan.json', definition_hash: 'review-hash', created_at: now, runs: [planRun],
-    });
-    if (p === `/api/v1/execution-plan-runs/${PLAN_RUN_ID}/events/snapshot`) return json(route, { items: [
-      { seq: 1, event_type: 'run_started', node_run_id: null, attempt: null, payload: { status: 'running' }, trace_ref: null, created_at: now },
-      { seq: 2, event_type: 'node_progress', node_run_id: NODE_RUN_ID, attempt: 1, payload: { status: 'running', progress: { message: 'Reading primary sources' } }, trace_ref: null, created_at: now },
-    ], last_event_seq: 2 });
-    if (p === `/api/v1/execution-plan-runs/${PLAN_RUN_ID}/events`) return route.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'Cache-Control': 'no-cache' }, body: 'retry: 60000\n: plan stream connected\n\n' });
-    if (p === `/api/v1/execution-plan-runs/${PLAN_RUN_ID}`) return json(route, planRun);
-    if (p === `/api/v1/execution-node-runs/${NODE_RUN_ID}`) return json(route, {
-      ...planNodes.find((node) => node.node_run_id === NODE_RUN_ID), plan_run_id: PLAN_RUN_ID, chat_id: 'chat-review',
-      attempts: [{ attempt: 1, status: 'running', started_at: now }],
-      output: [{ seq: 1, kind: 'text', content_type: 'text/plain', payload: { text: 'Collected three primary sources.' }, created_at: now }],
-    });
-    if (p.endsWith('/cancel') && (p.includes('/execution-plan-runs/') || p.includes('/execution-node-runs/'))) return json(route, { ...planRun, status: 'cancel_requested', cancel_requested: true });
-
-    if (p.endsWith('/chats/bootstrap')) return json(route, { carrier_scope_id: 'scope-review', surface: url.searchParams.get('surface') || 'chat', available_commands: ['/task', '/deployment', '/knowledge', '/build', '/browser', '/plan'], debug_view_enabled: true });
+    if (p.endsWith('/chats/bootstrap')) return json(route, { carrier_scope_id: 'scope-review', surface: url.searchParams.get('surface') || 'chat', available_commands: ['/task', '/deployment', '/knowledge', '/workflow', '/browser'], debug_view_enabled: true });
     if (p.endsWith('/chats/workspace')) return json(route, { workspace_scope_id: 'workspace-review', mount_scope_id: 'workspace-review', chat_id: url.searchParams.get('chat_id') || 'chat-review', current_workflow_id: null });
     if (/\/chat-scopes\/[^/]+\/chats$/.test(p)) return json(route, { items: [{ chat_id: 'chat-review', chat_context: 'Deep interaction review', created_at: now, updated_at: now }], total: 1, limit: 50, offset: 0 });
     if (/\/chat-scopes\/[^/]+\/active-runs$/.test(p)) return json(route, []);
@@ -452,14 +395,6 @@ async function installProtocol(page, { enterpriseSsoEnabled = false } = {}) {
     if (p === `/api/v1/llm-credentials/${credential.id}` && method === 'DELETE') { state.credentials = []; return json(route, {}); }
 
     if (p === '/api/v1/mcp-servers' && method === 'GET') return json(route, { items: state.mcpServers });
-    if (p === '/api/v1/mcp-servers/platform') return json(route, { items: [{
-      id: 'browser', name: 'Browser', description: 'Open and inspect public web pages.',
-      activation: '/browser', activation_mode: 'command', runtime_types: ['langchain', 'codex'],
-      tools: [
-        { name: 'browser_open', description: 'Open a page and return its readable content.', input_schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }, annotations: { readOnlyHint: true, openWorldHint: true } },
-        { name: 'browser_click', description: 'Follow a link on the current page.', input_schema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }, annotations: { readOnlyHint: true, openWorldHint: true } },
-      ],
-    }] });
     if (p === `/api/v1/mcp-servers/${MCP_ID}` && method === 'GET') return json(route, mcpServer);
     if (p === '/api/v1/mcp-servers/catalog') return json(route, { source: 'official', ranking: url.searchParams.get('search') ? 'search' : 'browse', items: catalogMcp.slice(0, Number(url.searchParams.get('limit') ?? 10)), has_more: Number(url.searchParams.get('limit') ?? 10) < catalogMcp.length });
     if (p === '/api/v1/mcp-servers/catalog/resolve') return json(route, catalogMcp[0]);
@@ -864,14 +799,6 @@ async function reviewMcp(page) {
     await page.getByRole('dialog').waitFor();
   });
   await cancelDialog(page);
-  await go(page, '/mcp-servers/platform/browser');
-  await step(page, 'Platform MCP detail', 'overview', 'Built-in activation, runtime compatibility and security boundary are documented', async () => {
-    await page.getByRole('heading', { name: /^Browser$/i }).waitFor();
-  });
-  await step(page, 'Platform MCP detail', 'tools directory', 'The exact agent-visible tool schemas are searchable in a master-detail directory', async () => {
-    await page.getByTestId('platform-mcp-tools-tab').click();
-    await page.getByTestId('mcp-tool-directory').waitFor();
-  });
 }
 
 async function reviewSkills(page) {
@@ -918,23 +845,27 @@ async function reviewSkills(page) {
 
 async function reviewKnowledge(page) {
   await go(page, '/knowledge');
-  await step(page, 'Knowledge', 'list', 'Knowledge base row and index metadata render', async () => { await page.getByText(knowledge.name).waitFor(); });
+  await step(page, 'Knowledge', 'list', 'Knowledge packages render as user-facing cards without index controls', async () => { await page.getByText(knowledge.name).waitFor(); });
   await step(page, 'Knowledge', 'search no match', 'Knowledge search shows an explicit no-match state', async () => { await page.getByPlaceholder(/search knowledge bases/i).fill('missing'); });
   await page.getByPlaceholder(/search knowledge bases/i).fill('');
+  await step(page, 'Knowledge', 'folder import dialog', 'Upload knowledge accepts a complete folder or ZIP package with a root README', async () => { await page.getByRole('button', { name: /upload knowledge/i }).click(); });
+  await cancelDialog(page);
   await step(page, 'Knowledge', 'create dialog', 'New knowledge base requests name and description', async () => { await page.getByRole('button', { name: /new knowledge base/i }).click(); });
   await cancelDialog(page);
   await go(page, `/knowledge/${KB_ID}`);
-  await step(page, 'Knowledge detail', 'index health', 'Indexed and failed source states render together', async () => { await page.getByText('Unsupported encoding', { exact: false }).waitFor(); });
-  await step(page, 'Knowledge detail', 'reindex source', 'Reindex sends a scoped source mutation and preserves the surrounding source list', async () => {
-    await page.getByRole('button', { name: /reindex handbook\.pdf/i }).click();
-    await page.getByText('handbook.pdf', { exact: true }).waitFor();
+  await step(page, 'Knowledge detail', 'file browser', 'The directory tree is secondary to the selected file content', async () => {
+    await page.getByRole('tree', { name: /files/i }).waitFor();
+    await page.getByText('Browse the source files in this package.').waitFor();
   });
-  await step(page, 'Knowledge detail', 'lexical search result', 'Question search returns source text and match evidence', async () => {
-    await page.getByPlaceholder(/ask a question/i).fill('When are releases?');
-    await page.getByRole('button', { name: /^search$/i }).click();
+  await step(page, 'Knowledge detail', 'nested file preview', 'Selecting a nested file replaces the main content pane', async () => {
+    await page.getByRole('treeitem', { name: /releases\.md/i }).click();
     await page.getByText('Releases ship every Tuesday.').waitFor();
   });
-  await step(page, 'Knowledge detail', 'delete confirmation', 'Deleting an indexed source requires confirmation', async () => { await page.getByRole('button', { name: /delete handbook\.pdf/i }).click(); });
+  await step(page, 'Knowledge detail', 'folder actions', 'A folder context menu offers scoped upload and deletion actions', async () => {
+    await page.getByRole('treeitem', { name: /^notes$/i }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /upload files here/i }).waitFor();
+    await page.getByRole('menuitem', { name: /delete folder/i }).click();
+  });
   await cancelDialog(page);
 }
 
@@ -994,11 +925,6 @@ async function reviewSettings(page) {
   }
   await step(page, 'Settings account', 'add passkey dialog', 'Passkey enrollment explains the password re-authentication requirement before WebAuthn starts', async () => {
     await page.getByRole('button', { name: /add passkey/i }).click();
-    await page.getByRole('dialog').waitFor();
-  });
-  await cancelDialog(page);
-  await step(page, 'Settings account', 'authenticator setup dialog', 'Authenticator setup uses an explicit staged dialog rather than enabling MFA immediately', async () => {
-    await page.getByRole('button', { name: /^set up$/i }).click();
     await page.getByRole('dialog').waitFor();
   });
   await cancelDialog(page);
@@ -1195,7 +1121,7 @@ function monitor(page, scope) {
 
 async function reviewAccessibility(page) {
   const severe = [];
-  for (const path of ['/chat', '/workspace', '/management', '/tasks', `/tasks/${TASK_ID}`, '/deployments', `/deployments/${DEP_ID}`, '/credentials', '/mcp-servers', '/mcp-servers/platform/browser', `/mcp-servers/${MCP_ID}`, '/skills', `/skills/${SKILL_ID}`, '/knowledge', `/knowledge/${KB_ID}`, '/storage', '/settings', `/workflow/${WF_ID}`, `/workflow/${WF_ID}/version/v1.sv0`]) {
+  for (const path of ['/chat', '/workspace', '/management', '/tasks', `/tasks/${TASK_ID}`, '/deployments', `/deployments/${DEP_ID}`, '/credentials', '/mcp-servers', `/mcp-servers/${MCP_ID}`, '/skills', `/skills/${SKILL_ID}`, '/knowledge', `/knowledge/${KB_ID}`, '/storage', '/settings', `/workflow/${WF_ID}`, `/workflow/${WF_ID}/version/v1.sv0`]) {
     await go(page, path);
     const scan = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])

@@ -32,54 +32,6 @@ export function diagramPreviewPath(value: unknown): string | null {
   return typeof path === 'string' && path.startsWith('/data/diagrams/') ? path : null;
 }
 
-export interface DiagramDraftPreviewTarget {
-  draftId: string;
-  chatId: string;
-  targetPath: `/data/${string}`;
-  title: string;
-}
-
-function diagramDraftPreviewTarget(value: unknown): DiagramDraftPreviewTarget | null {
-  if (!object(value)) return null;
-  const preview = value.draft_preview_ref;
-  if (!object(preview) || preview.kind !== 'diagram_draft') return null;
-  if (
-    typeof preview.draftId !== 'string'
-    || typeof preview.chatId !== 'string'
-    || typeof preview.targetPath !== 'string'
-    || !preview.targetPath.startsWith('/data/')
-  ) return null;
-  return {
-    draftId: preview.draftId,
-    chatId: preview.chatId,
-    targetPath: preview.targetPath as `/data/${string}`,
-    title: typeof preview.title === 'string' && preview.title ? preview.title : 'Diagram draft',
-  };
-}
-
-export function diagramDraftPreviewFromStandardResult(
-  value: UniversalToolResultValue | null,
-): DiagramDraftPreviewTarget | null {
-  if (!value) return null;
-  const direct = diagramDraftPreviewTarget(value.structuredContent);
-  if (direct) return direct;
-  for (const block of value.content) {
-    if (
-      block.type !== 'text'
-      || typeof block.text !== 'string'
-      || block.text.length > MAX_NESTED_JSON_TEXT_CHARS
-      || !block.text.trimStart().startsWith('{')
-    ) continue;
-    try {
-      const target = diagramDraftPreviewTarget(JSON.parse(block.text) as unknown);
-      if (target) return target;
-    } catch {
-      // Non-JSON text remains ordinary tool output.
-    }
-  }
-  return null;
-}
-
 /**
  * MCP clients expose structured tool output in either `structuredContent` or
  * as a JSON object serialized into a text content block. The latter is the

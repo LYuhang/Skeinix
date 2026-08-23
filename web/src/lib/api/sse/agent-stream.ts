@@ -63,6 +63,8 @@ export type HitlContinueControl = components['schemas']['HitlContinueControl'];
 interface RecoverRunResponse {
   run_id: string;
   chat_id: string;
+  status: 'running' | 'waiting_approval' | 'cancel_requested' | 'completed' | 'cancelled' | 'failed';
+  last_event_id?: number;
   pending_hitl?: Array<{
     hitl_request_id: string;
     hitl_type: string;
@@ -129,7 +131,10 @@ async function findTurnByClientRequest(args: {
     wfId: args.wfId,
     chatId: row.chat_id,
     turnId: row.run_id,
-    lastEventId: 0,
+    status: row.status,
+    lastEventId: Number.isSafeInteger(row.last_event_id) && Number(row.last_event_id) > 0
+      ? Number(row.last_event_id)
+      : 0,
     pendingHitl: Array.isArray(row.pending_hitl)
       ? row.pending_hitl.map((item) => ({
           hitlRequestId: item.hitl_request_id,
@@ -393,23 +398,57 @@ async function streamOwnedAgentTurn(
   flushPendingTextEvents();
 
   if (!terminalSeen && unexpectedClose) {
-    const recoveredTurn = readActiveTurnFor(args.wfId, args.chatId) ?? await findTurnByClientRequest({
+    // The backend Run row is authoritative after a POST transport closes. A
+    // cleanly persisted terminal event can race with the final SSE bytes (or a
+    // browser/proxy can drop only that final frame). Consulting the Run also
+    // prevents an old localStorage "running" marker from opening an endless
+    // resume loop after the server has already completed the Turn.
+    const recoveredRun = await findTurnByClientRequest({
       base,
       token,
       wfId: args.wfId,
       chatId: args.chatId,
       clientRequestId,
     });
+    const localTurn = readActiveTurnFor(args.wfId, args.chatId);
+    const recoveredTurn = recoveredRun ?? localTurn;
     if (recoveredTurn) {
+      const serverStatus = recoveredRun?.status;
+      const serverCursor = recoveredRun?.lastEventId ?? 0;
+      if (
+        serverStatus === 'completed'
+        && serverCursor <= eventSequence.cursor
+      ) {
+        routeAgentSignal('done', {}, { wfId: args.wfId, chatId: args.chatId });
+        return;
+      }
+      if (
+        (serverStatus === 'cancelled' || serverStatus === 'failed')
+        && serverCursor <= eventSequence.cursor
+      ) {
+        routeAgentSignal('error', {
+          code: serverStatus === 'cancelled' ? 'cancelled' : 'engine_error',
+          message: serverStatus === 'cancelled'
+            ? 'Turn cancelled by client.'
+            : 'Agent turn failed.',
+        }, { wfId: args.wfId, chatId: args.chatId });
+        return;
+      }
       // Keep the in-memory acknowledged cursor even when localStorage is
       // unavailable or its write was delayed. Replaying from zero on top of an
       // already-mounted projection would duplicate message_delta content.
       const turn = {
         ...recoveredTurn,
-        lastEventId: Math.max(
-          recoveredTurn.lastEventId ?? 0,
-          eventSequence.cursor,
-        ),
+        status:
+          recoveredTurn.status === 'running'
+          || recoveredTurn.status === 'waiting_approval'
+          || recoveredTurn.status === 'cancel_requested'
+            ? recoveredTurn.status
+            : undefined,
+        // Resume after the last frame this page actually projected, not after
+        // the server's terminal high-water mark. The latter describes what is
+        // durable, not what the browser has seen.
+        lastEventId: Math.max(localTurn?.lastEventId ?? 0, eventSequence.cursor),
       };
       rememberActiveTurn(turn);
       // Transfer ownership only after every parsed frame above has been

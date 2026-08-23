@@ -31,9 +31,12 @@ export function EntityDetailShell({
   className?: string;
 }) {
   return (
-    <div className="page-shell page-shell-contained">
-      <div className={cn('page-content w-full max-w-6xl', className)}>
-        <header className="shrink-0 border-b border-edge-subtle pb-4">
+    <div className="page-shell page-shell-contained" data-page-archetype="continuous-detail">
+      <div className={cn('page-content page-scroll-region w-full max-w-6xl', className)}>
+        <header
+          className="shrink-0 border-b border-edge-subtle pb-4"
+          data-page-region="header"
+        >
           <Link
             to={backTo}
             className="mb-3 inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-sm text-content-secondary hover:bg-surface-hover hover:text-content-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
@@ -51,7 +54,9 @@ export function EntityDetailShell({
             metadata={metadata}
           />
         </header>
-        {children}
+        <div className="contents" data-page-region="detail-content">
+          {children}
+        </div>
       </div>
     </div>
   );

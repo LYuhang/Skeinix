@@ -49,7 +49,7 @@
 
 Skeinix 是一个将 Agent 对话转化为可执行工作流的开源平台。只需在 Chat 中描述目标，Agent 就会直接构建或修改可视化画布中的工作流图，而不是另外生成一份与实际执行脱节的建议或示意图。工作流的结构、版本、运行记录、输出和异常信息在整个过程中始终可见。
 
-工作流通过验证后，可以按需运行、批量执行或设置定时任务，也可以发布为 API 或 Webhook。Agent 与工作流的执行环境通过沙盒服务与控制平面隔离。
+工作流通过验证后，可以按需运行、批量执行或设置定时任务，也可以发布为 API 或 Webhook，供外部系统调用。周期性执行由 Task 负责；Agent 与工作流的执行环境通过沙盒服务与控制平面隔离。
 
 ### Skeinix 的工作方式
 
@@ -89,16 +89,6 @@ cd Skeinix
 
 启动脚本会自动生成本地密钥、构建各项服务、等待健康检查完成，并验证部署结果。首次构建通常需要几分钟。
 
-在远程服务器上安装时，只需提供浏览器实际访问的 HTTPS URL 和虚拟机私网地址。启动脚本会自动生成 Host、CORS、安全 Cookie 和扩展编译配置：
-
-```bash
-./scripts/deploy/local_server.sh up \
-  --public-url https://skeinix.example.com \
-  --bind-address 10.0.0.4
-```
-
-请在反向代理中终止 TLS，并将请求转发到 `9001` 端口。完整说明见[远程服务器部署](docs/installation.md#remote-server-deployment)。
-
 #### 原生 Linux 或 WSL
 
 在 Debian、Ubuntu 或 WSL 环境中进行开发时，可使用原生环境初始化脚本：
@@ -107,14 +97,13 @@ cd Skeinix
 ./scripts/bootstrap_native_linux.sh
 ```
 
-有关环境要求、手动安装、配置、远程访问和生产部署的说明，请参阅[安装指南](docs/installation.md)。
+有关环境要求、手动安装、本地配置和生产部署的说明，请参阅[安装指南](docs/installation.md)。
 
 ### 常用命令
 
 | 操作 | Docker Compose | 原生 Linux/WSL |
 | --- | --- | --- |
 | 启动 | `./scripts/deploy/local_server.sh up` | `./launch.sh start` |
-| 配置远程 URL | `./scripts/deploy/local_server.sh init --public-url https://skeinix.example.com --bind-address 10.0.0.4` | 编辑 `.env.launch.local` |
 | 停止 | `./scripts/deploy/local_server.sh stop` | `./launch.sh stop` |
 | 重启 | `./scripts/deploy/local_server.sh restart` | `./launch.sh restart` |
 | 查看状态 | `./scripts/deploy/local_server.sh status` | `./launch.sh status` |
@@ -125,18 +114,18 @@ cd Skeinix
 ### 创建第一个工作流
 
 1. **选择 Agent Runtime。** 进入 **Settings → Agent Runtime**，为新建 Chat 选择默认运行时：
-   - **LangChain** 使用模型提供商的 API 凭据，并支持包括 `/plan` 在内的完整 LangChain 工具集。
+   - **LangChain** 使用模型提供商的 API 凭据和 LangChain Agent 工具集。
    - **Codex** 通过 Codex Runtime 运行对话。
 
    页面只会显示当前部署已经启用的 Runtime。默认 Runtime 仅作用于之后新建的 Chat；已有 Chat 会继续使用创建时绑定的 Runtime。
 
 2. **连接模型或账户。** 根据所选 Runtime 完成相应配置：
-   - 使用 **LangChain** 时，从侧栏进入 **API 凭据**页面，添加一项凭据并填写模型提供商、模型名称和 API Key。当前支持 OpenAI、Azure OpenAI、Anthropic、Google Gemini 以及自定义提供商。
-   - 使用 **Codex** 时，可以进入 **Settings → Agent Runtime → Codex account**，通过设备验证码登录 OpenAI 账户；也可以从侧栏进入 **API 凭据**页面，添加 OpenAI 或 Azure OpenAI 凭据。兼容的已保存模型会自动显示在 Codex 模型选择器的 **OpenAI API** 分组中。部署方统一配置的 API 模型无需添加个人凭据即可显示。
+   - 进入 **设置 → API 凭据**，可以连接 OpenRouter，也可以手动添加只写的模型提供商 API Key。OpenAI、Azure OpenAI、Anthropic、Google Gemini 以及自定义提供商会在与所选 Runtime 兼容时显示。OpenRouter 的安全回调依赖部署方配置规范的 `VIBECANVAS_PUBLIC_URL`。
+   - 使用 **Codex** 时，还可以进入 **设置 → Agent Runtime → Codex account**，通过设备验证码登录 OpenAI 账户。连接 OpenRouter 后，与 Codex 兼容的文本和工具调用模型也会通过 OpenRouter Responses API 提供。部署方统一配置的 API 模型无需添加个人凭据即可显示。
 
-   实际可用的连接方式取决于部署配置。保存后的 API Key 会加密存储，并且只能写入，无法再从应用中读取。
+   实际可用的连接方式取决于部署配置。保存后的 API Key 会加密存储，并且只能写入，无法再从应用中读取。应用会先根据所选 Runtime 和 API 协议过滤连接来源，再展示可用模型。
 
-3. **开始 Chat 并构建 Workflow。** 进入 **Chat** 并新建对话；如果存在多个可用模型，先选择本次对话要使用的模型。启用 `/build`，然后描述需要实现的自动化任务、预期输入和输出，以及必要的约束条件。随后在画布中检查生成的 Workflow，完成验证和试运行，并根据节点输出继续通过 Chat 或画布完善流程。
+3. **开始 Chat 并构建 Workflow。** 进入 **Chat** 并新建对话，在编辑框下方依次选择模型来源、具体模型，以及该模型支持的思考强度。一个 Chat 的 Runtime 在创建后保持不变，但模型与思考强度可以在两轮对话之间切换。启用 `/workflow`，然后描述需要实现的自动化任务、预期输入和输出，以及必要的约束条件。随后在画布中检查生成的 Workflow，完成验证和试运行，并根据节点输出继续通过 Chat 或画布完善流程。
 
 对话结束后，工作流仍会作为可版本化资产保留。确认其输入、输出和异常处理行为符合预期后，再将工作流发布。
 
@@ -146,20 +135,26 @@ cd Skeinix
 
 ![Skeinix 使用流程](docs/assets/usage-flow.zh-CN.svg)
 
-图中展示的是一条典型使用路径，而不是模块之间的强制依赖关系。Workflow 可以在画布中直接试运行，也可以交给 Task 执行批量或定时任务；发布后，外部调用和定时计划能够继续触发新的 Run 和 Task，无需重复最初的构建对话。
+图中展示的是一条典型使用路径，而不是模块之间的强制依赖关系。Workflow 可以在画布中直接试运行，也可以交给 Task 执行批量或定时任务；发布后，API 和 Webhook 调用能够继续触发新的 Run，无需重复最初的构建对话，而周期性执行仍由 Task 负责。
 
 ### 主应用
 
 | 功能模块 | 用户可以做什么 | 演示 |
 | --- | --- | --- |
-| **Chat** | 通过对话描述需求，由 LangChain 或 Codex Agent 调用工具、构建 Workflow、绘制图表和整理文件。Workflow、执行计划、后台任务、常见文档、表格、媒体和图表都可以在对话旁直接预览。每个 Chat 拥有独立的工作空间，沙盒会随对话按需启动、休眠和恢复。 | <video src="https://github.com/user-attachments/assets/d71f4e21-f71b-445d-98f4-a20275029405" controls></video> |
+| **Chat** | 通过对话描述需求，由 LangChain 或 Codex Agent 调用工具、构建 Workflow、绘制图表和整理文件。Workflow、后台任务、常见文档、表格、媒体和图表都可以在对话旁直接预览。每个 Chat 拥有独立的工作空间，沙盒会随对话按需启动、休眠和恢复。 | <video src="https://github.com/user-attachments/assets/d71f4e21-f71b-445d-98f4-a20275029405" controls></video> |
 | **Workflow** | 在可视化画布上添加、连接和配置节点，检查工作流结构并执行整个流程或单个节点。运行结果、生成文件和历史版本可以集中查看，工作流也支持批量执行以及 JSON 导入和导出。 | <video src="https://github.com/user-attachments/assets/10d47621-7c3b-4bfa-b751-564ef62b507c" controls></video> |
 | **Task** | 使用表格文件批量运行 Workflow，或者按指定时间和间隔创建定时任务。Task Center 会持续显示排队和执行进度、事件、输出与异常，并允许用户暂停、取消或恢复适用的任务。 | <video src="https://github.com/user-attachments/assets/095142b4-b42c-4799-af89-0318fca11b10" controls></video> |
-| **Deployment** | 将验证通过的 Workflow 发布为 API、Webhook 或定时服务。用户可以复制调用地址和代码示例、在线测试输入、查看运行日志与延迟指标，并管理启停状态、限流规则和访问密钥。 | <video src="https://github.com/user-attachments/assets/59dca3ab-7b55-46bc-b73b-232514ab80f5" controls></video> |
-| **Knowledge** | 创建知识库并上传 PDF、Office 文档、文本、网页、JSON 或表格等资料。页面会显示文件的索引状态；索引完成后，Agent 可以通过 `/knowledge` 查找并读取相关内容。 | <video src="https://github.com/user-attachments/assets/7392f893-ecce-4632-a5af-a45bee0b15e1" controls></video> |
+| **Deployment** | 将验证通过的 Workflow 发布为 API 或 Webhook，供外部系统调用。每个 Deployment 都提供调用信息、代码示例、在线测试、流量控制、凭据、运行历史与健康指标；如需按周期或指定日历时间执行 Workflow，请创建定时 Task。 | <video src="https://github.com/user-attachments/assets/59dca3ab-7b55-46bc-b73b-232514ab80f5" controls></video> |
+| **Knowledge** | 将可复用笔记与多模态资料整理为带版本的文件资料包。每个资料包以 README 为入口，Agent 可通过 `/knowledge` 渐进式读取、修改并发布。详见[知识资料包](docs/knowledge.zh-CN.md)。 | <video src="https://github.com/user-attachments/assets/7392f893-ecce-4632-a5af-a45bee0b15e1" controls></video> |
 | **MCP Server** | 从官方注册表或 Smithery 查找外部工具，也可以通过 URL 或命令接入自定义服务。安装前可以检查来源、访问范围和凭据要求，连接成功后 Agent 会在需要时加载相应工具。 | <video src="https://github.com/user-attachments/assets/0fd6c1e5-4349-435f-8b5c-d53abb900c85" controls></video> |
 | **Skills** | 查找并安装 OpenAI、Anthropic 等来源提供的可复用指令包，或导入自定义 Skill。安装前可以查看指令、附带文件、工具要求和来源，安装后由 Agent 按需加载。 | <video src="https://github.com/user-attachments/assets/9d6885a1-9a7a-464c-95da-d7921e6cedc9" controls></video> |
 | **Storage** | 按共享挂载、Workflow、Chat 和 Task 浏览平台文件。用户可以搜索、排序、上传和下载文件，并在权限允许时创建目录、重命名、删除或直接预览和编辑受支持的内容。 | <video src="https://github.com/user-attachments/assets/84876473-f2ab-463a-b48c-f686bf27cee4" controls></video> |
+
+#### 资源归属与共享
+
+用户创建的 Workflow、Task、Deployment 和 Knowledge 资料包在共享后仍保留原有归属与来源。共享个人资源时，需要输入对方完整的账号邮箱；对方仍是外部 Guest，不会成为所有者个人工作空间的成员，并且只会获得指定的资源级权限。企业组织则可以按完整成员邮箱、完整团队或部门路径，也可以向整个组织共享。接收者可以在“与我共享”中查看这些资源，实际可用操作由其权限角色决定。
+
+已安装的 Skill 和 MCP Server、目录条目、API 凭据以及平台内置资源不属于可共享对象。
 
 #### Chat 斜杠命令
 
@@ -167,12 +162,12 @@ cd Skeinix
 
 | 命令 | 用途 | 可用范围 |
 | --- | --- | --- |
-| `/build` | 让 Agent 创建或打开 Workflow，并在对话中修改节点、检查结构、创建版本或运行流程 | 主应用与浏览器扩展；LangChain/Codex |
+| `/workflow` | 让 Agent 创建或打开 Workflow，并在对话中修改节点、检查结构、创建版本或运行流程 | 主应用与浏览器扩展；LangChain/Codex |
 | `/task` | 让 Agent 查找 Task、创建或更新定时运行，以及取消或恢复任务 | 主应用与浏览器扩展；LangChain/Codex |
 | `/deployment` | 让 Agent 查找、创建、更新或删除 Workflow 的 Deployment | 主应用与浏览器扩展；LangChain/Codex |
-| `/knowledge` | 让 Agent 在用户有权访问的知识库中查找并逐步读取资料 | 主应用与浏览器扩展；LangChain/Codex |
-| `/diagram` | 让 Agent 创建语义化图表，并完成校验、渲染、视觉审查和导出 | 主应用与浏览器扩展；LangChain/Codex |
-| `/plan` | 让 Agent 将复杂工作组织为可持久化的执行计划，并协调 SubAgent 完成各个步骤 | 仅限 LangChain |
+| `/knowledge` | 让 Agent 读取、创建和更新当前组织中的 Knowledge 文件资料包 | 主应用与浏览器扩展；LangChain/Codex |
+| [`/diagram`](docs/diagram.zh-CN.md) | 使用沙盒内的 draw.io 官方 MCP 创建和调整原生图表，并完成预览与导出 | 主应用与浏览器扩展；LangChain/Codex |
+| `/document` | 创建或修改专业的 PPTX、DOCX、XLSX 或 PDF 文件，检查文档结构与实际渲染效果，然后在 Preview 中交付原生文件 | 主应用与浏览器扩展；LangChain/Codex |
 | `/browser` | 让 Agent 读取或操作当前浏览器中的标签页和已登录页面 | 仅限浏览器扩展侧边栏；LangChain/Codex |
 
 ### 浏览器扩展

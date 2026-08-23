@@ -143,12 +143,6 @@ class HitlRequest(Base):
     run_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("agent_runs.run_id", ondelete="SET NULL"),
     )
-    execution_plan_run_id: Mapped[str | None] = mapped_column(
-        Text, ForeignKey("execution_plan_runs.plan_run_id", ondelete="CASCADE"),
-    )
-    execution_node_run_id: Mapped[str | None] = mapped_column(
-        Text, ForeignKey("execution_node_runs.node_run_id", ondelete="CASCADE"),
-    )
     artifact_id: Mapped[str | None] = mapped_column(Text)
     hitl_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
@@ -171,8 +165,7 @@ class HitlRequest(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "hitl_type IN ('pre_tool_approval','post_tool_review','elicitation',"
-            "'plan_start_approval','plan_node_tool_approval')",
+            "hitl_type IN ('pre_tool_approval','post_tool_review','elicitation')",
             name="ck_hitl_requests_type",
         ),
         CheckConstraint(
@@ -182,16 +175,8 @@ class HitlRequest(Base):
         Index("ix_hitl_requests_chat_status", "tenant_id", "chat_id", "status", "created_at"),
         Index("ix_hitl_requests_run_status", "tenant_id", "run_id", "status", "created_at"),
         Index("ix_hitl_requests_artifact", "tenant_id", "artifact_id"),
-        Index(
-            "ix_hitl_requests_plan_run_status",
-            "tenant_id", "execution_plan_run_id", "status", "created_at",
-        ),
-        Index(
-            "ix_hitl_requests_node_run_status",
-            "tenant_id", "execution_node_run_id", "status", "created_at",
-        ),
         CheckConstraint(
-            "num_nonnulls(run_id, execution_plan_run_id, execution_node_run_id) = 1",
+            "run_id IS NOT NULL",
             name="ck_hitl_requests_exactly_one_owner",
         ),
     )

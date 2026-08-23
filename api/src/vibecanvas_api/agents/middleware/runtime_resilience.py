@@ -12,8 +12,8 @@ from langchain.agents.middleware import AgentMiddleware
 _RETRYABLE_READ_TOOLS = {
     "read_file", "grep", "read_images", "web_search",
     "background_job_list", "list_workflows", "get_workflow",
-    "list_knowledge_bases", "get_knowledge_base", "list_knowledge_files",
-    "search_knowledge", "read_knowledge_file",
+    "knowledge_list", "knowledge_get", "knowledge_create",
+    "knowledge_update", "knowledge_delete", "knowledge_search",
     "task_list", "task_get", "deployment_list", "deployment_get",
 }
 _TRANSIENT = (TimeoutError, OSError, ConnectionError)

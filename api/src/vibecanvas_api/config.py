@@ -138,6 +138,33 @@ def _trusted_proxy_cidrs(value: Any) -> tuple[str, ...]:
     return tuple(networks)
 
 
+def _control_plane_http_proxy(value: Any) -> str:
+    """Validate the operator-owned proxy used by host-side HTTP clients."""
+    rendered = str(value or "").strip()
+    if not rendered:
+        return ""
+    try:
+        parts = urlsplit(rendered)
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(
+            "SKEINIX_CONTROL_PLANE_HTTP_PROXY must be an HTTP(S) proxy URL"
+        ) from exc
+    if (
+        parts.scheme.lower() not in {"http", "https"}
+        or not parts.hostname
+        or parts.path not in {"", "/"}
+        or parts.query
+        or parts.fragment
+        or port is None
+    ):
+        raise ValueError(
+            "SKEINIX_CONTROL_PLANE_HTTP_PROXY must be an HTTP(S) proxy URL "
+            "with an explicit port"
+        )
+    return rendered.rstrip("/")
+
+
 def _parse_mapping_env(name: str) -> Dict[str, Any]:
     raw = os.environ.get(name)
     if not raw:
@@ -909,10 +936,12 @@ class McpConfig:
         )
         self.per_server_tool_cap: int = int(raw.get("per_server_tool_cap", 50))
         self.per_tenant_tool_cap: int = int(raw.get("per_tenant_tool_cap", 200))
-        # Sandbox Runtimes call built-in Platform MCP servers over the API
-        # process's private network address. This is intentionally independent
-        # of VIBECANVAS_PUBLIC_URL and browser proxy prefixes. In a multi-pod
-        # deployment set it to the pod-local/internal service origin.
+        # Private Host broker origin used for model, custom remote MCP, and
+        # browser-control traffic. Built-in MCP facades themselves communicate
+        # over the Agent Runtime control bus and do not expose an HTTP server.
+        # This is intentionally independent of VIBECANVAS_PUBLIC_URL and
+        # browser proxy prefixes. In a multi-pod deployment set it to the
+        # pod-local/internal service origin.
         self.platform_internal_base_url: str = str(
             os.environ.get("PLATFORM_MCP_INTERNAL_BASE_URL")
             or raw.get("platform_internal_base_url")
@@ -1666,6 +1695,13 @@ class AppConfig:
                 os.environ.get("SANDBOX_EGRESS_TRUSTED_PROXY_CIDRS")
                 or raw.get("sandbox_egress_trusted_proxy_cidrs")
             )
+        )
+        # Host-side catalog/metadata clients never inherit HTTP_PROXY. An
+        # explicit operator setting keeps proxy behavior deterministic and
+        # prevents process environment changes from weakening SSRF controls.
+        self.control_plane_http_proxy: str = _control_plane_http_proxy(
+            os.environ.get("SKEINIX_CONTROL_PLANE_HTTP_PROXY")
+            or raw.get("control_plane_http_proxy")
         )
         if (
             self.sandbox_egress_policy == "allowlist"

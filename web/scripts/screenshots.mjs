@@ -233,7 +233,7 @@ async function installStubs(page) {
     if (p.endsWith('/chats/bootstrap')) return json(route, {
       carrier_scope_id: 'scope_demo',
       surface: q.get('surface') || 'chat',
-      available_commands: ['/task', '/deployment', '/knowledge', '/build', '/browser', '/plan'],
+      available_commands: ['/task', '/deployment', '/knowledge', '/workflow', '/browser'],
       debug_view_enabled: true,
     });
     if (p.endsWith('/chats/workspace')) return json(route, {

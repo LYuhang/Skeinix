@@ -8,7 +8,7 @@
  * keyboard shortcuts, which Playwright cannot control deterministically.
  *
  * `VIBECANVAS_VISUAL_CASE=1440-100` can select one width/zoom cell while
- * iterating locally. The unfiltered gate covers 4 widths × 4 zoom levels ×
+ * iterating locally. The unfiltered gate covers 5 widths × 4 zoom levels ×
  * 2 locales × 2 themes × every production route. The 200% cell is the
  * accessibility zoom gate required by the visual-system audit.
  */
@@ -21,13 +21,16 @@ import {
 
 const RUN_MATRIX = process.env.VIBECANVAS_VISUAL_MATRIX === '1';
 const CASE_FILTER = process.env.VIBECANVAS_VISUAL_CASE;
-const WIDTHS = [1024, 1280, 1440, 1920] as const;
+// 560 px is the product's required narrow desktop/side-by-side acceptance
+// width. Keep the 390 px shell-only gate below for true mobile behavior.
+const WIDTHS = [560, 1024, 1280, 1440, 1920] as const;
 const ZOOMS = [80, 100, 125, 200] as const;
 const THEMES = ['light', 'dark'] as const;
 const LOCALES = ['en', 'zh'] as const;
 const MISSING_UUID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_THEME_ROUTE_IDS = new Set([
   'chat',
+  'standalone-preview-error',
   'storage',
   'workflow',
   'settings',
@@ -46,6 +49,7 @@ interface RouteFixture {
 const ROUTES: readonly RouteFixture[] = [
   { id: 'root', path: () => '/' },
   { id: 'chat', path: () => '/chat', screenshot: true },
+  { id: 'standalone-preview-error', path: () => '/preview', screenshot: true },
   { id: 'workspace', path: () => '/workspace', screenshot: true },
   {
     id: 'management',
@@ -74,11 +78,6 @@ const ROUTES: readonly RouteFixture[] = [
     path: () => '/mcp-servers/discover/e2e-missing-source',
     screenshot: true,
     expectedNotFound: true,
-  },
-  {
-    id: 'platform-mcp-detail',
-    path: () => '/mcp-servers/platform/browser',
-    screenshot: true,
   },
   {
     id: 'mcp-detail-error',
@@ -111,6 +110,10 @@ const ROUTES: readonly RouteFixture[] = [
     path: (workflowId) => `/workflow/${workflowId}/version/v1.sv0`,
   },
   { id: 'settings', path: () => '/settings', screenshot: true },
+  {
+    id: 'openrouter-callback-error',
+    path: () => '/settings/openrouter/callback/e2e-state?error=access_denied',
+  },
   { id: 'login', path: () => '/login', screenshot: true },
   { id: 'signup', path: () => '/signup' },
   { id: 'reset-password', path: () => '/reset-password' },

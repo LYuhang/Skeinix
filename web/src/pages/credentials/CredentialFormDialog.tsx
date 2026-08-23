@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { SectionBlock } from '@/components/layout/section-block';
 import {
   Dialog,
   DialogContent,
@@ -196,7 +197,7 @@ export function CredentialFormDialog({
             ...(form.api_key ? { api_key: form.api_key } : {}),
           },
         });
-        toast.success(t('credentials.updated', 'Credential updated'));
+        toast.success(t('credentials.updatedNextStep', 'Credential updated. Select this model when you start a New Chat.'));
       } else {
         await createMutation.mutateAsync({
           name: form.name.trim(),
@@ -208,7 +209,7 @@ export function CredentialFormDialog({
           ...(proxy ? { proxy } : {}),
           api_key: form.api_key,
         });
-        toast.success(t('credentials.created', 'Credential saved'));
+        toast.success(t('credentials.createdNextStep', 'Credential saved. Select this model when you start a New Chat.'));
       }
       onOpenChange(false);
     } catch (e) {
@@ -233,7 +234,12 @@ export function CredentialFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+          <SectionBlock
+            title={t('credentials.section.identity', 'Identity')}
+            description={t('credentials.section.identityHelp', 'Give this saved connection a name your workspace can recognize.')}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="cred-name">{t('credentials.name', 'Name')}</Label>
             <Input
@@ -269,7 +275,13 @@ export function CredentialFormDialog({
               }
             />
           </div>
+          </SectionBlock>
 
+          <SectionBlock
+            title={t('credentials.section.model', 'Provider and model')}
+            description={t('credentials.section.modelHelp', 'Choose the API provider and the exact model identifier it accepts.')}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="cred-provider">
               {t('credentials.provider', 'Provider')}
@@ -356,7 +368,15 @@ export function CredentialFormDialog({
               )}
             </span>
           </div>
+          </SectionBlock>
 
+          <SectionBlock
+            title={t('credentials.section.connection', 'Connection')}
+            description={t('credentials.section.connectionHelp', 'Optional overrides for custom endpoints or network routes.')}
+            collapsible
+            defaultOpen={Boolean(form.api_url || form.proxy)}
+            contentClassName="space-y-4"
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="cred-url">
               {t('credentials.api_url', 'API base URL')}
@@ -398,7 +418,12 @@ export function CredentialFormDialog({
               )}
             </span>
           </div>
+          </SectionBlock>
 
+          <SectionBlock
+            title={t('credentials.section.secret', 'Secret')}
+            description={t('credentials.section.secretHelp', 'The key is encrypted after saving and is never displayed again.')}
+          >
           <div className="flex flex-col gap-1">
             <Label htmlFor="cred-key">
               {t('credentials.api_key', 'API key')}
@@ -427,6 +452,7 @@ export function CredentialFormDialog({
               </span>
             )}
           </div>
+          </SectionBlock>
         </div>
 
         <DialogFooter>

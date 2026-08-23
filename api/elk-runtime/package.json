@@ -1,8 +1,0 @@
-{
-  "name": "skeinix-elk-runtime",
-  "version": "0.2.0",
-  "private": true,
-  "dependencies": {
-    "elkjs": "0.12.0"
-  }
-}

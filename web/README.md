@@ -108,21 +108,49 @@ Run the checks relevant to the changed surface from the repository root:
 pnpm --dir web lint
 pnpm --dir web lint:visual
 pnpm --dir web lint:routes
+pnpm --dir web lint:locales
 pnpm --dir web lint:retired-ui
 pnpm --dir web test
+pnpm --dir web test:i18n:components
 pnpm --dir web build
 pnpm --dir web lint:bundle
 ```
 
 `build` performs TypeScript checking, creates the production bundle, and audits
 deployment-path portability. Unit and component tests run through Vitest,
-Testing Library, and MSW.
+Testing Library, and MSW. `lint:locales` requires the English and Simplified
+Chinese catalogs to contain the same non-empty key set with matching
+interpolation parameters. It also checks the maintained route/child-tab/modal/
+dynamic-state inventory and rejects new high-confidence hard-coded interface
+copy. Intentional technical identifiers and acknowledged migration debt must be
+recorded explicitly in [`i18n-copy-allowlist.json`](scripts/i18n-copy-allowlist.json)
+with a reason; stale entries fail the audit.
 
 Browser end-to-end tests are organized by product journey and do not all share
 the same runtime prerequisites. Run the specifications affected by a change;
 the complete `pnpm --dir web test:e2e` collection also includes scenarios that
 require credentials, a Browser Extension build, or explicit opt-in variables.
 See the [E2E testing guide](e2e/README.md) for supported commands and fixtures.
+
+`test:i18n:components` runs the maintained component-spec matrix for localized
+tabs, dialogs, empty/error states, resource surfaces, and locale-sensitive
+schedule and time presentation. The spec list lives beside the browser surface
+inventory so a review can distinguish static, component, and visible-browser
+evidence without relying on an undocumented local command.
+
+The opt-in multilingual browser gate verifies in-place language switching,
+locale persistence through refresh and deep links, automatable nested tabs and
+dialogs, and the application's date, number, and schedule formatters:
+
+```bash
+pnpm --dir web test:e2e:i18n
+```
+
+Its machine-readable coverage contract is
+[`i18n-surface-inventory.json`](e2e/fixtures/i18n-surface-inventory.json).
+Entries marked `visible-browser` still require human review in a visible Edge
+session at both 1440 px and 560 px; the automated gate is a regression check,
+not visual evidence of translation readability.
 
 ## Generated API contract
 

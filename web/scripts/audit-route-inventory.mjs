@@ -5,11 +5,13 @@ const router = await readFile(resolve('src/app/router.tsx'), 'utf8');
 const visualMatrix = await readFile(resolve('e2e/15-route-visual-matrix.spec.ts'), 'utf8');
 
 const inventory = [
+  ['/', 'root'],
   ['embed/chat', 'embed-chat'],
   ['login', 'login'],
   ['signup', 'signup'],
   ['reset-password', 'reset-password'],
   ['chat', 'chat'],
+  ['preview', 'standalone-preview-error'],
   ['workspace', 'workspace'],
   ['management', 'management'],
   ['tasks', 'tasks'],
@@ -19,7 +21,6 @@ const inventory = [
   ['credentials', 'credentials'],
   ['mcp-servers', 'mcp-servers'],
   ['mcp-servers/discover/:source', 'mcp-catalog-detail-error'],
-  ['mcp-servers/platform/:platformId', 'platform-mcp-detail'],
   ['mcp-servers/:id', 'mcp-detail-error'],
   ['skills', 'skills'],
   ['skills/discover/:source', 'skill-catalog-detail-error'],
@@ -30,13 +31,26 @@ const inventory = [
   ['workflow/:wfId', 'workflow'],
   ['workflow/:wfId/version/:vKey', 'workflow-version'],
   ['settings', 'settings'],
+  ['settings/openrouter/callback/:openrouterState', 'openrouter-callback-error'],
 ];
 
 const failures = [];
+const normalizeRoute = (route) => route === '/' ? '/' : route.replace(/^\/+/, '');
+const routerRoutes = new Set(
+  Array.from(router.matchAll(/\bpath:\s*['"]([^'"]+)['"]/g), (match) =>
+    normalizeRoute(match[1]),
+  ),
+);
+const inventoriedRoutes = new Set(
+  inventory.map(([route]) => normalizeRoute(route)),
+);
+
 for (const [route, visualId] of inventory) {
-  const routePattern = new RegExp(`path:\\s*['\"]/?${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['\"]`);
-  if (!routePattern.test(router)) failures.push(`router missing ${route}`);
+  if (!routerRoutes.has(normalizeRoute(route))) failures.push(`router missing ${route}`);
   if (!visualMatrix.includes(`id: '${visualId}'`)) failures.push(`visual matrix missing ${visualId}`);
+}
+for (const route of routerRoutes) {
+  if (!inventoriedRoutes.has(route)) failures.push(`inventory missing router route ${route}`);
 }
 if (!visualMatrix.includes("test('mobile shell and primary routes at 390px'")) {
   failures.push('visual matrix missing mobile representative gate');

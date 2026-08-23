@@ -86,7 +86,7 @@ describe('<StoragePage>', () => {
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
   });
 
-  it('restores location state and only opens a file on an explicit open gesture', async () => {
+  it('restores location state and previews a file on a single click', async () => {
     const user = userEvent.setup();
     renderStorage();
 
@@ -95,9 +95,6 @@ describe('<StoragePage>', () => {
 
     const fileButton = screen.getByRole('button', { name: 'notes.txt' });
     await user.click(fileButton);
-    expect(screen.queryByRole('heading', { name: '/mount/notes.txt' })).not.toBeInTheDocument();
-
-    fireEvent.doubleClick(fileButton.closest('tr') as HTMLTableRowElement);
     expect(await screen.findByRole('heading', { name: '/mount/notes.txt' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('file=%2Fmount%2Fnotes.txt'));
   });

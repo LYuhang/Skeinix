@@ -19,7 +19,6 @@ _EXECUTION_RESOURCE_TYPES = frozenset({
     "task",
     "task_execution",
     "workflow_execution",
-    "agent_plan",
 })
 
 
@@ -84,14 +83,13 @@ def mint_runtime_workflow_model_capability(
         raise ValueError("unsupported Workflow execution principal type")
     if principal_type == "service_account" and principal_generation <= 0:
         raise ValueError("service account generation must be positive")
-    parent_type = "chat" if execution_resource_type == "agent_plan" else "workflow"
     resources = [
-        f"{parent_type}:{workflow_id}",
+        f"workflow:{workflow_id}",
         f"{execution_resource_type}:{execution_id}",
     ]
     actions = [
         "model:invoke",
-        f"{parent_type}:execute",
+        "workflow:execute",
         f"{execution_resource_type}:execute",
     ]
     if credential_id is not None:
@@ -158,13 +156,12 @@ def verify_runtime_workflow_model_capability(
             return None
         if execution_resource_type not in _EXECUTION_RESOURCE_TYPES:
             return None
-        parent_type = "chat" if execution_resource_type == "agent_plan" else "workflow"
         expected_resources = {
-            f"{parent_type}:{payload['w']}",
+            f"workflow:{payload['w']}",
             f"{execution_resource_type}:{payload['e']}",
         }
         expected_actions = {
-            f"{parent_type}:execute",
+            "workflow:execute",
             "model:invoke",
             f"{execution_resource_type}:execute",
         }

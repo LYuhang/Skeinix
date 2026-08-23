@@ -46,6 +46,7 @@ import type { components } from '@/lib/api/schema';
 import type { ResourceAccess } from '@/lib/api/organizations';
 import { ResourceShareDialog } from '@/components/modals/ResourceShareDialog';
 import { ResourceIcon } from '@/components/presentation/ResourceIcon';
+import { ResourceProvenanceLine } from '@/components/resources/ResourceProvenanceLine';
 
 type WorkflowMetaOut = components['schemas']['WorkflowMetaOut'];
 
@@ -147,6 +148,10 @@ export function WorkflowRow({
             {wf.description}
           </p>
         ) : null}
+        <ResourceProvenanceLine
+          provenance={wf.provenance}
+          className="mt-0.5 flex max-w-full"
+        />
         <div className="mt-0.5 flex items-center gap-1">
           <code
             className="truncate font-mono text-meta"

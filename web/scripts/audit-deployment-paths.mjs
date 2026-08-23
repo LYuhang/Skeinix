@@ -64,10 +64,12 @@ if (!bootstrapSource) {
     ['/opaque/proxy/tasks/login', '/opaque/proxy/tasks/'],
     ['/knowledge', '/'],
     ['/opaque/proxy/knowledge', '/opaque/proxy/'],
+    ['/preview', '/'],
+    ['/opaque/proxy/preview', '/opaque/proxy/'],
     ['/management', '/'],
     ['/opaque/proxy/management', '/opaque/proxy/'],
-    ['/mcp-servers/platform/browser', '/'],
-    ['/opaque/proxy/mcp-servers/platform/browser', '/opaque/proxy/'],
+    ['/mcp-servers/discover/official', '/'],
+    ['/opaque/proxy/mcp-servers/discover/official', '/opaque/proxy/'],
   ];
   for (const [pathname, expected] of cases) {
     const actual = inferredBaseHref(pathname);

@@ -445,6 +445,8 @@ class TasksRepo:
         after_seq: int | None = None,
         before_seq: int | None = None,
         event_type: list[str] | None = None,
+        from_: datetime | None = None,
+        to: datetime | None = None,
         limit: int = 500,
         descending: bool = False,
     ) -> list[TaskEvent]:
@@ -455,6 +457,10 @@ class TasksRepo:
             stmt = stmt.where(TaskEvent.id < before_seq)
         if event_type:
             stmt = stmt.where(TaskEvent.event_type.in_(event_type))
+        if from_ is not None:
+            stmt = stmt.where(TaskEvent.ts >= from_)
+        if to is not None:
+            stmt = stmt.where(TaskEvent.ts <= to)
         order = TaskEvent.id.desc() if descending else TaskEvent.id.asc()
         result = await self.session.execute(stmt.order_by(order).limit(limit))
         rows = list(result.scalars().all())
@@ -470,6 +476,12 @@ class TasksRepo:
                 nonce=row.payload_nonce,
             )
         return rows
+
+    async def latest_event_seq(self, task_id: uuid.UUID) -> int:
+        result = await self.session.execute(
+            select(func.max(TaskEvent.id)).where(TaskEvent.task_id == task_id)
+        )
+        return int(result.scalar_one_or_none() or 0)
 
     async def create_schedule(
         self,

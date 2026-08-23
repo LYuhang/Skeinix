@@ -10,6 +10,7 @@ cross the host↔sandbox boundary.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import json
 import re
@@ -69,7 +70,6 @@ from vibecanvas_api.storage.models_tasks import (
 )
 from vibecanvas_api.storage.models_org import OrgMembership
 from vibecanvas_api.storage.models_service_accounts import ServiceAccount
-from vibecanvas_api.storage.models_execution_plans import ExecutionPlanRun
 from vibecanvas_api.storage.repo_llm_credentials import LlmCredentialsRepo
 
 
@@ -81,6 +81,7 @@ _MAX_REWRITTEN_RESPONSE_BYTES = 64 * 1024 * 1024
 _MAX_COMPATIBILITY_ERROR_BYTES = 1024 * 1024
 _MAX_NAMESPACE_COMPATIBILITY_TARGETS = 256
 _MAX_PATH_BYTES = 2048
+_MAX_SSE_OBSERVER_LINE_BYTES = 64 * 1024
 _MODEL_QUERY_SECRET_NAMES = frozenset({"key", "api_key", "access_token"})
 _HOP_BY_HOP = frozenset({
     "connection",
@@ -162,6 +163,7 @@ def _default_base_url(provider: str) -> str:
         "mistralai": "https://api.mistral.ai/v1",
         "mistral": "https://api.mistral.ai/v1",
         "cohere": "https://api.cohere.com/v2",
+        "openrouter": "https://openrouter.ai/api/v1",
     }
     return defaults.get(provider, "")
 
@@ -266,6 +268,74 @@ def _validate_requested_model(
         )
 
 
+def _responses_request_shape(body: bytes) -> dict[str, object]:
+    """Return a content-free request summary for provider compatibility logs.
+
+    Prompts, tool descriptions, schemas, arguments, metadata values and
+    credentials are deliberately excluded. The summary is sufficient to tell
+    whether a custom Responses endpoint rejected a hosted, custom, namespace,
+    or ordinary function tool without copying user content into logs.
+    """
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"json": False}
+    if not isinstance(payload, dict):
+        return {"json": True, "root_type": type(payload).__name__}
+    tools = payload.get("tools")
+    input_items = payload.get("input")
+    tool_types = Counter(
+        str(tool.get("type") or "missing")
+        for tool in tools or []
+        if isinstance(tool, dict)
+    ) if isinstance(tools, list) else Counter()
+    input_types = Counter(
+        str(item.get("type") or "missing")
+        for item in input_items or []
+        if isinstance(item, dict)
+    ) if isinstance(input_items, list) else Counter()
+    return {
+        "json": True,
+        "keys": sorted(str(key) for key in payload),
+        "tool_types": dict(sorted(tool_types.items())),
+        "input_types": dict(sorted(input_types.items())),
+        "stream": payload.get("stream") is True,
+    }
+
+
+def _bounded_error_discriminator(value: object) -> str | None:
+    """Return a provider error discriminator without copying error prose."""
+    if not isinstance(value, str) or not value or len(value) > 128:
+        return None
+    return value
+
+
+def _provider_error_shape(payload: object) -> dict[str, str]:
+    """Extract only documented error codes/types from a provider payload."""
+    if not isinstance(payload, dict):
+        return {}
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        response = payload.get("response")
+        error = response.get("error") if isinstance(response, dict) else None
+    if not isinstance(error, dict):
+        return {}
+    shape: dict[str, str] = {}
+    for key in ("code", "type", "param"):
+        value = _bounded_error_discriminator(error.get(key))
+        if value is not None:
+            shape[key] = value
+    return shape
+
+
+def _upstream_error_shape(body: bytes) -> dict[str, str]:
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return _provider_error_shape(payload)
+
+
 @dataclass(frozen=True, slots=True)
 class NamespaceCompatibilityRewrite:
     body: bytes
@@ -274,6 +344,81 @@ class NamespaceCompatibilityRewrite:
 
 class _UpstreamResponseTooLarge(RuntimeError):
     pass
+
+
+class _SseShapeObserver:
+    """Observe only public event/type discriminators from an SSE stream."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+        self.event_types: Counter[str] = Counter()
+        self.item_types: Counter[str] = Counter()
+        self.failed_codes: Counter[str] = Counter()
+        self.chunks = 0
+        self.bytes = 0
+        self.oversized_lines = 0
+
+    @staticmethod
+    def _bounded_discriminator(value: object) -> str | None:
+        if not isinstance(value, str) or not value or len(value) > 128:
+            return None
+        return value
+
+    def _observe_line(self, line: bytes) -> None:
+        stripped = line.strip()
+        if not stripped.startswith(b"data:"):
+            return
+        raw = stripped.partition(b":")[2].strip()
+        if not raw or raw == b"[DONE]":
+            if raw == b"[DONE]":
+                self.event_types["[DONE]"] += 1
+            return
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.event_types["invalid_json"] += 1
+            return
+        if not isinstance(payload, dict):
+            return
+        event_type = self._bounded_discriminator(payload.get("type"))
+        if event_type is not None:
+            self.event_types[event_type] += 1
+        if event_type == "response.failed":
+            for key, value in _provider_error_shape(payload).items():
+                self.failed_codes[f"{key}:{value}"] += 1
+        item = payload.get("item")
+        if isinstance(item, dict):
+            item_type = self._bounded_discriminator(item.get("type"))
+            if item_type is not None:
+                self.item_types[item_type] += 1
+
+    def feed(self, chunk: bytes) -> None:
+        self.chunks += 1
+        self.bytes += len(chunk)
+        self._buffer.extend(chunk)
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline < 0:
+                if len(self._buffer) > _MAX_SSE_OBSERVER_LINE_BYTES:
+                    self._buffer.clear()
+                    self.oversized_lines += 1
+                return
+            line = bytes(self._buffer[: newline + 1])
+            del self._buffer[: newline + 1]
+            self._observe_line(line)
+
+    def summary(self) -> dict[str, object]:
+        if self._buffer:
+            self._observe_line(bytes(self._buffer))
+            self._buffer.clear()
+        return {
+            "event_types": dict(sorted(self.event_types.items())),
+            "item_types": dict(sorted(self.item_types.items())),
+            "failed_codes": dict(sorted(self.failed_codes.items())),
+            "chunks": self.chunks,
+            "bytes": self.bytes,
+            "oversized_lines": self.oversized_lines,
+        }
 
 
 async def _read_upstream_bounded(
@@ -292,6 +437,54 @@ async def _read_upstream_bounded(
 def _join_namespaced_tool_name(namespace: str, name: str) -> str:
     """Match Codex's canonical `<namespace>__<tool>` compatibility name."""
     return f"{namespace.rstrip('_')}__{name.lstrip('_')}"
+
+
+def _requires_eager_namespace_compatibility(provider: str) -> bool:
+    """Return whether a Responses provider accepts only standard tools.
+
+    OpenRouter advertises ordinary function-tool support per model, but its
+    Responses router does not advertise Codex's newer namespace container.
+    Waiting for an explicit schema error is insufficient: some routed models
+    accept the request and later emit ``response.failed`` when the namespaced
+    tool is selected. Flattening is lossless and the response is restored for
+    Codex, so apply it deterministically at this boundary.
+    """
+    return _normalized_provider(provider) in {"openrouter", "open_router"}
+
+
+def _with_openrouter_server_tools(body: bytes) -> bytes:
+    """Project Codex hosted tools onto OpenRouter's Responses vocabulary.
+
+    OpenRouter accepts ordinary function tools plus server tools prefixed with
+    ``openrouter:``. Codex's built-in ``web_search`` descriptor is an OpenAI
+    server-tool shape, so forwarding it unchanged can make otherwise valid
+    function-tool requests fail before the selected local tool is invoked.
+    The projection retains web-search capability without forwarding any
+    provider-specific optional fields.
+    """
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body
+    tools = payload.get("tools") if isinstance(payload, dict) else None
+    if not isinstance(tools, list):
+        return body
+    changed = False
+    projected: list[object] = []
+    for tool in tools:
+        if isinstance(tool, dict) and tool.get("type") == "web_search":
+            projected.append({"type": "openrouter:web_search"})
+            changed = True
+        else:
+            projected.append(tool)
+    if not changed:
+        return body
+    payload["tools"] = projected
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _rewrite_namespaced_function_calls(
@@ -922,6 +1115,19 @@ async def _resolve_model_material(
             )
         provider = _normalized_provider(row.get("provider"))
         model = str(row.get("model_name") or "").strip()
+        if row.get("connection_kind") == "openrouter_oauth":
+            requested = str(capability.model or "").strip()
+            catalog_ids = {
+                str(item.get("id") or "").strip()
+                for item in row.get("model_catalog") or []
+                if isinstance(item, dict)
+            }
+            if requested not in catalog_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "runtime_model_configuration_stale"},
+                )
+            model = requested
         revision = model_config_revision(
             provider=provider,
             model=model,
@@ -1203,16 +1409,11 @@ async def _authorize_and_resolve_workflow_target(
         execution_resource_type = ResourceType(
             capability.execution_resource_type
         )
-        parent_resource_type = (
-            ResourceType.CHAT
-            if execution_resource_type is ResourceType.AGENT_PLAN
-            else ResourceType.WORKFLOW
-        )
         workflow_decision = await service.check(
             principal,
             Action.EXECUTE,
             ResourceRef(
-                parent_resource_type,
+                ResourceType.WORKFLOW,
                 capability.workflow_id,
                 capability.organization_id,
             ),
@@ -1223,22 +1424,21 @@ async def _authorize_and_resolve_workflow_target(
                 status_code=403,
                 detail={"code": "runtime_model_workflow_access_revoked"},
             )
-        if execution_resource_type is not ResourceType.AGENT_PLAN:
-            execution_decision = await service.check(
-                principal,
-                Action.EXECUTE,
-                ResourceRef(
-                    execution_resource_type,
-                    capability.execution_id,
-                    capability.organization_id,
-                ),
-                authz_context,
+        execution_decision = await service.check(
+            principal,
+            Action.EXECUTE,
+            ResourceRef(
+                execution_resource_type,
+                capability.execution_id,
+                capability.organization_id,
+            ),
+            authz_context,
+        )
+        if not execution_decision.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "runtime_model_execution_access_revoked"},
             )
-            if not execution_decision.allowed:
-                raise HTTPException(
-                    status_code=403,
-                    detail={"code": "runtime_model_execution_access_revoked"},
-                )
         if not await _workflow_execution_is_active(session, capability):
             raise HTTPException(
                 status_code=403,
@@ -1290,16 +1490,6 @@ async def _workflow_execution_is_active(
             run is not None
             and run.status == "running"
             and str(run.creator_user_id) == capability.user_id
-        )
-    if resource_type is ResourceType.AGENT_PLAN:
-        if service_account_id is not None:
-            return False
-        run = await session.get(ExecutionPlanRun, capability.execution_id)
-        return bool(
-            run is not None
-            and run.chat_id == capability.workflow_id
-            and str(run.creator_user_id) == capability.user_id
-            and run.status in {"queued", "running", "cancel_requested"}
         )
     try:
         execution_uuid = uuid.UUID(capability.execution_id)
@@ -1427,7 +1617,14 @@ async def _proxy_runtime_model_request(request: Request, path: str):
     )
     namespace_compatibility = (
         namespace_rewrite is not None
-        and compatibility_target_key in _NAMESPACE_UNSUPPORTED_TARGETS
+        and (
+            _requires_eager_namespace_compatibility(target.provider)
+            or compatibility_target_key in _NAMESPACE_UNSUPPORTED_TARGETS
+        )
+    )
+    openrouter_responses_compatibility = (
+        path.strip("/").endswith("responses")
+        and _normalized_provider(target.provider) in {"openrouter", "open_router"}
     )
     web_search_compatibility = (
         compatibility_target_key in _WEB_SEARCH_EXTERNAL_UNSUPPORTED_TARGETS
@@ -1461,7 +1658,10 @@ async def _proxy_runtime_model_request(request: Request, path: str):
         follow_redirects=False,
         trust_env=False,
     )
+    outbound_request_shape: dict[str, object] = {}
+
     async def send_upstream() -> httpx.Response:
+        nonlocal outbound_request_shape
         headers = _forward_headers(
             request,
             provider=target.provider,
@@ -1470,6 +1670,19 @@ async def _proxy_runtime_model_request(request: Request, path: str):
         request_body = body
         if namespace_compatibility and namespace_rewrite is not None:
             request_body = namespace_rewrite.body
+        if openrouter_responses_compatibility:
+            request_body = _with_openrouter_server_tools(request_body)
+            # Keep the outbound payload within OpenRouter's documented
+            # OpenResponses surface. Codex may send newer OpenAI-only replay
+            # hints which OpenRouter currently reports as a generic provider
+            # ``server_error`` rather than a bounded schema rejection.
+            request_body = _without_reasoning_summary(request_body)
+            request_body = _without_input_message_phase(request_body)
+            request_body = _with_completed_assistant_status(request_body)
+            request_body = _without_optional_request_fields(
+                request_body,
+                {"client_metadata"},
+            )
         if web_search_compatibility:
             request_body = _without_web_search_external_access(request_body)
         if reasoning_summary_compatibility:
@@ -1487,8 +1700,14 @@ async def _proxy_runtime_model_request(request: Request, path: str):
                 request_body,
                 unsupported_optional_fields,
             )
+        outbound_request_shape = (
+            _responses_request_shape(request_body)
+            if path.strip("/").endswith("responses")
+            else {"path": path.strip("/")}
+        )
         if (
             namespace_compatibility
+            or openrouter_responses_compatibility
             or web_search_compatibility
             or reasoning_summary_compatibility
             or input_status_compatibility
@@ -1513,7 +1732,7 @@ async def _proxy_runtime_model_request(request: Request, path: str):
         for _attempt in range(12):
             upstream = await send_upstream()
             rejection_body = b""
-            if upstream.status_code in {400, 422}:
+            if 400 <= upstream.status_code < 600:
                 rejection_body = await _read_upstream_bounded(
                     upstream,
                     limit=_MAX_COMPATIBILITY_ERROR_BYTES,
@@ -1670,6 +1889,15 @@ async def _proxy_runtime_model_request(request: Request, path: str):
                 custom_tool_history_compatibility = True
                 continue
             if rejection_body:
+                logger.warning(
+                    "runtime_model_upstream_rejected",
+                    provider=target.provider,
+                    model=target.model,
+                    destination=urlsplit(target.base_url).hostname,
+                    status_code=upstream.status_code,
+                    upstream_error_shape=_upstream_error_shape(rejection_body),
+                    request_shape=outbound_request_shape,
+                )
                 # ``aread`` consumed the small provider error response. Rebuild
                 # it so the caller still receives the provider's exact failure.
                 headers = _response_headers(upstream)
@@ -1720,13 +1948,16 @@ async def _proxy_runtime_model_request(request: Request, path: str):
     content_type = upstream.headers.get("content-type", "").casefold()
 
     async def stream_body() -> AsyncIterator[bytes]:
+        observer = _SseShapeObserver()
         try:
             if not namespace_compatibility or namespace_rewrite is None:
                 async for chunk in upstream.aiter_raw():
+                    observer.feed(chunk)
                     yield chunk
                 return
             buffer = bytearray()
             async for chunk in upstream.aiter_raw():
+                observer.feed(chunk)
                 buffer.extend(chunk)
                 if len(buffer) > _MAX_REWRITTEN_RESPONSE_BYTES:
                     raise _UpstreamResponseTooLarge
@@ -1748,6 +1979,14 @@ async def _proxy_runtime_model_request(request: Request, path: str):
                     flat_to_namespaced=namespace_rewrite.flat_to_namespaced,
                 )
         finally:
+            logger.info(
+                "runtime_model_upstream_stream_shape",
+                provider=target.provider,
+                model=target.model,
+                destination=urlsplit(target.base_url).hostname,
+                request_shape=outbound_request_shape,
+                response_shape=observer.summary(),
+            )
             await upstream.aclose()
             await client.aclose()
 

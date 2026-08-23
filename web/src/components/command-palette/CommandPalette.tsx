@@ -13,6 +13,7 @@
  * whichever workflow route is active.
  */
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import {
   CommandDialog,
@@ -26,16 +27,17 @@ import {
 import { useUIStore } from '@/stores/ui';
 import { ACTIONS, type Action, type ActionCtx } from './actions';
 
-const GROUP_LABELS: Record<Action['group'], string> = {
-  navigate: 'Navigate',
-  workflow: 'Workflow',
-  view: 'View',
+const GROUP_LABEL_KEYS: Record<Action['group'], string> = {
+  navigate: 'commandPalette.group.navigate',
+  workflow: 'commandPalette.group.workflow',
+  view: 'commandPalette.group.view',
 };
 
 /** Stable group order — matches the visual hierarchy a power user expects. */
 const GROUP_ORDER: Action['group'][] = ['navigate', 'workflow', 'view'];
 
 export function CommandPalette() {
+  const { t } = useTranslation();
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
   const navigate = useNavigate();
@@ -56,10 +58,11 @@ export function CommandPalette() {
       view: [],
     };
     for (const action of ACTIONS) {
+      if (action.group === 'workflow' && !ctx.wfId) continue;
       buckets[action.group].push(action);
     }
     return buckets;
-  }, []);
+  }, [ctx.wfId]);
 
   const handleSelect = (action: Action) => {
     setOpen(false);
@@ -71,26 +74,29 @@ export function CommandPalette() {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Type a command or search..." />
+      <CommandInput placeholder={t('commandPalette.placeholder')} />
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandEmpty>{t('commandPalette.empty')}</CommandEmpty>
         {GROUP_ORDER.map((group) => {
           const items = grouped[group];
           if (items.length === 0) return null;
           return (
-            <CommandGroup key={group} heading={GROUP_LABELS[group]}>
-              {items.map((action) => (
-                <CommandItem
-                  key={action.id}
-                  value={action.label}
-                  onSelect={() => handleSelect(action)}
-                >
-                  {action.label}
-                  {action.shortcut ? (
-                    <CommandShortcut>{action.shortcut}</CommandShortcut>
-                  ) : null}
-                </CommandItem>
-              ))}
+            <CommandGroup key={group} heading={t(GROUP_LABEL_KEYS[group])}>
+              {items.map((action) => {
+                const label = t(action.labelKey);
+                return (
+                  <CommandItem
+                    key={action.id}
+                    value={`${action.id} ${label}`}
+                    onSelect={() => handleSelect(action)}
+                  >
+                    {label}
+                    {action.shortcut ? (
+                      <CommandShortcut>{action.shortcut}</CommandShortcut>
+                    ) : null}
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           );
         })}

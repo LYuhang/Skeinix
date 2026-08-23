@@ -1,7 +1,7 @@
-"""Platform MCP workflow-construction tools activated by ``/build``.
+"""Platform MCP workflow-construction tools activated by ``/workflow``.
 
 Each tool is a self-contained script in its own module. ``BUILD_TOOLS`` is the
-group the composer adds when ``"build"`` is in active_modes.
+group the composer adds when ``"workflow"`` is in active_modes.
 """
 from vibecanvas_api.services.platform_mcp.build_tools.check_workflow import check_workflow
 from vibecanvas_api.services.platform_mcp.build_tools.get_node_spec import get_node_spec

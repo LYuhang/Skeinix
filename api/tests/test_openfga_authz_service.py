@@ -129,6 +129,35 @@ async def test_inactive_or_wrong_organization_fails_before_openfga():
 
 
 @pytest.mark.asyncio
+async def test_recipient_admission_is_exactly_one_cross_tenant_root():
+    client = _FakeClient({"can_view"})
+    service = _service(client)
+    context = _context(
+        admitted_resource_organization_id="org-owner",
+        admitted_resource_type="workflow",
+        admitted_resource_id="wf-shared",
+    )
+
+    shared = await service.check(
+        PrincipalRef(PrincipalType.USER, "recipient"),
+        Action.VIEW,
+        ResourceRef(ResourceType.WORKFLOW, "wf-shared", "org-1"),
+        context,
+    )
+    neighboring = await service.check(
+        PrincipalRef(PrincipalType.USER, "recipient"),
+        Action.VIEW,
+        ResourceRef(ResourceType.WORKFLOW, "wf-neighbor", "org-1"),
+        context,
+    )
+
+    assert shared.allowed is True
+    assert neighboring.allowed is False
+    assert neighboring.reason_code == "organization_mismatch"
+    assert len(client.batch_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_batch_check_preserves_denials_and_higher_consistency():
     client = _FakeClient({"can_view"})
     service = _service(client)

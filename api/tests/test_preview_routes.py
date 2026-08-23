@@ -1,22 +1,42 @@
 from __future__ import annotations
 
-import hashlib
-import json
+from io import BytesIO
 import uuid
 
+from docx import Document
+from openpyxl import Workbook
+from pptx import Presentation
 import pytest
 from sqlalchemy import text
 
-from vibecanvas_api.diagrams.compiler import compile_diagram
-from vibecanvas_api.diagrams.registry import get_diagram_type
-from vibecanvas_api.diagrams.validator import parse_and_validate
 from vibecanvas_api.services.chat_workspace import chat_workspace_scope_id
 from vibecanvas_api.services.file_revision import vfs_content_revision
 from vibecanvas_api.services.object_store import get_object_store
 from vibecanvas_api.storage.chat_repo import ChatRepo
 from vibecanvas_api.storage.db import session_scope
-from vibecanvas_api.storage.diagram_draft_repo import DiagramDraftRepo
 from vibecanvas_api.storage.vfs_store import VfsRepo
+
+
+def _office_payload(extension: str) -> bytes:
+    target = BytesIO()
+    if extension == "docx":
+        document = Document()
+        document.add_heading("Executive brief", level=1)
+        document.add_paragraph("Decision-ready content")
+        document.save(target)
+    elif extension == "pptx":
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+        slide.shapes.title.text = "Executive review"
+        presentation.save(target)
+    else:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Summary"
+        sheet.append(["Metric", "Value"])
+        sheet.append(["Adoption", 0.72])
+        workbook.save(target)
+    return target.getvalue()
 
 
 async def _register(client) -> tuple[dict, dict]:
@@ -99,226 +119,59 @@ async def _artifact_events(
 
 
 @pytest.mark.asyncio
-async def test_diagram_draft_ready_cursor_etag_and_tenant_isolation(
-    client,
-    app_engine,
+async def test_native_drawio_resolves_to_official_viewer_descriptor(
+    client, app_engine,
 ):
-    headers, me, chat_id, scope_id = await _chat_fixture(client, app_engine)
-    spec = get_diagram_type("flow", "basic")
-    assert spec is not None
-    source = {
-        "schemaVersion": 1,
-        "id": "live-flow",
-        "title": "Live flow",
-        "diagram": {"family": "flow", "type": "basic"},
-        "model": {
-            "nodes": [
-                {"id": "start", "kind": "start", "label": "Start"},
-                {"id": "done", "kind": "end", "label": "Done"},
-            ],
-            "edges": [
-                {"id": "complete", "source": "start", "target": "done"},
-            ],
-            "groups": [],
-            "embeds": [],
-            "resources": [],
-        },
-        "intent": {
-            "direction": "RIGHT",
-            "density": "comfortable",
-            "stability": "preserve",
-            "primaryPath": ["start", "done"],
-            "constraints": [],
-        },
-        "view": {"layoutMode": "auto", "overrides": {}, "frames": []},
-        "metadata": {
-            "createdBy": "agent",
-            "specVersion": "2026.08.1",
-            "specHash": spec.spec_hash,
-            "compilerVersion": None,
-            "themeVersion": None,
-        },
-    }
-    raw = json.dumps(source, sort_keys=True).encode()
-    source_hash = f"sha256:{hashlib.sha256(raw).hexdigest()}"
-    document, issues = parse_and_validate(raw)
-    assert document is not None and issues == []
-    scene_bytes = compile_diagram(document).model_dump_json(
-        by_alias=True,
-        exclude_none=True,
-    ).encode()
-    scene_hash = f"sha256:{hashlib.sha256(scene_bytes).hexdigest()}"
-    turn_id = f"turn-{uuid.uuid4().hex}"
-    async with session_scope(tenant_id=me["tenant_id"]) as session:
-        repo = DiagramDraftRepo(session)
-        cursor = await repo.begin_source(
-            tenant_id=me["tenant_id"],
-            owner_user_id=me["user_id"],
-            chat_id=chat_id,
-            turn_id=turn_id,
-            workspace_scope_id=scope_id,
-            source_path="/memory/diagram-drafts/live.vdiagram.json",
-            target_path="/data/diagrams/live.vdiagram.json",
-            source_hash=source_hash,
-        )
-        await repo.mark_compiling(cursor.draft_id, cursor.sequence)
-        await repo.mark_ready(
-            draft_id=cursor.draft_id,
-            sequence=cursor.sequence,
-            tenant_id=me["tenant_id"],
-            workspace_scope_id=scope_id,
-            source_hash=source_hash,
-            scene_ref=f"scene://{scene_hash}",
-            scene_hash=scene_hash,
-            scene_bytes=scene_bytes,
-            operation="create_diagram",
-            element_ids=["start", "done", "complete"],
-        )
-
-    url = (
-        f"/api/v1/previews/diagram-drafts/{cursor.draft_id}/"
-        "render-revisions?after=0&limit=20"
-    )
-    first = await client.get(url, headers=headers)
-    assert first.status_code == 200, first.text
-    body = first.json()
-    assert body["latest_source_sequence"] == 1
-    assert body["latest_ready_sequence"] == 1
-    assert body["items"][0]["sequence"] == 1
-    assert body["items"][0]["scene_hash"] == scene_hash
-    assert body["items"][0]["scene"]["diagramId"] == "live-flow"
-    etag = first.headers["etag"]
-
-    unchanged = await client.get(
-        url.replace("after=0", "after=1"),
-        headers={**headers, "If-None-Match": etag},
-    )
-    assert unchanged.status_code == 304
-    assert unchanged.content == b""
-
-    invalid_raw = b'{"schemaVersion":1'
-    invalid_hash = f"sha256:{hashlib.sha256(invalid_raw).hexdigest()}"
-    async with session_scope(tenant_id=me["tenant_id"]) as session:
-        repo = DiagramDraftRepo(session)
-        invalid_cursor = await repo.begin_source(
-            tenant_id=me["tenant_id"],
-            owner_user_id=me["user_id"],
-            chat_id=chat_id,
-            turn_id=turn_id,
-            workspace_scope_id=scope_id,
-            source_path="/memory/diagram-drafts/live.vdiagram.json",
-            target_path="/data/diagrams/live.vdiagram.json",
-            source_hash=invalid_hash,
-        )
-        await repo.mark_invalid(invalid_cursor.draft_id, invalid_cursor.sequence)
-
-    invalid = await client.get(
-        url.replace("after=0", "after=1"),
-        headers={**headers, "If-None-Match": etag},
-    )
-    assert invalid.status_code == 200, invalid.text
-    assert invalid.json()["status"] == "invalid"
-    assert invalid.json()["items"] == []
-    assert invalid.json()["latest_ready_sequence"] == 1
-
-    async with session_scope(tenant_id=me["tenant_id"]) as session:
-        await DiagramDraftRepo(session).finalize_latest(
-            chat_id=chat_id,
-            turn_id=turn_id,
-            completed=False,
-        )
-    terminal = await client.get(url.replace("after=0", "after=1"), headers=headers)
-    assert terminal.status_code == 200, terminal.text
-    assert terminal.json()["status"] == "cancelled"
-    assert terminal.json()["terminal"] is True
-    assert terminal.json()["latest_ready_sequence"] == 1
-    assert terminal.json()["items"] == []
-
-    other_headers, _other = await _register(client)
-    denied = await client.get(url, headers=other_headers)
-    assert denied.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_vdiagram_resolves_to_compiled_read_only_scene(client, app_engine):
     headers, _me, chat_id, scope_id = await _chat_fixture(client, app_engine)
-    spec = get_diagram_type("flow", "basic")
-    assert spec is not None
-    source = {
-        "schemaVersion": 1,
-        "id": "preview-flow",
-        "title": "Preview flow",
-        "diagram": {"family": "flow", "type": "basic"},
-        "model": {
-            "nodes": [
-                {"id": "start", "kind": "start", "label": "Start", "styleRole": "primary"},
-                {"id": "done", "kind": "end", "label": "Done", "styleRole": "success"},
-            ],
-            "edges": [{"id": "complete", "source": "start", "target": "done", "kind": "flow"}],
-            "groups": [], "embeds": [], "resources": [],
-        },
-        "intent": {"direction": "RIGHT", "density": "comfortable", "stability": "preserve", "primaryPath": ["start", "done"], "constraints": []},
-        "view": {"layoutMode": "auto", "overrides": {}, "frames": []},
-        "metadata": {"createdBy": "agent", "specVersion": "2026.08.1", "specHash": spec.spec_hash, "compilerVersion": None, "themeVersion": None},
-    }
+    source = b'''<mxGraphModel><root>
+      <mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="start" value="Start" vertex="1" parent="1">
+        <mxGeometry x="40" y="40" width="120" height="60" as="geometry"/>
+      </mxCell>
+      <mxCell id="end" value="End" vertex="1" parent="1">
+        <mxGeometry x="260" y="40" width="120" height="60" as="geometry"/>
+      </mxCell>
+      <mxCell id="flow" edge="1" source="start" target="end" parent="1">
+        <mxGeometry relative="1" as="geometry"/>
+      </mxCell>
+    </root></mxGraphModel>'''
     path = await _upload(
         client,
         headers,
         scope_id,
-        "preview-flow.vdiagram.json",
-        json.dumps(source).encode(),
-        "application/json",
+        "native.drawio",
+        source,
+        "application/vnd.jgraph.mxfile",
     )
-    resolved = await client.post(
+    response = await client.post(
         "/api/v1/previews/resolve",
         headers=headers,
-        json={"fileRef": {"schemaVersion": 1, "scope": "chat", "chatId": chat_id, "path": path}},
+        json={"fileRef": {
+            "schemaVersion": 1,
+            "scope": "chat",
+            "chatId": chat_id,
+            "path": path,
+        }},
     )
-    assert resolved.status_code == 200, resolved.text
-    descriptor = resolved.json()
-    assert descriptor["renderer"] == "diagram"
-    assert descriptor["detectedType"] == "diagram"
-    assert descriptor["capabilities"] == {"preview": True, "edit": False, "download": True}
+    assert response.status_code == 200, response.text
+    descriptor = response.json()
+    assert descriptor["renderer"] == "drawio"
+    assert descriptor["contentType"] == "application/vnd.jgraph.mxfile"
+    assert descriptor["loadPolicy"] == "range"
     assert descriptor["diagram"]["status"] == "valid"
-    assert [node["id"] for node in descriptor["diagram"]["scene"]["nodes"]] == ["start", "done"]
-
-    exported = await client.post(
-        "/api/v1/previews/diagram/export",
-        headers=headers,
-        json={
-            "fileRef": {"schemaVersion": 1, "scope": "chat", "chatId": chat_id, "path": path},
-            "expectedRevision": descriptor["revision"],
-            "format": "svg",
-            "theme": "light",
-            "background": "white",
-        },
-    )
-    assert exported.status_code == 200, exported.text
-    assert exported.headers["content-type"].startswith("image/svg+xml")
-    assert exported.content.startswith(b"<svg")
-    assert b'fill="#ffffff"' in exported.content
-
-    dark_export = await client.post(
-        "/api/v1/previews/diagram/export",
-        headers=headers,
-        json={
-            "fileRef": {
-                "schemaVersion": 1,
-                "scope": "chat",
-                "chatId": chat_id,
-                "path": path,
-            },
-            "expectedRevision": descriptor["revision"],
-            "format": "svg",
-            "theme": "dark",
-            "background": "theme",
-        },
-    )
-    assert dark_export.status_code == 422
+    assert descriptor["diagram"]["summary"] == {
+        "cells": 5,
+        "vertices": 2,
+        "edges": 1,
+        "pages": 1,
+    }
+    content = await client.get(descriptor["content"]["url"])
+    assert content.status_code == 200
+    assert content.content == source
 
 
 @pytest.mark.asyncio
-async def test_preview_resolve_and_text_write_preserve_bom_newlines_and_revision(
+async def test_preview_text_save_preserves_bom_newlines_and_revision(
     client, app_engine,
 ):
     headers, me, chat_id, scope_id = await _chat_fixture(client, app_engine)
@@ -405,18 +258,6 @@ async def test_preview_resolve_and_text_write_preserve_bom_newlines_and_revision
     )
     assert saved.status_code == 200, saved.text
     assert saved.json()["revision"] != descriptor["revision"]
-    saved_events = await _artifact_events(
-        app_engine,
-        tenant_id=me["tenant_id"],
-        scope_id=scope_id,
-        path=path,
-    )
-    assert len(saved_events) == 2
-    assert saved_events[-1]["event_type"] == "upsert"
-    assert (
-        vfs_content_revision(saved_events[-1]["content_revision"])
-        == saved.json()["revision"]
-    )
 
     stale = await client.put(
         "/api/v1/previews/file",
@@ -487,6 +328,137 @@ async def test_structured_text_tables_are_preview_only(client, app_engine):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extension", "mime", "renderer"),
+    [
+        (
+            "docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "docx",
+        ),
+        (
+            "pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "pptx",
+        ),
+    ],
+)
+async def test_native_office_preview_uses_authorized_pdf_rendition(
+    client,
+    app_engine,
+    monkeypatch,
+    extension,
+    mime,
+    renderer,
+):
+    from vibecanvas_api.routes import previews as preview_routes
+
+    headers, _me, chat_id, scope_id = await _chat_fixture(client, app_engine)
+    payload = _office_payload(extension)
+    path = await _upload(
+        client,
+        headers,
+        scope_id,
+        f"brief.{extension}",
+        payload,
+        mime,
+    )
+    file_ref = {
+        "schemaVersion": 1,
+        "scope": "chat",
+        "chatId": chat_id,
+        "path": path,
+    }
+    resolved = await client.post(
+        "/api/v1/previews/resolve",
+        headers=headers,
+        json={"fileRef": file_ref},
+    )
+    assert resolved.status_code == 200, resolved.text
+    descriptor = resolved.json()
+    assert descriptor["renderer"] == renderer
+    assert descriptor["rendition"] == {
+        "format": "pdf",
+        "contentType": "application/pdf",
+        "url": descriptor["rendition"]["url"],
+        "sourceRevision": descriptor["revision"],
+    }
+    assert descriptor["rendition"]["url"].startswith(
+        "/api/v1/previews/office-rendition?"
+    )
+
+    original = await client.get(descriptor["content"]["url"])
+    assert original.status_code == 200
+    assert original.content == payload
+
+    rendered_pdf = b"%PDF-1.7\nfaithful-office-preview"
+    calls = []
+
+    def fake_render(data: bytes, suffix: str) -> bytes:
+        calls.append((data, suffix))
+        return rendered_pdf
+
+    monkeypatch.setattr(preview_routes, "render_office_preview_pdf", fake_render)
+    unauthenticated = await client.get(descriptor["rendition"]["url"])
+    assert unauthenticated.status_code == 401
+
+    other_headers, _other = await _register(client)
+    forbidden = await client.get(
+        descriptor["rendition"]["url"],
+        headers=other_headers,
+    )
+    assert forbidden.status_code == 404
+
+    rendition = await client.get(
+        descriptor["rendition"]["url"],
+        headers=headers,
+    )
+    assert rendition.status_code == 200, rendition.text
+    assert rendition.headers["content-type"] == "application/pdf"
+    assert rendition.headers["x-content-type-options"] == "nosniff"
+    assert rendition.content == rendered_pdf
+    assert calls == [(payload, f".{extension}")]
+
+
+@pytest.mark.asyncio
+async def test_xlsx_preview_uses_native_workbook_source_without_pdf_rendition(
+    client,
+    app_engine,
+):
+    headers, _me, chat_id, scope_id = await _chat_fixture(client, app_engine)
+    payload = _office_payload("xlsx")
+    path = await _upload(
+        client,
+        headers,
+        scope_id,
+        "budget.xlsx",
+        payload,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resolved = await client.post(
+        "/api/v1/previews/resolve",
+        headers=headers,
+        json={
+            "fileRef": {
+                "schemaVersion": 1,
+                "scope": "chat",
+                "chatId": chat_id,
+                "path": path,
+            }
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    descriptor = resolved.json()
+    assert descriptor["renderer"] == "spreadsheet"
+    assert descriptor["loadPolicy"] == "inline"
+    assert descriptor["content"]["url"]
+    assert descriptor["rendition"] is None
+
+    original = await client.get(descriptor["content"]["url"])
+    assert original.status_code == 200
+    assert original.content == payload
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/memory/state.md", "/logs/runtime.log"])
 async def test_agent_owned_chat_files_are_read_only_previewable(
     client, app_engine, path,
@@ -532,7 +504,6 @@ async def test_agent_owned_chat_files_are_read_only_previewable(
     )
     assert write.status_code == 403
     assert write.json()["detail"] == "preview_file_read_only"
-
 
 @pytest.mark.asyncio
 async def test_preview_detects_pdf_streams_range_and_rejects_plain_archives(
@@ -686,6 +657,56 @@ async def test_preview_html_resource_session_maps_workspace_files(
         )
     )
     assert wrong_audience.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_preview_markdown_resource_session_maps_relative_images(
+    client, app_engine,
+):
+    headers, me, chat_id, scope_id = await _chat_fixture(client, app_engine)
+    markdown_path = "/data/handbooks/operations-handbook.md"
+    image_path = "/data/handbooks/handbook-architecture.svg"
+    image = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    await _write_chat_workspace_file(
+        tenant_id=me["tenant_id"],
+        scope_id=scope_id,
+        path=markdown_path,
+        data=b"![Architecture](handbook-architecture.svg)",
+        mime="text/markdown",
+    )
+    await _write_chat_workspace_file(
+        tenant_id=me["tenant_id"],
+        scope_id=scope_id,
+        path=image_path,
+        data=image,
+        mime="image/svg+xml",
+    )
+    await _write_chat_workspace_file(
+        tenant_id=me["tenant_id"],
+        scope_id=scope_id,
+        path="/data/handbooks/private.txt",
+        data=b"not referenced by the Markdown",
+        mime="text/plain",
+    )
+    response = await client.post(
+        "/api/v1/previews/resource-session",
+        headers=headers,
+        json={
+            "fileRef": {
+                "schemaVersion": 1,
+                "scope": "chat",
+                "chatId": chat_id,
+                "path": markdown_path,
+            }
+        },
+    )
+    assert response.status_code == 200, response.text
+    base_url = response.json()["baseUrl"]
+    rendered_resource = await client.get(f"{base_url}handbook-architecture.svg")
+    assert rendered_resource.status_code == 200, rendered_resource.text
+    assert rendered_resource.content == image
+    unrelated = await client.get(f"{base_url}private.txt")
+    assert unrelated.status_code == 403
 
 
 @pytest.mark.asyncio

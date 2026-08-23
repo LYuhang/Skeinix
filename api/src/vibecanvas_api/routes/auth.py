@@ -3,15 +3,11 @@ All operate on RLS-free auth tables; no tenant context needed."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from webauthn import verify_authentication_response
-from webauthn.helpers.exceptions import WebAuthnException
 
 from vibecanvas_api.auth.deps import (
     AuthContext,
@@ -19,15 +15,6 @@ from vibecanvas_api.auth.deps import (
     require_recent_step_up,
 )
 from vibecanvas_api.auth.email_sender import get_email_sender
-from vibecanvas_api.auth.login_mfa import (
-    canonical_credential_id,
-    issue_login_mfa_challenge,
-    locked_login_challenge,
-    record_failed_factor,
-    refresh_webauthn_options,
-)
-from vibecanvas_api.auth.mfa import matching_totp_step, recovery_code_hash
-from vibecanvas_api.auth.mfa_storage import decrypt_totp_secret
 from vibecanvas_api.auth.password import hash_password, verify_password
 from vibecanvas_api.auth.privileged_access import platform_role_for_user
 from vibecanvas_api.auth.ratelimit import (
@@ -56,17 +43,12 @@ from vibecanvas_api.authorization.projection import (
 )
 from vibecanvas_api.config import config as app_config
 from vibecanvas_api.storage.db import session_scope
-from vibecanvas_api.storage.models import (
-    UserMfaTotp,
-    UserWebAuthnCredential,
-)
 from vibecanvas_api.storage.sync_session import short_admin_session
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _SESSION_TTL = timedelta(days=30)
 _RESET_TTL = timedelta(minutes=30)
 _EXTENSION_EXCHANGE_TTL = timedelta(seconds=60)
-_WEBAUTHN_LOGIN_STEP_UP_TTL = timedelta(minutes=10)
 _TEST_LOGIN = "test"
 _TEST_PASSWORD = "test"
 _TEST_EMAIL = "test@test.local"
@@ -94,18 +76,6 @@ class CancelDeleteAccountIn(BaseModel):
 
 class ExtensionExchangeIn(BaseModel):
     code: str = Field(min_length=32, max_length=512)
-
-
-class LoginMfaChallengeIn(BaseModel):
-    login_challenge: str = Field(min_length=32, max_length=512)
-
-
-class LoginMfaCodeIn(LoginMfaChallengeIn):
-    code: str = Field(min_length=6, max_length=64)
-
-
-class LoginMfaWebAuthnIn(LoginMfaChallengeIn):
-    credential: dict[str, Any]
 
 
 def _now() -> datetime:
@@ -216,42 +186,6 @@ async def _create_authenticated_session(
     return raw, raw_csrf, session_row
 
 
-async def _begin_login_mfa_attempt(raw_challenge: str):
-    try:
-        return await begin_login_attempt(
-            f"login-mfa:{hash_token(raw_challenge)}"
-        )
-    except LoginRateLimitExceeded:
-        raise HTTPException(429, "mfa_attempts_exceeded") from None
-    except LoginRateLimitUnavailable:
-        raise HTTPException(
-            503,
-            "mfa_security_service_unavailable",
-        ) from None
-
-
-async def _audit_login_mfa(
-    *,
-    request: Request,
-    user,
-    outcome: str,
-    method: str,
-) -> None:
-    await record_auth_audit(
-        action=(
-            actions.AUTH_MFA_RECOVERY
-            if method == "recovery"
-            else actions.AUTH_MFA_CHALLENGE
-        ),
-        actor_user_id=user.user_id,
-        actor_email=user.email,
-        tenant_id=user.tenant_id,
-        outcome=outcome,
-        audit_ctx=extract_request_audit_context(request),
-        meta={"phase": "login", "method": method},
-    )
-
-
 async def _ensure_test_user(repo: AuthRepo):
     identity = await repo.find_identity("password", _TEST_EMAIL)
     if identity is None:
@@ -355,7 +289,6 @@ async def login(body: LoginIn, request: Request, response: Response):
     key = f"{client_host}:{email}"
     mutation_ids = ()
     coordinator = None
-    mfa_issue = None
     try:
         rate_limit_attempt = await begin_login_attempt(key)
     except LoginRateLimitExceeded:
@@ -417,332 +350,22 @@ async def login(body: LoginIn, request: Request, response: Response):
                 status.HTTP_423_LOCKED,
                 "Account deletion is pending; revoke the deletion request first",
             )
-        audience = _session_audience(request)
-        # The development-only shared test alias must remain usable for local
-        # browser gates. Production rejects the alias through its config gate.
-        if not _is_test_login(body.email, body.password):
-            mfa_issue = await issue_login_mfa_challenge(
-                s,
-                user_id=user.user_id,
-                tenant_id=user.tenant_id,
-                audience=audience,
-            )
-        if mfa_issue is None:
-            raw, raw_csrf, session_row = await _create_authenticated_session(
-                repo,
-                user=user,
-                audience=audience,
-                strength="password",
-            )
+        raw, raw_csrf, session_row = await _create_authenticated_session(
+            repo,
+            user=user,
+            audience=_session_audience(request),
+            strength="password",
+        )
     if coordinator is not None:
         await apply_committed_structural_mutations(
             coordinator,
             mutation_ids,
         )
-    if mfa_issue is not None:
-        response.status_code = status.HTTP_202_ACCEPTED
-        response.headers["Cache-Control"] = "no-store"
-        await _audit_login_mfa(
-            request=request,
-            user=user,
-            outcome="success",
-            method="password_verified",
-        )
-        return {
-            "mfa_required": True,
-            "login_challenge": mfa_issue.raw_token,
-            "methods": list(mfa_issue.methods),
-            "webauthn_options": mfa_issue.webauthn_options,
-            "expires_at": mfa_issue.expires_at,
-        }
     # Fired AFTER the session_scope commit succeeded. NEVER body/password/raw.
     await record_auth_audit(
         action=actions.AUTH_LOGIN_SUCCESS, actor_user_id=user.user_id,
         actor_email=user.email, tenant_id=user.tenant_id, outcome="success",
         audit_ctx=actx, meta={})
-    return _auth_response(
-        response=response,
-        raw_session=raw,
-        raw_csrf=raw_csrf,
-        session_row=session_row,
-        user=user,
-    )
-
-
-@router.post("/login/mfa/webauthn/options")
-async def login_mfa_webauthn_options(
-    body: LoginMfaChallengeIn,
-    request: Request,
-    response: Response,
-) -> dict:
-    if app_config.web_session_cookie_enabled:
-        validate_browser_origin(request)
-    async with session_scope() as session:
-        row = await locked_login_challenge(session, body.login_challenge)
-        options = await refresh_webauthn_options(session, row)
-    response.headers["Cache-Control"] = "no-store"
-    return options
-
-
-@router.post("/login/mfa/totp")
-async def login_mfa_totp(
-    body: LoginMfaCodeIn,
-    request: Request,
-    response: Response,
-) -> dict:
-    if app_config.web_session_cookie_enabled:
-        validate_browser_origin(request)
-    attempt = await _begin_login_mfa_attempt(body.login_challenge)
-    valid = False
-    method = "totp"
-    issued = None
-    user = None
-    try:
-        async with session_scope() as session:
-            challenge = await locked_login_challenge(
-                session,
-                body.login_challenge,
-            )
-            repo = AuthRepo(session)
-            user = await repo.get_user(challenge.user_id)
-            if user is None:
-                await session.delete(challenge)
-                raise HTTPException(
-                    400,
-                    "login_mfa_challenge_invalid_or_expired",
-                )
-            row = (
-                await session.execute(
-                    select(UserMfaTotp)
-                    .where(
-                        UserMfaTotp.user_id == challenge.user_id,
-                        UserMfaTotp.status == "active",
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            if row is not None and "totp" in challenge.available_methods:
-                secret = await decrypt_totp_secret(session, row)
-                step = matching_totp_step(secret, body.code)
-                if step is not None and (
-                    row.last_used_step is None or step > row.last_used_step
-                ):
-                    row.last_used_step = step
-                    row.updated_at = _now()
-                    valid = True
-                elif "recovery" in challenge.available_methods:
-                    candidate = recovery_code_hash(
-                        user_id=str(challenge.user_id),
-                        code=body.code,
-                    )
-                    if candidate in row.recovery_code_hashes:
-                        row.recovery_code_hashes = [
-                            value
-                            for value in row.recovery_code_hashes
-                            if value != candidate
-                        ]
-                        row.updated_at = _now()
-                        method = "recovery"
-                        valid = True
-            if valid:
-                issued = await _create_authenticated_session(
-                    repo,
-                    user=user,
-                    audience=challenge.audience,
-                    strength=method,
-                )
-                await session.delete(challenge)
-            else:
-                await record_failed_factor(session, challenge)
-    except HTTPException:
-        await attempt.failure()
-        raise
-    if not valid or issued is None or user is None:
-        await attempt.failure()
-        if user is not None:
-            await _audit_login_mfa(
-                request=request,
-                user=user,
-                outcome="failure",
-                method="totp",
-            )
-        raise HTTPException(400, "mfa_code_invalid_or_replayed")
-    await attempt.success()
-    raw, raw_csrf, session_row = issued
-    await _audit_login_mfa(
-        request=request,
-        user=user,
-        outcome="success",
-        method=method,
-    )
-    await record_auth_audit(
-        action=actions.AUTH_LOGIN_SUCCESS,
-        actor_user_id=user.user_id,
-        actor_email=user.email,
-        tenant_id=user.tenant_id,
-        outcome="success",
-        audit_ctx=extract_request_audit_context(request),
-        meta={"authentication_strength": method},
-    )
-    return _auth_response(
-        response=response,
-        raw_session=raw,
-        raw_csrf=raw_csrf,
-        session_row=session_row,
-        user=user,
-    )
-
-
-@router.post("/login/mfa/webauthn/verify")
-async def login_mfa_webauthn_verify(
-    body: LoginMfaWebAuthnIn,
-    request: Request,
-    response: Response,
-) -> dict:
-    if app_config.web_session_cookie_enabled:
-        validate_browser_origin(request)
-    attempt = await _begin_login_mfa_attempt(body.login_challenge)
-    credential_id = canonical_credential_id(body.credential.get("id"))
-    challenge_bytes = None
-    public_key = None
-    sign_count = None
-    user = None
-    try:
-        # Consume only the WebAuthn ceremony challenge before signature work.
-        # The password challenge remains usable for a fresh ceremony/TOTP if
-        # the browser cancels or supplies an invalid assertion.
-        async with session_scope() as session:
-            challenge = await locked_login_challenge(
-                session,
-                body.login_challenge,
-            )
-            user = await AuthRepo(session).get_user(challenge.user_id)
-            if user is None or "webauthn" not in challenge.available_methods:
-                await record_failed_factor(session, challenge)
-            elif challenge.webauthn_challenge is not None:
-                credential = await session.get(
-                    UserWebAuthnCredential,
-                    credential_id,
-                )
-                if (
-                    credential is not None
-                    and credential.user_id == challenge.user_id
-                ):
-                    challenge_bytes = bytes(challenge.webauthn_challenge)
-                    public_key = bytes(credential.public_key)
-                    sign_count = int(credential.sign_count)
-                else:
-                    await record_failed_factor(session, challenge)
-                challenge.webauthn_challenge = None
-    except HTTPException:
-        await attempt.failure()
-        raise
-    if (
-        user is None
-        or challenge_bytes is None
-        or public_key is None
-        or sign_count is None
-    ):
-        await attempt.failure()
-        raise HTTPException(400, "webauthn_authentication_invalid")
-    try:
-        verified = verify_authentication_response(
-            credential=body.credential,
-            expected_challenge=challenge_bytes,
-            expected_rp_id=app_config.webauthn_rp_id,
-            expected_origin=app_config.webauthn_origin,
-            credential_public_key=public_key,
-            credential_current_sign_count=sign_count,
-            require_user_verification=True,
-        )
-    except WebAuthnException:
-        async with session_scope() as session:
-            try:
-                challenge = await locked_login_challenge(
-                    session,
-                    body.login_challenge,
-                )
-            except HTTPException:
-                challenge = None
-            if challenge is not None:
-                await record_failed_factor(session, challenge)
-        await attempt.failure()
-        await _audit_login_mfa(
-            request=request,
-            user=user,
-            outcome="failure",
-            method="webauthn",
-        )
-        raise HTTPException(400, "webauthn_authentication_invalid") from None
-
-    issued = None
-    try:
-        async with session_scope() as session:
-            challenge = await locked_login_challenge(
-                session,
-                body.login_challenge,
-            )
-            credential = (
-                await session.execute(
-                    select(UserWebAuthnCredential)
-                    .where(
-                        UserWebAuthnCredential.credential_id == credential_id,
-                        UserWebAuthnCredential.user_id == challenge.user_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            if credential is None or int(credential.sign_count) != sign_count:
-                await record_failed_factor(session, challenge)
-            else:
-                credential.sign_count = verified.new_sign_count
-                credential.device_type = verified.credential_device_type.value
-                credential.backed_up = verified.credential_backed_up
-                credential.last_used_at = _now()
-                repo = AuthRepo(session)
-                committed_user = await repo.get_user(challenge.user_id)
-                if committed_user is None:
-                    await session.delete(challenge)
-                else:
-                    user = committed_user
-                    issued = await _create_authenticated_session(
-                        repo,
-                        user=user,
-                        audience=challenge.audience,
-                        strength="webauthn",
-                        step_up_ttl=_WEBAUTHN_LOGIN_STEP_UP_TTL,
-                    )
-                    await session.delete(challenge)
-    except HTTPException:
-        await attempt.failure()
-        raise
-    if issued is None or user is None:
-        await attempt.failure()
-        if user is not None:
-            await _audit_login_mfa(
-                request=request,
-                user=user,
-                outcome="failure",
-                method="webauthn",
-            )
-        raise HTTPException(409, "webauthn_credential_concurrently_used")
-    await attempt.success()
-    raw, raw_csrf, session_row = issued
-    await _audit_login_mfa(
-        request=request,
-        user=user,
-        outcome="success",
-        method="webauthn",
-    )
-    await record_auth_audit(
-        action=actions.AUTH_LOGIN_SUCCESS,
-        actor_user_id=user.user_id,
-        actor_email=user.email,
-        tenant_id=user.tenant_id,
-        outcome="success",
-        audit_ctx=extract_request_audit_context(request),
-        meta={"authentication_strength": "webauthn"},
-    )
     return _auth_response(
         response=response,
         raw_session=raw,

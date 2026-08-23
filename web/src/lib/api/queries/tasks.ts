@@ -24,12 +24,12 @@ const POLL_INTERVAL_MS = 5_000;
  * `submitted_at desc`). Disabled until a real `wfId`. Polls while mounted so a
  * freshly-submitted run appears + advances without a manual refresh.
  */
-export function useWorkflowTasks(wfId: string | undefined) {
+export function useWorkflowTasks(wfId: string | undefined, enabled = true) {
   return useQuery<TaskListResponse>({
     queryKey: ['tasks', 'workflow', wfId],
     queryFn: () => listTasks({ workflow_id: wfId, limit: 50 }),
-    enabled: !!wfId,
-    refetchInterval: POLL_INTERVAL_MS,
+    enabled: !!wfId && enabled,
+    refetchInterval: enabled ? POLL_INTERVAL_MS : false,
     refetchOnWindowFocus: false,
   });
 }

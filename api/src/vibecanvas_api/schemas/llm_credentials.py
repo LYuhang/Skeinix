@@ -33,6 +33,7 @@ class CredentialPublicOut(BaseModel):
     name: str
     description: Optional[str] = None
     provider: str
+    connection_kind: Literal["manual", "openrouter_oauth"] = "manual"
     runtime_scope: Literal["langchain", "codex"]
     model_context_tokens: Optional[int] = None
     created_at: datetime
@@ -49,6 +50,7 @@ class CredentialOwnerOut(BaseModel):
     name: str
     description: Optional[str] = None
     provider: str
+    connection_kind: Literal["manual", "openrouter_oauth"] = "manual"
     runtime_scope: Literal["langchain", "codex"]
     model_name: str
     model_context_tokens: Optional[int] = None
@@ -60,6 +62,58 @@ class CredentialOwnerOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: ResourceAccessOut | None = None
+
+
+class CredentialConnectionTestOut(BaseModel):
+    """Sanitized connection-test result. Provider response bodies and secret
+    material never cross the API boundary."""
+
+    ok: bool
+    outcome: Literal[
+        "connected",
+        "credentials_rejected",
+        "endpoint_rejected",
+        "unreachable",
+    ]
+    latency_ms: int
+    upstream_status: Optional[int] = None
+
+
+class OpenRouterModelOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    description: str = ""
+    context_length: int | None = None
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+    supports_tools: bool = False
+    supported_reasoning_efforts: list[str] = Field(default_factory=list)
+    default_reasoning_effort: str | None = None
+    pricing: dict[str, str | None] = Field(default_factory=dict)
+    available: bool = True
+
+
+class OpenRouterConnectionOut(BaseModel):
+    connected: bool
+    credential_id: str | None = None
+    models: list[OpenRouterModelOut] = Field(default_factory=list)
+    catalog_refreshed_at: datetime | None = None
+    catalog_stale: bool = False
+    error_code: str | None = None
+
+
+class OpenRouterStartOut(BaseModel):
+    authorization_url: str
+    expires_at: datetime
+
+
+class OpenRouterCallbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=4000)
+    state: str = Field(min_length=32, max_length=512)
 
 
 # ----------------------------------------------------------------- in shapes

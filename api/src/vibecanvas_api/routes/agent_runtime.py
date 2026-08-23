@@ -18,7 +18,6 @@ from vibecanvas_api.schemas.chat import (
 from vibecanvas_api.services.agent_runtime.capabilities import (
     codex_capabilities,
     langchain_capabilities,
-    runtime_model_connection_id,
 )
 from vibecanvas_api.services.agent_runtime.codex_account import CodexAccountService
 from vibecanvas_api.services.agent_runtime.protocol import RuntimeCapabilities
@@ -100,32 +99,18 @@ def _with_chat_model_default(
     capabilities: RuntimeCapabilities,
     binding: dict | None,
 ) -> RuntimeCapabilities:
-    """Render a bound Chat's durable model as its effective default."""
+    """Render the Chat's last model while keeping compatible choices mutable."""
     capabilities = capabilities.model_copy(update={
-        "chat_configuration_locked": bool(
-            binding is not None and binding.get("runtime_agent_settings") is not None
-        ),
         "bound_agent_settings": (
             binding.get("runtime_agent_settings") if binding is not None else None
         ),
     })
     model_id = binding.get("runtime_model_id") if binding is not None else None
-    connection_id = (
-        binding.get("runtime_connection_id") if binding is not None else None
-    )
-    if not model_id or not connection_id:
+    if not model_id:
         return capabilities
-    models = [
-        model
-        for model in capabilities.models
-        if runtime_model_connection_id(capabilities.runtime_type, model.id)
-        == connection_id
-    ]
-    if not any(model.id == model_id for model in models):
+    if not any(model.id == model_id for model in capabilities.models):
         return capabilities.model_copy(
             update={
-                "authenticated": False,
-                "models": [],
                 "default_model_id": None,
                 "error_code": "runtime_model_unavailable",
             }
@@ -135,7 +120,7 @@ def _with_chat_model_default(
             "default_model_id": model_id,
             "models": [
                 model.model_copy(update={"is_default": model.id == model_id})
-                for model in models
+                for model in capabilities.models
             ],
         }
     )

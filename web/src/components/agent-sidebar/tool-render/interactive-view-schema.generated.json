@@ -8,13 +8,16 @@
           "title": "Description",
           "type": "string"
         },
-        "mime": {
-          "default": "",
-          "title": "Mime",
+        "file_type": {
+          "default": "auto",
+          "description": "Optional file-type hint passed unchanged to Preview. Use 'auto' unless the file has no reliable extension or MIME metadata.",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "File Type",
           "type": "string"
         },
         "path": {
-          "description": "Absolute local file path returned by a file tool. HTML files are rendered in the same isolated dynamic HTML runtime; other formats use their native file preview.",
+          "description": "Absolute local file path returned by a file tool. The Preview service detects the file type and selects the appropriate read-only renderer.",
           "minLength": 1,
           "title": "Path",
           "type": "string"
@@ -53,6 +56,34 @@
       ],
       "title": "HtmlPreviewView",
       "type": "object"
+    },
+    "UrlPreviewView": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "type": {
+          "const": "url_preview",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "description": "Absolute HTTP(S) page URL opened in an isolated interactive WebView. No domain allowlist is applied; the destination may still refuse browser embedding.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "title": "UrlPreviewView",
+      "type": "object"
     }
   },
   "discriminator": {
@@ -64,6 +95,9 @@
     },
     {
       "$ref": "#/$defs/FilePreviewView"
+    },
+    {
+      "$ref": "#/$defs/UrlPreviewView"
     }
   ]
 }

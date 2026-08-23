@@ -87,6 +87,35 @@ class _FakeBroker:
         self.closed = True
 
 
+def _runtime_request(
+    turn_id: str,
+    *,
+    runtime_type: str = "langchain",
+    model: dict | None = None,
+) -> dict:
+    """Build the same complete protocol-v2 Turn envelope used in production."""
+    resolved_model = dict(model or {})
+    if runtime_type == "codex":
+        resolved_model.setdefault("id", "gpt-codex-current")
+        if resolved_model.get("connection_type") != "chatgpt_account":
+            resolved_model.setdefault(
+                "base_url",
+                "http://platform.test/api/runtime-model/v1",
+            )
+            resolved_model.setdefault("api_key", "turn-capability")
+    return {
+        "tenant_id": "tenant",
+        "user_id": "user",
+        "chat_id": "chat",
+        "turn_id": turn_id,
+        "runtime_type": runtime_type,
+        "runtime_session_id": "runtime-session",
+        "runtime_root": f"/runtime/.{runtime_type}",
+        "message": {"role": "user", "content": "continue"},
+        "model": resolved_model,
+    }
+
+
 class _ResetOnSecondSendBroker(_FakeBroker):
     instances: list["_ResetOnSecondSendBroker"] = []
 
@@ -111,6 +140,60 @@ class _BlockingResultBroker(_FakeBroker):
         await asyncio.Event().wait()
 
 
+class _RuntimeErrorBroker(_FakeBroker):
+    async def messages(self):
+        yield {
+            "type": "runtime_event",
+            "event": {"type": "checkpoint", "turn_id": self.turn_id},
+        }
+        yield {
+            "type": "runtime_error",
+            "error": {"message": "transient model egress failure"},
+        }
+
+
+def test_codex_account_auth_is_staged_without_nested_mount_and_reconciled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(manager_module, "resolve_codex_executable", lambda: "/bin/true")
+    monkeypatch.setattr(manager_module, "codex_cli_readonly_root", lambda _path: "/bin")
+    monkeypatch.setattr(manager_module, "codex_cli_node_runtime", lambda _path: None)
+    account_auth = tmp_path / "account" / "auth.json"
+    account_auth.parent.mkdir()
+    account_auth.write_text('{"auth_mode":"chatgpt"}', encoding="utf-8")
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=_FakeProvider(),
+        base_binds=[],
+        runtime_dir=str(runtime_dir),
+        account_auth_file=str(account_auth),
+        expose_run=False,
+    )
+
+    rw_binds, _ro_binds, _env = session._agent_runtime_launch_spec(
+        runtime_type="codex",
+        uses_codex_account=True,
+    )
+
+    assert dict(rw_binds) == {"/runtime": str(runtime_dir)}
+    staged = runtime_dir / ".codex" / "auth.json"
+    assert staged.read_text(encoding="utf-8") == '{"auth_mode":"chatgpt"}'
+    staged.write_text(
+        '{"auth_mode":"chatgpt","refreshed":true}',
+        encoding="utf-8",
+    )
+    session._persist_codex_account_auth()
+    assert account_auth.read_text(encoding="utf-8") == (
+        '{"auth_mode":"chatgpt","refreshed":true}'
+    )
+
+
 @pytest.mark.asyncio
 async def test_main_runtime_process_is_reused_across_turns(
     monkeypatch: pytest.MonkeyPatch,
@@ -127,14 +210,17 @@ async def test_main_runtime_process_is_reused_across_turns(
         expose_run=False,
     )
 
-    def request(turn_id: str) -> dict:
-        return {"turn_id": turn_id, "runtime_type": "langchain"}
-
     first = [
-        event async for event in session.run_agent_runtime_stream(request("turn-1"))
+        event
+        async for event in session.run_agent_runtime_stream(
+            _runtime_request("turn-1")
+        )
     ]
     second = [
-        event async for event in session.run_agent_runtime_stream(request("turn-2"))
+        event
+        async for event in session.run_agent_runtime_stream(
+            _runtime_request("turn-2")
+        )
     ]
 
     assert first[0]["turn_id"] == "turn-1"
@@ -169,13 +255,13 @@ async def test_stale_runtime_transport_is_restored_before_user_turn_fails(
     first = [
         event
         async for event in session.run_agent_runtime_stream(
-            {"turn_id": "turn-1", "runtime_type": "langchain"}
+            _runtime_request("turn-1")
         )
     ]
     second = [
         event
         async for event in session.run_agent_runtime_stream(
-            {"turn_id": "turn-2", "runtime_type": "langchain"}
+            _runtime_request("turn-2")
         )
     ]
 
@@ -204,7 +290,7 @@ async def test_cancelled_turn_invalidates_runtime_before_next_turn(
     )
 
     stream = session.run_agent_runtime_stream(
-        {"turn_id": "turn-cancelled", "runtime_type": "langchain"}
+        _runtime_request("turn-cancelled")
     )
     assert (await anext(stream))["turn_id"] == "turn-cancelled"
 
@@ -234,23 +320,22 @@ async def test_runtime_is_reused_when_external_destination_changes(
         expose_run=False,
     )
 
-    def request(turn_id: str, base_url: str) -> dict:
-        return {
-            "turn_id": turn_id,
-            "runtime_type": "langchain",
-            "model": {"base_url": base_url},
-        }
-
     first = [
         event
         async for event in session.run_agent_runtime_stream(
-            request("turn-1", "https://model-a.example/v1")
+            _runtime_request(
+                "turn-1",
+                model={"base_url": "https://model-a.example/v1"},
+            )
         )
     ]
     second = [
         event
         async for event in session.run_agent_runtime_stream(
-            request("turn-2", "https://model-b.example/v1")
+            _runtime_request(
+                "turn-2",
+                model={"base_url": "https://model-b.example/v1"},
+            )
         )
     ]
 
@@ -304,25 +389,92 @@ async def test_codex_turn_uses_direct_runtime_volume_without_checkpointing(
     events = [
         event
         async for event in session.run_agent_runtime_stream(
-            {
-                "turn_id": "turn-1",
-                "runtime_type": "codex",
-                "model": {"connection_type": "managed_api"},
-            }
+            _runtime_request(
+                "turn-1",
+                runtime_type="codex",
+                model={"connection_type": "managed_api"},
+            )
         )
     ]
 
     assert events == [{"type": "runtime.started", "turn_id": "turn-1"}]
-    auth_bind = dict(provider.launch_kwargs[0]["extra_rw_binds"])[
-        "/runtime/.codex/auth.json"
-    ]
-    assert not auth_bind.startswith(str(runtime_dir))
-    assert open(auth_bind, encoding="utf-8").read() == ""
+    runtime_binds = dict(provider.launch_kwargs[0]["extra_rw_binds"])
+    assert runtime_binds["/runtime"] == str(runtime_dir)
+    assert "/runtime/.codex/auth.json" not in runtime_binds
+    assert (runtime_dir / ".codex" / "auth.json").read_text(encoding="utf-8") == ""
     marker = runtime_dir / "context.txt"
     marker.write_text("durable without serialization", encoding="utf-8")
     await session.close()
     assert marker.read_text(encoding="utf-8") == "durable without serialization"
     assert provider.lifecycle == ["stop"]
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_syncs_native_runtime_volume_after_process_stop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    provider = _FakeProvider()
+    monkeypatch.setattr(manager_module, "BusBroker", _RuntimeErrorBroker)
+    monkeypatch.setattr(manager_module, "resolve_codex_executable", lambda: "/bin/true")
+    monkeypatch.setattr(manager_module, "codex_cli_readonly_root", lambda _path: "/bin")
+    monkeypatch.setattr(manager_module, "codex_cli_node_runtime", lambda _path: None)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    runtime_volume = SimpleNamespace(
+        volume_id="runtime-volume",
+        path=str(runtime_dir),
+        storage_prefix="chat-runtime-v1/test",
+    )
+    persisted: list[str] = []
+
+    class RuntimeVolumeProvider:
+        def sync(self, volume):
+            assert provider.lifecycle == ["stop"]
+            persisted.append(volume.volume_id)
+            return 1
+
+    monkeypatch.setattr(
+        manager_module,
+        "get_chat_runtime_volume_provider",
+        lambda: RuntimeVolumeProvider(),
+    )
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat-scope",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        runtime_dir=str(runtime_dir),
+        runtime_volume=runtime_volume,
+        expose_run=False,
+    )
+
+    with pytest.raises(RuntimeError, match="transient model egress failure"):
+        _ = [
+            event
+            async for event in session.run_agent_runtime_stream(
+                {
+                    "tenant_id": "tenant",
+                    "user_id": "user",
+                    "chat_id": "chat",
+                    "turn_id": "turn-1",
+                    "runtime_type": "codex",
+                    "runtime_session_id": "runtime-session",
+                    "runtime_root": "/runtime/.codex",
+                    "message": {"role": "user", "content": "continue"},
+                    "model": {
+                        "id": "gpt-codex-current",
+                        "connection_type": "managed_api",
+                        "base_url": "http://platform.test/api/runtime-model/v1",
+                        "api_key": "turn-capability",
+                    },
+                }
+            )
+        ]
+
+    assert persisted == ["runtime-volume"]
 
 
 @pytest.mark.asyncio
@@ -356,18 +508,25 @@ async def test_codex_account_runtime_is_reused_until_session_close(
         expose_run=False,
     )
 
-    def request(turn_id: str) -> dict:
-        return {
-            "turn_id": turn_id,
-            "runtime_type": "codex",
-            "model": {"connection_type": "chatgpt_account"},
-        }
-
     first = [
-        event async for event in session.run_agent_runtime_stream(request("turn-1"))
+        event
+        async for event in session.run_agent_runtime_stream(
+            _runtime_request(
+                "turn-1",
+                runtime_type="codex",
+                model={"connection_type": "chatgpt_account"},
+            )
+        )
     ]
     second = [
-        event async for event in session.run_agent_runtime_stream(request("turn-2"))
+        event
+        async for event in session.run_agent_runtime_stream(
+            _runtime_request(
+                "turn-2",
+                runtime_type="codex",
+                model={"connection_type": "chatgpt_account"},
+            )
+        )
     ]
 
     assert first[0]["turn_id"] == "turn-1"
@@ -376,9 +535,21 @@ async def test_codex_account_runtime_is_reused_until_session_close(
     assert provider.stops == 0
     assert session._runtime_uses_codex_account is True
     assert session.resource_status()["authentication"] == "account_bound"
+    runtime_binds = dict(provider.launch_kwargs[0]["extra_rw_binds"])
+    assert "/runtime/.codex/auth.json" not in runtime_binds
+    assert (runtime_dir / ".codex" / "auth.json").read_text(
+        encoding="utf-8"
+    ) == '{"auth_mode":"chatgpt"}'
 
+    (runtime_dir / ".codex" / "auth.json").write_text(
+        '{"auth_mode":"chatgpt","refreshed":true}',
+        encoding="utf-8",
+    )
     await session.close()
     assert provider.stops == 1
+    assert auth_file.read_text(encoding="utf-8") == (
+        '{"auth_mode":"chatgpt","refreshed":true}'
+    )
 
 
 def test_codex_runtime_mounts_resolved_playwright_mcp_package(
@@ -422,6 +593,57 @@ def test_codex_runtime_mounts_resolved_playwright_mcp_package(
     assert str(package_root) in ro_binds
 
 
+def test_codex_runtime_mounts_diagram_mcp_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    provider = _FakeProvider()
+    package_root = tmp_path / "drawio-mcp"
+    package_root.mkdir()
+    launcher = package_root / "launch.mjs"
+    launcher.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    shim_root = tmp_path / "bin"
+    shim_root.mkdir()
+    shim = shim_root / "skeinix-diagram-mcp"
+    shim.symlink_to(launcher)
+    desktop_root = tmp_path / "drawio-desktop"
+    desktop_root.mkdir()
+    desktop = desktop_root / "drawio"
+    desktop.write_text("#!/bin/sh\n", encoding="utf-8")
+    desktop.chmod(0o755)
+    desktop_shim = shim_root / "drawio"
+    desktop_shim.symlink_to(desktop)
+
+    monkeypatch.setattr(manager_module, "resolve_codex_executable", lambda: "/bin/true")
+    monkeypatch.setattr(
+        manager_module,
+        "codex_cli_readonly_root",
+        lambda _executable: "/bin",
+    )
+    monkeypatch.setattr(manager_module, "codex_cli_node_runtime", lambda _path: None)
+    monkeypatch.setenv("PLAYWRIGHT_MCP_COMMAND", str(tmp_path / "missing"))
+    monkeypatch.setenv("DIAGRAM_MCP_COMMAND", str(shim))
+    monkeypatch.setenv("DRAWIO_CLI_COMMAND", str(desktop_shim))
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        expose_run=False,
+    )
+
+    _rw_binds, ro_binds, _env = session._agent_runtime_launch_spec(
+        runtime_type="codex",
+        uses_codex_account=False,
+    )
+
+    assert str(package_root) in ro_binds
+    assert str(desktop_root) in ro_binds
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("runtime_type", "model", "expected_auth"),
@@ -447,6 +669,8 @@ async def test_all_interactive_runtimes_share_hibernate_security_boundary(
     auth_file = tmp_path / "account" / "auth.json"
     auth_file.parent.mkdir()
     auth_file.write_text("{}", encoding="utf-8")
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
     session = SandboxSession(
         tenant_id="tenant",
         wf_id=f"chat-{runtime_type}-{model.get('connection_type', 'api')}",
@@ -455,6 +679,7 @@ async def test_all_interactive_runtimes_share_hibernate_security_boundary(
         provider=provider,
         base_binds=[],
         account_auth_file=str(auth_file),
+        runtime_dir=str(runtime_dir),
         expose_run=False,
     )
     session.writeback_vfs = AsyncMock()
@@ -462,7 +687,11 @@ async def test_all_interactive_runtimes_share_hibernate_security_boundary(
     events = [
         event
         async for event in session.run_agent_runtime_stream(
-            {"turn_id": "turn-1", "runtime_type": runtime_type, "model": model}
+            _runtime_request(
+                "turn-1",
+                runtime_type=runtime_type,
+                model=model,
+            )
         )
     ]
     assert events[0]["turn_id"] == "turn-1"
@@ -498,7 +727,7 @@ async def test_runtime_binding_cannot_switch_inside_one_session(
     _ = [
         event
         async for event in session.run_agent_runtime_stream(
-            {"turn_id": "turn-1", "runtime_type": "langchain"}
+            _runtime_request("turn-1")
         )
     ]
 
@@ -506,7 +735,7 @@ async def test_runtime_binding_cannot_switch_inside_one_session(
         _ = [
             event
             async for event in session.run_agent_runtime_stream(
-                {"turn_id": "turn-2", "runtime_type": "codex", "model": {}}
+                _runtime_request("turn-2", runtime_type="codex")
             )
         ]
 

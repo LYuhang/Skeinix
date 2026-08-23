@@ -57,8 +57,10 @@ export function VfsRunSection({ wfId, onOpenFile }: VfsRunSectionProps) {
         >
           <button
             type="button"
+            aria-label={node.name}
             className="flex w-full items-center gap-2 rounded py-1 text-left text-[13px] hover:bg-muted"
             style={{ paddingLeft: depth * 12 + 8 }}
+            onClick={() => onOpenFile(e.path, runId)}
             onDoubleClick={() => onOpenFile(e.path, runId)}
           >
             <FileTypeIcon
