@@ -248,9 +248,9 @@ describe('CredentialsSettingsPanel', () => {
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith(
       'OpenRouter did not complete the connection. Start again.',
     ));
-    expect(screen.getByTestId('location-probe')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent(
       '/settings?tab=api-keys',
-    );
+    ));
     expect(document.body).not.toHaveTextContent('private');
   });
 
@@ -285,9 +285,9 @@ describe('CredentialsSettingsPanel', () => {
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith(
       'Skeinix could not reach OpenRouter. Check the deployment network or proxy, then start again.',
     ));
-    expect(screen.getByTestId('location-probe')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent(
       '/settings?tab=api-keys',
-    );
+    ));
   });
 
   it('keeps the section heading and primary action in one responsive header', async () => {
