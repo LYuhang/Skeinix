@@ -286,6 +286,13 @@ def test_command_completion_reminder_identifies_reviewed_publication_path():
 
 @pytest.fixture(autouse=True)
 def _isolate_broker_capability_file(monkeypatch):
+    # Direct adapter tests inject a fake app-server client and must not depend
+    # on a host Codex installation. Individual executable-discovery tests can
+    # still override this fixture explicitly in their own body.
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._codex_executable",
+        lambda: "/opt/test/codex",
+    )
     monkeypatch.setattr(
         "vibecanvas_api.services.agent_runtime.codex._install_broker_capability",
         lambda _capability: None,
