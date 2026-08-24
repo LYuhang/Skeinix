@@ -475,8 +475,8 @@ def _format_agent_init_error(exc: Exception) -> str:
     ):
         return (
             "Agent init error: No model credential is configured. "
-            "Open the API Key page to add a model credential, then open Agent settings "
-            "and select the model for this chat."
+            "Connect a compatible model account or API source in Settings, "
+            "then select its model in Chat."
         )
     return f"Agent init error: {raw}"
 

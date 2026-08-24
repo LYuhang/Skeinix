@@ -160,10 +160,11 @@ test('dynamic Interactive resources survive save failures; Preview follows VFS e
     '</main>',
   ].join('');
   const prompt = [
-    'Call render_interactive exactly once and do not call any other tool.',
-    'Use title "Dynamic Resource Acceptance", require_human_confirm=true, and one html_preview view.',
-    `Use this exact HTML without changing it: ${html}`,
-    'Do not emit prose after the tool call.',
+    'Create /data/interactive-acceptance/index.html using this exact HTML without changing it:',
+    html,
+    'Then call render_interactive exactly once with path="/data/interactive-acceptance/index.html",',
+    'title="Dynamic Resource Acceptance", and require_human_confirm=true.',
+    'Do not use the retired nested view/type arguments and do not emit prose after the Preview call.',
   ].join(' ');
   const { scopeId, chatId } = await sendPrompt(page, prompt);
   const workspace = await api(

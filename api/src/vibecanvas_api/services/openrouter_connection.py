@@ -39,6 +39,30 @@ OPENROUTER_REASONING_EFFORTS = (
 logger = structlog.get_logger(__name__)
 
 
+def product_default_reasoning_effort(
+    supported: list[str],
+    provider_default: Any,
+) -> str | None:
+    """Choose a capable default without silently opting users into max effort.
+
+    OpenRouter model metadata can advertise ``max`` as the provider default.
+    That is useful as an explicit user choice, but it is a poor product default
+    for an Agent that may make many sequential tool calls. Preserve ordinary
+    provider defaults and otherwise prefer a balanced/deep effort that the
+    model actually supports.
+    """
+    candidate = provider_default if isinstance(provider_default, str) else None
+    if candidate in supported and candidate not in {"xhigh", "max"}:
+        return candidate
+    # Prefer a latency- and reliability-conscious default when the provider only
+    # exposes coarse low/high/max choices.  Long Agent turns can contain many
+    # sequential tool calls; users can still opt into high/max explicitly.
+    for effort in ("medium", "low", "high", "minimal", "none", "xhigh", "max"):
+        if effort in supported:
+            return effort
+    return None
+
+
 class OpenRouterConnectionError(RuntimeError):
     def __init__(self, code: str, *, upstream_status: int | None = None):
         super().__init__(code)
@@ -174,12 +198,10 @@ def normalize_model(raw: Any) -> dict[str, Any] | None:
                 effort for effort in OPENROUTER_REASONING_EFFORTS
                 if effort in raw_efforts
             ]
-        candidate_default = reasoning.get("default_effort")
-        if (
-            isinstance(candidate_default, str)
-            and candidate_default in supported_efforts
-        ):
-            default_effort = candidate_default
+        default_effort = product_default_reasoning_effort(
+            supported_efforts,
+            reasoning.get("default_effort"),
+        )
     context_length = raw.get("context_length")
     return {
         "id": model_id,
@@ -193,6 +215,10 @@ def normalize_model(raw: Any) -> dict[str, Any] | None:
         "input_modalities": input_modalities[:12],
         "output_modalities": output_modalities[:12],
         "supports_tools": True,
+        # OpenRouter exposes hosted search as a distinct optional request
+        # parameter. Ordinary function-tool support does not imply that the
+        # selected model can accept ``openrouter:web_search``.
+        "supports_web_search": "web_search_options" in parameters,
         "supported_reasoning_efforts": supported_efforts,
         "default_reasoning_effort": default_effort,
         "pricing": {

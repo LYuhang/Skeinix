@@ -18,6 +18,7 @@ from vibecanvas_api.schemas.chat import (
 from vibecanvas_api.services.agent_runtime.capabilities import (
     codex_capabilities,
     langchain_capabilities,
+    runtime_model_connection_id,
 )
 from vibecanvas_api.services.agent_runtime.codex_account import CodexAccountService
 from vibecanvas_api.services.agent_runtime.protocol import RuntimeCapabilities
@@ -99,8 +100,27 @@ def _with_chat_model_default(
     capabilities: RuntimeCapabilities,
     binding: dict | None,
 ) -> RuntimeCapabilities:
-    """Render the Chat's last model while keeping compatible choices mutable."""
+    """Render one Chat's connection-locked model catalog.
+
+    A new Chat may choose any connection compatible with its Runtime. The first
+    accepted Turn fixes the exact non-secret connection id; later capability
+    reads expose only models from that connection. This keeps provider-native
+    history, credentials, billing, and audit identity stable while still
+    allowing model and reasoning changes within the connection.
+    """
+    connection_id = (
+        binding.get("runtime_connection_id") if binding is not None else None
+    )
+    models = capabilities.models
+    if connection_id:
+        models = [
+            model
+            for model in models
+            if runtime_model_connection_id(capabilities.runtime_type, model.id)
+            == connection_id
+        ]
     capabilities = capabilities.model_copy(update={
+        "models": models,
         "bound_agent_settings": (
             binding.get("runtime_agent_settings") if binding is not None else None
         ),
@@ -108,7 +128,7 @@ def _with_chat_model_default(
     model_id = binding.get("runtime_model_id") if binding is not None else None
     if not model_id:
         return capabilities
-    if not any(model.id == model_id for model in capabilities.models):
+    if not any(model.id == model_id for model in models):
         return capabilities.model_copy(
             update={
                 "default_model_id": None,
@@ -120,7 +140,7 @@ def _with_chat_model_default(
             "default_model_id": model_id,
             "models": [
                 model.model_copy(update={"is_default": model.id == model_id})
-                for model in capabilities.models
+                for model in models
             ],
         }
     )

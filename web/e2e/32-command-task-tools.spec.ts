@@ -309,6 +309,14 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRun
 
       await invoke(
         page,
+        'task_collect_diagnostics',
+        `Call task_collect_diagnostics exactly once with task_id "${scheduleTaskId}", `
+          + 'event_limit 20 and execution_limit 20. Do not call another command tool.',
+        'TASK_DIAGNOSTICS_OK',
+      );
+
+      await invoke(
+        page,
         'task_update_scheduled_run',
         `Call task_update_scheduled_run exactly once with task_id "${scheduleTaskId}", `
           + `name "${updatedScheduleName}", interval_seconds 7200, timezone "Asia/Shanghai", `
@@ -430,6 +438,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRun
         'task_create_scheduled_run',
         'task_list',
         'task_get',
+        'task_collect_diagnostics',
         'task_update_scheduled_run',
         'task_cancel',
         'task_resume',

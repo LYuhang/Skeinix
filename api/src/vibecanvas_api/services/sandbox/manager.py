@@ -3804,9 +3804,11 @@ class SandboxManager:
     async def close_session(self, tenant_id: str, wf_id: str) -> dict:
         """Explicitly release a resident session and mark it closed for UI state.
 
-        The session is removed from the live registry synchronously, then closed
-        in the background with a timeout. This keeps user/tool paths responsive
-        even when provider shutdown or final VFS writeback is slow.
+        The session is removed from the live registry synchronously, then fully
+        closed before the release response is returned.  A caller may start the
+        same Chat again immediately after this boundary; returning while the old
+        close task can still release its Runtime-volume materialization races the
+        replacement sandbox and can remove its ``/runtime`` mount mid-startup.
         """
         key = (tenant_id, wf_id)
         victim = None
@@ -3814,7 +3816,7 @@ class SandboxManager:
             victim = self._sessions.pop(key, None)
             self._closed_markers[key] = time.monotonic()
         if victim is not None:
-            self._schedule_close(victim, reason="manual_close")
+            await self._close_session_best_effort(victim, reason="manual_close")
         return await self.status(tenant_id, wf_id)
 
     async def checkpoint_session(self, tenant_id: str, wf_id: str) -> str:

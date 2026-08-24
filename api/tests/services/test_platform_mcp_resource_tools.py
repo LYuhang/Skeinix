@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,7 @@ import pytest
 from langchain.tools import ToolRuntime
 
 from vibecanvas_api.services.platform_mcp.resource_tools import (
+    deployment_collect_diagnostics,
     deployment_create,
     deployment_delete,
     deployment_list,
@@ -19,12 +21,17 @@ from vibecanvas_api.services.platform_mcp.resource_tools import (
     knowledge_list,
     knowledge_search,
     task_create_scheduled_run,
+    task_collect_diagnostics,
     task_delete_scheduled_run,
     task_list,
     task_update_scheduled_run,
 )
 from vibecanvas_api.services.knowledge_packages import package_snapshot
 from vibecanvas_api.storage.db import session_scope
+from vibecanvas_api.storage.repo_deployment_invocations import (
+    DeploymentInvocationsRepo,
+)
+from vibecanvas_api.storage.repo_tasks import TasksRepo
 
 
 KNOWLEDGE_FORMAT_FIXTURES = {
@@ -368,9 +375,11 @@ async def test_knowledge_create_validates_before_persisting_resource(client) -> 
 async def test_task_platform_mcp_crud_uses_platform_database(client) -> None:
     headers, me = await _register(client)
     workflow_id = await _workflow(client, headers)
+    sandbox = _Sandbox()
     runtime = _runtime(
         me,
         authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
     )
 
     content, artifact = await task_create_scheduled_run.coroutine(
@@ -406,6 +415,30 @@ async def test_task_platform_mcp_crud_uses_platform_database(client) -> None:
     assert listed["items"][0]["id"] == task_id
     assert listed["has_more"] is False
 
+    async with session_scope(tenant_id=me["tenant_id"]) as session:
+        await TasksRepo(session).insert_event(
+            uuid.UUID(task_id),
+            "log",
+            {
+                "level": "error",
+                "message": "diagnostic marker",
+                "error": {"code": "workflow_timeout"},
+            },
+            uuid.UUID(me["tenant_id"]),
+        )
+
+    content, _ = await task_collect_diagnostics.coroutine(
+        task_id=task_id,
+        event_limit=20,
+        runtime=runtime,
+    )
+    diagnostics = json.loads(content)
+    assert diagnostics["statistics"]["event_counts"]["log"] == 1
+    assert diagnostics["files"]["summary.json"].endswith("/summary.json")
+    events = sandbox.files[diagnostics["files"]["events.jsonl"]].decode()
+    assert "diagnostic marker" in events
+    assert "executions.jsonl" in diagnostics["files"]
+
     content, _ = await task_delete_scheduled_run.coroutine(
         task_id=task_id,
         require_user_auth=True,
@@ -418,9 +451,11 @@ async def test_task_platform_mcp_crud_uses_platform_database(client) -> None:
 async def test_deployment_platform_mcp_crud_uses_platform_database(client) -> None:
     headers, me = await _register(client)
     workflow_id = await _workflow(client, headers)
+    sandbox = _Sandbox()
     runtime = _runtime(
         me,
         authorization_client=client._transport.app.state.openfga_client,
+        sandbox=sandbox,
     )
     slug = f"mcp-{uuid.uuid4().hex[:12]}"
 
@@ -456,6 +491,39 @@ async def test_deployment_platform_mcp_crud_uses_platform_database(client) -> No
     listed = json.loads(content)
     assert listed["items"][0]["id"] == deployment_id
     assert "api_key_hash" not in listed["items"][0]
+
+    async with session_scope(tenant_id=me["tenant_id"]) as session:
+        repo = DeploymentInvocationsRepo(session)
+        invocation_id = await repo.create(
+            tenant_id=uuid.UUID(me["tenant_id"]),
+            deployment_id=uuid.UUID(deployment_id),
+            wf_id=workflow_id,
+            trigger_type="api",
+            source="sync_api",
+            status="running",
+        )
+        await repo.mark_terminal(
+            invocation_id,
+            status="failed",
+            latency_ms=125.0,
+            error="workflow_timeout",
+        )
+
+    now = datetime.now(timezone.utc)
+    content, _ = await deployment_collect_diagnostics.coroutine(
+        deployment_id=deployment_id,
+        from_time=now - timedelta(hours=1),
+        to_time=now + timedelta(minutes=1),
+        invocation_limit=20,
+        runtime=runtime,
+    )
+    diagnostics = json.loads(content)
+    assert diagnostics["statistics"]["calls"] == 1
+    assert diagnostics["statistics"]["errors"] == 1
+    invocations = sandbox.files[
+        diagnostics["files"]["invocations.jsonl"]
+    ].decode()
+    assert "workflow_timeout" in invocations
 
     content, _ = await deployment_delete.coroutine(
         deployment_id=deployment_id,

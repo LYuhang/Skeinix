@@ -32,7 +32,7 @@ test.beforeEach(async ({ context }: { context: BrowserContext }) => {
   await session.seed(context, 'en');
 });
 
-test('Codex calls Platform MCP, saves through Interactive HTML, and continues as a new hidden Turn', async ({
+test('Codex calls Platform MCP, saves through a Previewed HTML file, and continues as a new hidden Turn', async ({
   page,
 }: {
   page: Page;
@@ -43,16 +43,17 @@ test('Codex calls Platform MCP, saves through Interactive HTML, and continues as
   });
   await page.locator('[data-action="chat-new"]').click({ timeout: 10_000 });
   const prompt = [
-    'Call the render_interactive MCP tool exactly once and do not call any other tool.',
-    'Use title "Codex Acceptance Gate", require_human_confirm=true, and an html_preview view.',
-    'The HTML must contain an input id="note" name="note" with value "codex-draft";',
+    'Create /data/codex-acceptance/index.html, then call render_interactive exactly once',
+    'with path="/data/codex-acceptance/index.html", title="Codex Acceptance Gate",',
+    'and require_human_confirm=true. The saved HTML file must contain an input',
+    'id="note" name="note" with value="codex-draft";',
     'a button id="bad-save" labeled "Test failed save" that PUTs {} to /mount/not-writable.json',
     'and changes an element id="bad-status" to "Failed 403" when the response is 403;',
     'a button id="save" labeled "Save Codex result" that PUTs',
     '{"runtime":"codex","accepted":true} as application/json to /data/codex-acceptance/result.json;',
     'a status element id="status" changed to "Saved" only after the write succeeds;',
     'and an anchor id="open-result" href="/data/codex-acceptance/result.json" labeled "Open Codex result".',
-    'Do not emit prose after the tool call.',
+    'Do not use the retired nested view/type arguments and do not emit prose after the Preview call.',
   ].join(' ');
   const composer = page.locator('[data-role="agent-composer-input"]');
   await composer.fill(prompt);

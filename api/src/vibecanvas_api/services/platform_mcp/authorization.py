@@ -58,6 +58,7 @@ WORKFLOW_TOOL_ACTIONS: dict[str, Action] = {
 TASK_TOOL_ACTIONS: dict[str, Action] = {
     "task_list": Action.VIEW_METADATA,
     "task_get": Action.VIEW,
+    "task_collect_diagnostics": Action.INSPECT_RUNS,
     "task_create_scheduled_run": Action.CREATE,
     "task_update_scheduled_run": Action.UPDATE,
     "task_delete_scheduled_run": Action.DELETE,
@@ -68,6 +69,7 @@ TASK_TOOL_ACTIONS: dict[str, Action] = {
 DEPLOYMENT_TOOL_ACTIONS: dict[str, Action] = {
     "deployment_list": Action.VIEW_METADATA,
     "deployment_get": Action.VIEW,
+    "deployment_collect_diagnostics": Action.INSPECT_RUNS,
     "deployment_create": Action.DEPLOY,
     "deployment_update": Action.UPDATE,
     "deployment_delete": Action.DELETE,
@@ -640,7 +642,8 @@ async def prepare_platform_workflow_tool(
 
     workflow_id = (
         str(arguments.get("workflow_id") or "").strip()
-        if tool_name == "set_workflow"
+        if tool_name in {"set_workflow", "get_workflow"}
+        and arguments.get("workflow_id")
         else str(getattr(ctx, "current_workflow_id", "") or "").strip()
     )
     snapshot = await load_authorized_workflow(

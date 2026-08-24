@@ -26,7 +26,6 @@ import { routeXml } from '@drawio/mcp/src/libavoid-pass.js';
 
 const VERSION = '1.5.0';
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
-const DRAWIO_MIME = 'application/vnd.jgraph.mxfile';
 const ROUTING_CORE_URL =
   'https://viewer.diagrams.net/js/libavoid-js/libavoid-routing.js';
 
@@ -295,12 +294,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             tool: 'render_interactive',
             request: {
               title: basename(path, '.drawio'),
-              view: {
-                type: 'file_preview',
-                path,
-                mime: DRAWIO_MIME,
-                description: 'Native draw.io diagram',
-              },
+              path,
+              file_type: 'drawio',
+              description: 'Native draw.io diagram',
             },
           },
         ],

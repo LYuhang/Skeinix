@@ -275,8 +275,10 @@ def _annotations(name: str) -> types.ToolAnnotations:
     read_only = name.startswith(read_prefixes) or name in {
         "task_list",
         "task_get",
+        "task_collect_diagnostics",
         "deployment_list",
         "deployment_get",
+        "deployment_collect_diagnostics",
         "knowledge_list",
         "knowledge_get",
         "knowledge_search",

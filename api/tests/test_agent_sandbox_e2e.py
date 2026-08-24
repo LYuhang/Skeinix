@@ -7,8 +7,10 @@ Python Skill script INSIDE rootless gVisor and the whole data-path holds:
   * the script WRITES ``/logs/out.txt`` through the clean top-level workspace
     folder, and ``SandboxSession.writeback_vfs`` then
     surfaces it in the durable VFS at ``/logs/out.txt`` (read back here);
-  * NETWORK IS OFF — ``run_code`` forces ``network="none"`` for the code job, so
-    a ``socket.create_connection`` attempt fails inside the sandbox.
+  * NETWORK-NONE IS ENFORCED — an explicit ``network="none"`` capability probe
+    cannot create an outbound socket. Normal Agent code uses the deployment's
+    unified egress policy (proxy in the production Compose profile), so this
+    test must not accidentally assert that every code job is offline.
 
 Skip-clean when rootless gVisor is unavailable, MIRRORING the sibling @gvisor
 tests' guard (``pytest.mark.skipif(not _gvisor_runnable())``) — the conftest
@@ -182,7 +184,12 @@ async def test_resident_session_network_is_off(_fs_object_store):
     try:
         mgr = get_sandbox_manager()
         session = await mgr.get_session(tenant_id, wf_id, user_id=user_id)
-        result = await session.run_code(_NET_SCRIPT, {}, timeout_s=60)
+        result = await session.run_code(
+            _NET_SCRIPT,
+            {},
+            timeout_s=60,
+            network="none",
+        )
     finally:
         current_sync_tenant_id.reset(token)
 

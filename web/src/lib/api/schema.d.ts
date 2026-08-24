@@ -6228,6 +6228,11 @@ export interface components {
              * @default false
              */
             supports_tools: boolean;
+            /**
+             * Supports Web Search
+             * @default false
+             */
+            supports_web_search: boolean;
             /** Supported Reasoning Efforts */
             supported_reasoning_efforts?: string[];
             /** Default Reasoning Effort */
@@ -6906,6 +6911,11 @@ export interface components {
             output_modalities?: string[];
             /** Supports Tools */
             supports_tools?: boolean | null;
+            /**
+             * Supports Web Search
+             * @default false
+             */
+            supports_web_search: boolean;
             /** Input Price */
             input_price?: string | null;
             /** Output Price */

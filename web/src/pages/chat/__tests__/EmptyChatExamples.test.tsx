@@ -69,10 +69,12 @@ describe('EmptyChatExamples', () => {
     const onSelect = renderExamples(true);
 
     await user.click(screen.getByRole('tab', { name: 'Tasks and deployments' }));
+    await user.click(screen.getByRole('button', { name: /run a workflow batch/i }));
+    expect(onSelect).toHaveBeenLastCalledWith(expect.stringMatching(/^\/workflow /));
     await user.click(screen.getByRole('button', { name: /publish a workflow api/i }));
 
-    expect(onSelect).toHaveBeenCalledOnce();
-    expect(onSelect.mock.calls[0]?.[0]).toMatch(/^\/deployment /);
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect.mock.calls[1]?.[0]).toMatch(/^\/deployment /);
   });
 
   it('offers diagram examples for architecture, process, and sequence diagrams', async () => {

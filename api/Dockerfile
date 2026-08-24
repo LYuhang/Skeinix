@@ -44,7 +44,11 @@ RUN set -eux; \
     test -x "${vendor}/bin/codex"; \
     mkdir -p /opt/codex; \
     cp -a "${vendor}/." /opt/codex/; \
-    test "$(/opt/codex/bin/codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"
+    test "$(/opt/codex/bin/codex --version)" = "codex-cli ${CODEX_CLI_VERSION}"; \
+    mkdir -p /tmp/codex-catalog-home; \
+    CODEX_HOME=/tmp/codex-catalog-home \
+        /opt/codex/bin/codex debug models > /opt/codex/model-catalog.json; \
+    node -e 'const c=require("/opt/codex/model-catalog.json"); if (!Array.isArray(c.models) || !c.models.length) process.exit(1)'
 
 FROM node-runtime-base AS playwright-assets
 ARG PLAYWRIGHT_MCP_VERSION

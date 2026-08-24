@@ -158,7 +158,7 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRun
       });
     }
 
-    test(`invokes all five /deployment tools through ${runtime}`, async ({ page }) => {
+    test(`invokes all six /deployment tools through ${runtime}`, async ({ page }) => {
       await openChat(page);
       await invoke(
         page,
@@ -191,6 +191,13 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRun
       );
       await invoke(
         page,
+        'deployment_collect_diagnostics',
+        `Call deployment_collect_diagnostics exactly once with deployment_id "${deploymentId}", `
+          + 'bucket "hour" and invocation_limit 20. Do not call another command tool.',
+        'DEPLOYMENT_DIAGNOSTICS_OK',
+      );
+      await invoke(
+        page,
         'deployment_update',
         `The exact deployment was inspected in the previous Turn. Call deployment_update exactly `
           + `once with deployment_id "${deploymentId}", name "${updatedName}", enabled false, `
@@ -220,13 +227,17 @@ for (const runtime of ['langchain', 'codex'] as const satisfies readonly RealRun
       await page.locator(`button[data-chat-id="${chatId}"]`).click();
       await loadCompleteChatHistory(page, chatId);
       const persisted = page.locator('[data-tool-activity="true"]');
-      await expect(persisted).toHaveCount(5, { timeout: 60_000 });
-      for (let index = 0; index < 5; index += 1) {
+      // The Agent may follow a diagnostic export with a generic read-only file
+      // operation. Keep this persistence gate focused on the six command tools
+      // instead of rejecting useful inspection behavior.
+      await expect.poll(() => persisted.count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(6);
+      for (let index = 0; index < await persisted.count(); index += 1) {
         const toggle = persisted.nth(index).locator('[data-action="tool-activity-toggle"]');
         if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
       }
       for (const tool of [
         'deployment_create', 'deployment_list', 'deployment_get',
+        'deployment_collect_diagnostics',
         'deployment_update', 'deployment_delete',
       ]) {
         await expect(page.locator(

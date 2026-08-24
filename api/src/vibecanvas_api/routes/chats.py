@@ -123,6 +123,9 @@ from ..services.agent_runtime.mcp_host_resolution import (
     resolve_platform_mcp_authority,
 )
 from ..services.agent_runtime.instructions import command_instructions_for_modes
+from ..services.agent_runtime.history_recovery import (
+    build_durable_history_snapshot,
+)
 from ..services.runtime_skills import runtime_skill_descriptors
 from ..services.agent_runtime.protocol import (
     RuntimeOpenRequest,
@@ -604,6 +607,7 @@ async def delete_chat_session(
     request: Request,
     surface: str = Query(default="chat"),
     chat_repo: ChatRepo = Depends(get_chat_repo),
+    agent_runs_repo=Depends(get_agent_runs_repo),
     session: AsyncSession = Depends(tenant_db),
     auth: AuthContext = Depends(current_user),
     service: AuthzService = Depends(get_authz_service),
@@ -645,6 +649,23 @@ async def delete_chat_session(
                 "message": (
                     "End browser control before deleting this chat. "
                     "This prevents leaving controlled tabs detached from their persisted chat."
+                ),
+            },
+        )
+
+    active_run = await agent_runs_repo.get_active_for_chat_user(
+        chat_id,
+        creator_user_id=creator_user_id,
+    )
+    if active_run is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "chat_turn_active",
+                "message": (
+                    "Stop the active Agent turn before deleting this chat. "
+                    "This preserves the transcript and prevents revoking "
+                    "Runtime capabilities while work is still running."
                 ),
             },
         )
@@ -2837,6 +2858,19 @@ async def post_message(
         runtime_type,
         effective_runtime_model_id,
     )
+    bound_connection_id = runtime_binding.get("runtime_connection_id")
+    if (
+        isinstance(bound_connection_id, str)
+        and bound_connection_id
+        and bound_connection_id != runtime_connection_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "runtime_connection_locked",
+                "runtime_type": runtime_type.value,
+            },
+        )
     credential_row = (
         await LlmCredentialsRepo(session).get_for_user(
             credential_id,
@@ -3020,6 +3054,24 @@ async def post_message(
                     "/api/internal/runtime-model/v1"
                 ),
                 "api_key": model_capability,
+                # The sandbox converts this non-secret provider metadata into
+                # Codex's official model_catalog_json. Dynamic provider ids
+                # must not fall back to guessed context or reasoning limits.
+                "label": selected_runtime_model.label,
+                "description": selected_runtime_model.description,
+                "context_length": selected_runtime_model.context_length,
+                "input_modalities": selected_runtime_model.input_modalities,
+                "supports_tools": selected_runtime_model.supports_tools,
+                "supports_web_search": selected_runtime_model.supports_web_search,
+                "api_source": selected_runtime_model.api_source,
+                "provider": selected_runtime_model.provider,
+                "supported_reasoning_efforts": [
+                    option.model_dump()
+                    for option in selected_runtime_model.supported_reasoning_efforts
+                ],
+                "default_reasoning_effort": (
+                    selected_runtime_model.default_reasoning_effort
+                ),
             }
         )
 
@@ -3096,6 +3148,19 @@ async def post_message(
         workspace_scope_id=agent_wf_id,
         active_modes=effective_active_modes,
     )
+    durable_history = None
+    if runtime_type == RuntimeType.CODEX:
+        history_rows, history_total, _history_offset = (
+            await chat_repo.list_message_page(
+                chat_id,
+                limit=512,
+                tail=True,
+            )
+        )
+        durable_history = build_durable_history_snapshot(
+            history_rows,
+            source_total=history_total,
+        )
     open_request = RuntimeOpenRequest(
         tenant_id=auth.tenant_id,
         user_id=auth.user_id,
@@ -3124,6 +3189,11 @@ async def post_message(
             and runtime_binding.get("runtime_timezone")
             and runtime_binding.get("runtime_started_at") is not None
             else None
+        ),
+        durable_history=(
+            durable_history.model_dump(mode="json")
+            if durable_history is not None
+            else {}
         ),
         message=user_message,
         attachments=attachments,

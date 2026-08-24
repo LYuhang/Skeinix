@@ -93,7 +93,7 @@ inside one current workflow context:
 
 3. Iterate within node-definition constraints.
    Treat workflow JSON as code-generated data, not hand-written text. For small localized changes, use `edit_file`. For non-trivial creation or structural edits, write a short Python/JS script that loads the JSON file, mutates the object, and serializes it back with a standard JSON writer such as Python `json.dump(..., ensure_ascii=False, indent=2)`.
-   Avoid writing a large complete JSON object directly with `write_file`, shell heredocs, or long inline commands. Large inline JSON is fragile: it can be truncated, lose newlines, or accidentally use Python dict syntax. JSON files must use double quotes, lowercase `true`/`false`/`null`, and no trailing commas.
+   Avoid writing a large complete JSON object directly with `write_file`, a JSON shell heredoc, or a long inline command. Large inline JSON is fragile: it can be truncated, lose newlines, or accidentally use Python dict syntax. JSON files must use double quotes, lowercase `true`/`false`/`null`, and no trailing commas. The sandbox does not provide an `apply_patch` executable. When a generated Python/JS helper is useful, run the helper through a quoted interpreter heredoc (for example `python - <<'PY'`) and let the standard JSON serializer write the workflow file; do not try to create that helper by invoking `apply_patch` from `shell`.
    Before validation/import, confirm syntax with `python -m json.tool /data/workflow.json >/tmp/workflow.valid.json` or an equivalent `json.load`/`jq` check.
    Follow the node catalog above. When exact node requirements matter, call `get_node_spec(node_type=...)` before editing that node type. Keep node configs complete and typed. For environment-backed choices such as model ids, programming languages, field types, and workflow settings, read the relevant `get_config(scope=...)` result instead of guessing.
 
@@ -127,5 +127,11 @@ Runtime tools are also file-oriented:
 - `run_workflow` can read workflow/input JSON files and write result JSON files.
 - `batch_execute` reads CSV/TSV/JSONL/JSON/XLSX tables and writes JSONL results.
 
-Use run tools to test risky logic when validation alone is not enough.
+Validation and a successful canvas import are the default acceptance criteria
+for a workflow-construction request. Do not execute a newly built workflow just
+to demonstrate it unless the user explicitly asks for a run, provides concrete
+test input, or validation cannot cover a material execution risk. When an
+execution test is necessary, use the smallest representative input and stop
+after one successful run; do not repeatedly rerun a workflow whose remaining
+behavior is already covered by validation.
 """.replace("__GENERAL_NODE_SCHEMA__", _GENERAL_NODE_SCHEMA).replace("__NODE_CATALOG__", _NODE_CATALOG)

@@ -50,7 +50,17 @@ def test_platform_mcp_selection_is_command_driven_and_stable() -> None:
     ]
     assert platform_mcp_names_for_modes(
         ["knowledge", "deployment", "task"]
-    ) == [*base, "task", "deployment", "knowledge"]
+    ) == [*base, "workflow", "task", "deployment", "knowledge"]
+    assert platform_mcp_names_for_modes(["task"]) == [
+        *base,
+        "workflow",
+        "task",
+    ]
+    assert platform_mcp_names_for_modes(["deployment"]) == [
+        *base,
+        "workflow",
+        "deployment",
+    ]
 
 
 def test_platform_mcp_authorization_ceiling_is_runtime_neutral() -> None:

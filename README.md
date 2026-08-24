@@ -157,6 +157,10 @@ Open <http://localhost:9001> after startup verification succeeds.
      Deployment-managed API models may already be available without a personal
      key.
 
+   A model appearing in the OpenRouter catalog does not guarantee current
+   account quota or provider availability; OpenRouter applies its own credit
+   and rate-limit policy when the model is invoked.
+
    The available connection methods depend on the deployment configuration.
    Stored API keys are encrypted and write-only: they cannot be read back from
    the application after saving. The application filters every source by the
@@ -164,9 +168,11 @@ Open <http://localhost:9001> after startup verification succeeds.
 
 3. **Start a Chat and build the Workflow.** Open **Chat**, create a new
    conversation, choose a source and model below the composer, and select a
-   supported thinking level when the model exposes one. The Runtime remains
-   fixed for the Chat, while the model and thinking level can be changed between
-   turns. Activate `/workflow`, then describe the automation you want to create,
+   supported thinking level when the model exposes one. The first accepted
+   turn fixes both the Runtime and the exact account/API connection for that
+   Chat. Between turns, the model and thinking level can still be changed
+   within that connection; start a new Chat to use another source. Activate
+   `/workflow`, then describe the automation you want to create,
    including its expected inputs, outputs, and important constraints. Inspect
    the generated Workflow on the canvas, validate and run it, then review the
    node outputs and refine the Workflow in Chat or on the canvas.
@@ -229,8 +235,8 @@ combined when a task spans more than one area.
 | Command | Purpose | Availability |
 | --- | --- | --- |
 | `/workflow` | Ask the agent to create or open a Workflow, then modify nodes, validate the graph, create versions, or run it from the conversation | Main app and extension; LangChain/Codex |
-| `/task` | Ask the agent to find Tasks, create or update scheduled runs, and cancel or resume work | Main app and extension; LangChain/Codex |
-| `/deployment` | Ask the agent to find, create, update, or remove Workflow Deployments | Main app and extension; LangChain/Codex |
+| `/task` | Ask the agent to find or manage Tasks, or export searchable event and execution diagnostics for troubleshooting | Main app and extension; LangChain/Codex |
+| `/deployment` | Ask the agent to find or manage Deployments, or export searchable invocation logs and metrics for troubleshooting | Main app and extension; LangChain/Codex |
 | `/knowledge` | Let the Agent read, create, and version Knowledge file packages in the active organization | Main app and extension; LangChain/Codex |
 | [`/diagram`](docs/diagram.md) | Create and refine native draw.io diagrams with the official sandbox-local MCP, then preview and export them | Main app and extension; LangChain/Codex |
 | `/document` | Create or revise professional PPTX, DOCX, XLSX, or PDF files, review their structure and rendered output, then publish the native file in Preview | Main app and extension; LangChain/Codex |

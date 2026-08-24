@@ -326,11 +326,18 @@ export function AppSidebar({
       toast.success(t('nav.chatHistory.deleted', 'Chat deleted'));
     } catch (e) {
       toast.error(
-        e instanceof ChatDeleteError && e.code === 'browser_session_active'
-          ? t(
-              'nav.chatHistory.browserSessionActive',
-              'End browser control before deleting this chat.',
-            )
+        e instanceof ChatDeleteError
+          ? e.code === 'browser_session_active'
+            ? t(
+                'nav.chatHistory.browserSessionActive',
+                'End browser control before deleting this chat.',
+              )
+            : e.code === 'chat_turn_active'
+              ? t(
+                  'nav.chatHistory.turnActive',
+                  'Stop the Agent before deleting this chat.',
+                )
+              : t('nav.chatHistory.deleteFailed', 'Delete failed')
           : t('nav.chatHistory.deleteFailed', 'Delete failed'),
       );
     }
@@ -395,7 +402,7 @@ export function AppSidebar({
             {!effectiveCollapsed ? (
               <h2
                 id={`nav-group-${groupIndex}`}
-                className="mb-1 px-3 text-[12px] font-medium uppercase tracking-[0.08em] text-content-tertiary"
+                className="mb-1 px-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-content-tertiary"
               >
                 {t(group.labelKey, group.fallback)}
               </h2>
@@ -416,15 +423,10 @@ export function AppSidebar({
                         if (item.to === '/chat') setChatEntryIntent('default');
                         onNavigate?.();
                       }}
-                      className={({ isActive }) =>
-                        cn(
-                          'relative flex h-9 items-center gap-3 rounded-md px-3 text-ui transition-colors duration-feedback focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          effectiveCollapsed && 'justify-center px-0',
-                          isActive
-                            ? 'bg-primary/[0.07] font-medium text-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-focus'
-                            : 'text-muted-foreground hover:bg-surface-hover/70 hover:text-foreground',
-                        )
-                      }
+                      className={cn(
+                        'text-ui relative flex h-9 items-center gap-3 rounded-md px-3 font-semibold text-muted-foreground transition-colors duration-feedback before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-focus before:opacity-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:bg-surface-hover/70 hover:text-foreground aria-[current=page]:bg-primary/[0.07] aria-[current=page]:font-bold aria-[current=page]:text-foreground aria-[current=page]:before:opacity-100',
+                        effectiveCollapsed && 'justify-center px-0',
+                      )}
                     >
                       <ResourceIcon kind={item.kind} size="sm" />
                       {!effectiveCollapsed && <span className="truncate">{label}</span>}
@@ -441,7 +443,7 @@ export function AppSidebar({
       </div>
       {showChatContext ? (
         <div className="flex min-h-0 flex-1 flex-col border-t border-edge-subtle pt-3">
-          <div className="px-3 text-xs font-medium text-muted-foreground">
+          <div className="px-3 text-xs font-semibold text-muted-foreground">
             {t('nav.chatHistory', 'Chat history')}
           </div>
           <div className="app-scrollbar mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
@@ -464,10 +466,10 @@ export function AppSidebar({
                     onFocus={() => preloadChat(item.chat_id)}
                     onClick={() => selectChat(item.chat_id)}
                     className={cn(
-                      'flex h-9 w-full items-center gap-2 rounded-md px-3 text-left text-ui transition-colors duration-150',
+                      'flex h-9 w-full items-center gap-2 rounded-md px-3 text-left text-ui font-medium transition-colors duration-150',
                       !item.__draft && 'pr-9',
                       item.chat_id === activeChatId
-                        ? 'bg-primary/[0.07] font-medium text-foreground'
+                        ? 'bg-primary/[0.07] font-semibold text-foreground'
                         : 'text-muted-foreground hover:bg-surface-hover/70 hover:text-foreground',
                     )}
                   >

@@ -91,6 +91,7 @@ async def test_outer_sandboxed_server_disables_redundant_codex_sandbox(
         executable="/codex",
         env={},
         outer_sandboxed=True,
+        config_overrides=('model_catalog_json="/tmp/catalog.json"',),
     )
     server._read_loop = AsyncMock()
     server.request = AsyncMock(return_value={})
@@ -104,6 +105,8 @@ async def test_outer_sandboxed_server_disables_redundant_codex_sandbox(
         'cli_auth_credentials_store="file"',
         "-c",
         'sandbox_mode="danger-full-access"',
+        "-c",
+        'model_catalog_json="/tmp/catalog.json"',
         "app-server",
         "--stdio",
     )

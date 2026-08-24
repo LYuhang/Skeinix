@@ -29,7 +29,7 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       descriptionKey: 'chat.examples.office.presentation.description',
       description: 'Research a topic and turn it into a polished slide deck.',
       promptKey: 'chat.examples.office.presentation.prompt',
-      prompt: '/document Research the latest Agent frameworks and create a polished presentation covering the background, representative frameworks, their strengths and limitations, a comparison, and key conclusions.',
+      prompt: '/document Create a polished, editable 3-slide presentation introducing Skeinix to a technical team. Do not browse the web; use only these facts: Skeinix is an open-source server-side Agent for browser automation, Workflows, Tasks and Deployments, professional office documents and diagrams, and reusable Knowledge storage. Use slide 1 for the problem and product position, slide 2 for the capability groups, and slide 3 for a concise getting-started flow from connecting a Runtime and model source to Chat and delivery.',
     },
     {
       id: 'report',
@@ -40,7 +40,7 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       descriptionKey: 'chat.examples.office.report.description',
       description: 'Structure evidence and recommendations into a professional report.',
       promptKey: 'chat.examples.office.report.prompt',
-      prompt: '/document Create a professional market analysis report for enterprise AI assistants. Include an executive summary, market landscape, user needs, competitive comparison, risks, recommendations, and cited sources.',
+      prompt: '/document Create a polished, editable 3-page decision brief for a mid-sized customer-support team evaluating Skeinix. Do not browse the web; use only these assumptions: the team handles 20,000 tickets per month, spends 35% of staff time on repetitive browser and reporting work, and requires human review before production actions. Cover the current problem, a proposed pilot using browser automation, Workflows, Tasks and Deployments, expected benefits and risks, and a 30-day rollout with measurable success criteria.',
     },
     {
       id: 'spreadsheet',
@@ -51,7 +51,7 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       descriptionKey: 'chat.examples.office.spreadsheet.description',
       description: 'Create a clear spreadsheet with formulas, summaries, and charts.',
       promptKey: 'chat.examples.office.spreadsheet.prompt',
-      prompt: '/document Create an editable quarterly sales analysis workbook with sample regional data, validated formulas, a summary sheet, conditional formatting, and charts for revenue, growth, and target attainment.',
+      prompt: '/document Create a polished, editable quarterly sales workbook with exactly two sheets: Data and Summary. Use sample data for four regions across four quarters. Include validated formulas, restrained conditional formatting, and three compact charts on the Summary sheet for revenue, growth, and target attainment. Set each sheet to fit on one landscape print page for visual review.',
     },
   ],
   diagram: [
@@ -99,7 +99,7 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       descriptionKey: 'chat.examples.workflow.feedback.description',
       description: 'Classify feedback, identify urgency, and route follow-up work.',
       promptKey: 'chat.examples.workflow.feedback.prompt',
-      prompt: '/workflow Build a workflow that accepts customer feedback, detects language and sentiment, classifies the topic and urgency, drafts a response, and routes critical issues for human review.',
+      prompt: '/workflow Build a compact customer-feedback workflow that accepts feedback, detects language and sentiment, classifies topic and urgency, drafts a response, and routes critical issues for human review. Keep the workflow to 5–7 clear nodes, validate it, and publish it to the canvas; do not run it yet.',
     },
     {
       id: 'research',
@@ -128,13 +128,13 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
     {
       id: 'batch',
       icon: '🗂️',
-      command: '/task',
+      command: '/workflow',
       titleKey: 'chat.examples.operations.batch.title',
-      title: 'Run a batch task',
+      title: 'Run a workflow batch',
       descriptionKey: 'chat.examples.operations.batch.description',
       description: 'Apply a workflow to many records and collect structured results.',
       promptKey: 'chat.examples.operations.batch.prompt',
-      prompt: '/task Create a batch task that applies my customer-feedback workflow to a CSV file, preserves row-level errors, and exports successful and failed results separately.',
+      prompt: '/workflow Build or select a customer-feedback workflow, run it against a small batch of representative feedback records, preserve row-level errors, and save successful and failed results separately.',
     },
     {
       id: 'schedule',
@@ -143,9 +143,9 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       titleKey: 'chat.examples.operations.schedule.title',
       title: 'Schedule recurring work',
       descriptionKey: 'chat.examples.operations.schedule.description',
-      description: 'Run a workflow on a schedule and retain its execution history.',
+      description: 'Select an existing workflow, schedule it, and retain its run history.',
       promptKey: 'chat.examples.operations.schedule.prompt',
-      prompt: '/task Schedule my research-digest workflow to run every weekday at 09:00 in my current timezone, and keep each run result available for review.',
+      prompt: '/task From my existing workflows, select the most recently updated valid workflow whose name or description best matches a research digest. Schedule it to run every weekday at 09:00 in my current timezone, and keep each run result available for review.',
     },
     {
       id: 'deploy',
@@ -154,9 +154,9 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       titleKey: 'chat.examples.operations.deploy.title',
       title: 'Publish a workflow API',
       descriptionKey: 'chat.examples.operations.deploy.description',
-      description: 'Expose a workflow through a controlled deployment endpoint.',
+      description: 'Select an existing workflow and expose it through a controlled endpoint.',
       promptKey: 'chat.examples.operations.deploy.prompt',
-      prompt: '/deployment Deploy my customer-feedback workflow as an authenticated API endpoint, use the latest workflow version, and configure a conservative request rate limit.',
+      prompt: '/deployment From my existing workflows, select the most recently updated valid workflow whose name or description best matches customer feedback. Deploy it as an authenticated API endpoint, use the latest workflow version, and configure a conservative request rate limit.',
     },
   ],
   knowledge: [
@@ -191,7 +191,7 @@ const EXAMPLES: Record<ExampleCategory, readonly ExampleDefinition[]> = {
       descriptionKey: 'chat.examples.knowledge.update.description',
       description: 'Add new evidence while preserving the package structure.',
       promptKey: 'chat.examples.knowledge.update.prompt',
-      prompt: '/knowledge Open my Agent evaluation knowledge package, add recent findings and sources, update its README and directory descriptions, validate the package, and publish a new version.',
+      prompt: '/knowledge Find my Agent evaluation knowledge package and add recent findings and sources. If it does not exist, create it with a clear README and source-file structure first. Validate the complete package and publish the resulting version.',
     },
   ],
 };
@@ -314,10 +314,10 @@ export function EmptyChatExamples({
                       {example.command}
                     </span>
                   </span>
-                  <span className="mt-3 block text-sm font-semibold leading-5 text-content-primary">
+                  <span className="text-ui mt-3 block font-semibold text-content-primary">
                     {t(example.titleKey, example.title)}
                   </span>
-                  <span className="mt-1.5 block text-xs leading-5 text-content-secondary">
+                  <span className="text-meta mt-1.5 block text-content-secondary">
                     {t(example.descriptionKey, example.description)}
                   </span>
                   <span

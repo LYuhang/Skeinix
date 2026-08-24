@@ -312,6 +312,32 @@ async def test_required_server_failure_keeps_previous_registry_active() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_hub_does_not_import_langchain_mcp_adapter(monkeypatch) -> None:
+    """An MCP-free Turn must stay on the lightweight Runtime startup path."""
+
+    adapter = SandboxMcpRuntimeAdapter(
+        lambda *_args, **_kwargs: pytest.fail("empty Hub must not call gateway")
+    )
+    hub = SandboxMcpHub(adapter)
+    await hub.reconcile(_desired())
+    await hub.activate(_context(platform_capabilities=[]))
+    original_import = __import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("langchain_mcp_adapters"):
+            raise AssertionError("empty Hub imported LangChain MCP adapters")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", guarded_import)
+    tools, catalog = await build_langchain_hub_tools(hub, adapter, [])
+
+    assert tools == []
+    assert catalog == []
+    await hub.deactivate()
+    await hub.close()
+
+
+@pytest.mark.asyncio
 async def test_executable_hub_reuses_host_manifest_and_routes_langchain_calls() -> None:
     calls: list[tuple[str, str, str | None, dict[str, Any]]] = []
 

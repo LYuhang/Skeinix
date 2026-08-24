@@ -551,15 +551,22 @@ async def build_langchain_hub_tools(
     desired_servers: list[McpDesiredServer],
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Project one warm Hub manifest through LangChain's official adapter."""
-    from langchain_mcp_adapters.tools import (
-        convert_mcp_tool_to_langchain_tool,
-    )
-
     projections, catalog = await project_hub_tools(
         hub,
         adapter,
         desired_servers,
     )
+    # A Turn without active MCP servers must not import the optional LangChain
+    # MCP adapter stack. Besides avoiding needless work in ordinary chat turns,
+    # this keeps a cold rootless-gVisor Runtime from traversing thousands of
+    # dependency files before it can report a missing model credential.
+    if not projections:
+        return [], catalog
+
+    from langchain_mcp_adapters.tools import (
+        convert_mcp_tool_to_langchain_tool,
+    )
+
     tools: list[Any] = []
     for projection in projections:
         session = _HubClientSession(hub, projection.server_name)

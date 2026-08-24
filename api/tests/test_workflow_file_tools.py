@@ -167,6 +167,32 @@ async def test_get_workflow_exports_canvas_to_json_file(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_workflow_accepts_explicit_id_without_chat_selection(monkeypatch):
+    import vibecanvas_api.services.platform_mcp.workflow_tools as workflow_tools
+
+    rt, session, repo = _runtime()
+    rt.context.current_workflow_id = None
+
+    async def fake_load(_ctx, workflow_id, _action):
+        assert workflow_id == "wf_1"
+        return SimpleNamespace(
+            workflow=repo.get_current_workflow(workflow_id),
+            meta=repo.get_meta(workflow_id),
+        )
+
+    monkeypatch.setattr(workflow_tools, "load_authorized_workflow", fake_load)
+    content, artifact = await workflow_tools._do_get_workflow(
+        rt,
+        "/data/selected-workflow.json",
+        workflow_id="wf_1",
+    )
+
+    assert "Workflow ID: wf_1" in content
+    assert artifact["status"] == "success"
+    assert "/data/selected-workflow.json" in session.files
+
+
+@pytest.mark.asyncio
 async def test_update_canvas_commits_valid_workflow_file(monkeypatch):
     import importlib
     mod = importlib.import_module("vibecanvas_api.services.platform_mcp.build_tools.update_canvas")

@@ -268,14 +268,24 @@ A model provider is not required for the platform to start, but Agent Chat
 cannot run until a compatible model connection is available. User-managed
 providers can be configured from Settings; a deployment-wide default is
 optional. Settings controls the default Runtime for new Chats and the available
-account/API sources. The Chat composer selects the concrete source, model, and
-model-supported thinking level for each turn.
+account/API sources. A new Chat selects its concrete source, model, and
+model-supported thinking level in the composer. The first accepted turn fixes
+the exact account/API connection for that Chat; subsequent turns may change
+the model and thinking level only within that connection.
 OpenRouter uses `VIBECANVAS_PUBLIC_URL` as its fixed OAuth callback origin, so
 that value must match the address users open in the browser. A connected
 OpenRouter account supplies its compatible text and tool-calling models to both
 enabled Runtimes: LangChain uses its OpenAI-compatible transport, while Codex
 uses the Responses API through Skeinix's host-side model broker. The catalog can
-be refreshed from Settings without changing existing Chat history.
+be refreshed from Settings without changing existing Chat history. Model
+catalog visibility does not imply invocation entitlement: account credits,
+free-model daily quotas, and provider availability are enforced by OpenRouter
+when a Turn runs. See OpenRouter's [rate-limit FAQ](https://openrouter.ai/docs/faq).
+Direct outbound access is the default; deployments that require an HTTP(S)
+proxy for host-side provider traffic can set
+`SKEINIX_CONTROL_PLANE_HTTP_PROXY`. Leave it
+empty on ordinary servers—Skeinix never infers this value from a developer's
+desktop `HTTP_PROXY` environment.
 
 ### Install the Browser Extension
 
@@ -303,6 +313,7 @@ following runtime settings are occasionally changed independently:
 | `OBJECT_STORE_PROVIDER` | `filesystem` | Local file-backed object storage; production deployments normally use `s3` |
 | `SANDBOX_EGRESS_MODE` | `proxy` | Routes sandbox HTTP(S) and WebSocket traffic through the controlled egress proxy |
 | `SANDBOX_EGRESS_POLICY` | `public` | Controls whether sandboxes may reach public destinations, an allowlist, or platform services only |
+| `SKEINIX_CONTROL_PLANE_HTTP_PROXY` | (empty string) | Optional HTTP(S) proxy for host-side provider OAuth, catalogs, and metadata; unrelated to sandbox egress |
 | `MOUNT_PATH` | (empty string) | Optional trusted host directory exposed through each user's isolated `/mount` path |
 
 Keep `VIBECANVAS_INTERNAL_BIND_ADDRESS` at its `127.0.0.1` default. It protects

@@ -123,9 +123,11 @@ cd Skeinix
    - 进入 **设置 → API 凭据**，可以连接 OpenRouter，也可以手动添加只写的模型提供商 API Key。OpenAI、Azure OpenAI、Anthropic、Google Gemini 以及自定义提供商会在与所选 Runtime 兼容时显示。OpenRouter 的安全回调依赖部署方配置规范的 `VIBECANVAS_PUBLIC_URL`。
    - 使用 **Codex** 时，还可以进入 **设置 → Agent Runtime → Codex account**，通过设备验证码登录 OpenAI 账户。连接 OpenRouter 后，与 Codex 兼容的文本和工具调用模型也会通过 OpenRouter Responses API 提供。部署方统一配置的 API 模型无需添加个人凭据即可显示。
 
+   模型出现在 OpenRouter 目录中，并不代表当前账户一定具有可用额度，也不代表上游提供商始终可用；真正调用时仍会受 OpenRouter 的余额与限流策略约束。
+
    实际可用的连接方式取决于部署配置。保存后的 API Key 会加密存储，并且只能写入，无法再从应用中读取。应用会先根据所选 Runtime 和 API 协议过滤连接来源，再展示可用模型。
 
-3. **开始 Chat 并构建 Workflow。** 进入 **Chat** 并新建对话，在编辑框下方依次选择模型来源、具体模型，以及该模型支持的思考强度。一个 Chat 的 Runtime 在创建后保持不变，但模型与思考强度可以在两轮对话之间切换。启用 `/workflow`，然后描述需要实现的自动化任务、预期输入和输出，以及必要的约束条件。随后在画布中检查生成的 Workflow，完成验证和试运行，并根据节点输出继续通过 Chat 或画布完善流程。
+3. **开始 Chat 并构建 Workflow。** 进入 **Chat** 并新建对话，在编辑框下方依次选择模型来源、具体模型，以及该模型支持的思考强度。首个被接受的 Turn 会固定该 Chat 的 Runtime 和具体账户/API 连接；后续仍可在同一连接内切换模型与思考强度。如需使用其它来源，请新建 Chat。启用 `/workflow`，然后描述需要实现的自动化任务、预期输入和输出，以及必要的约束条件。随后在画布中检查生成的 Workflow，完成验证和试运行，并根据节点输出继续通过 Chat 或画布完善流程。
 
 对话结束后，工作流仍会作为可版本化资产保留。确认其输入、输出和异常处理行为符合预期后，再将工作流发布。
 
@@ -163,8 +165,8 @@ cd Skeinix
 | 命令 | 用途 | 可用范围 |
 | --- | --- | --- |
 | `/workflow` | 让 Agent 创建或打开 Workflow，并在对话中修改节点、检查结构、创建版本或运行流程 | 主应用与浏览器扩展；LangChain/Codex |
-| `/task` | 让 Agent 查找 Task、创建或更新定时运行，以及取消或恢复任务 | 主应用与浏览器扩展；LangChain/Codex |
-| `/deployment` | 让 Agent 查找、创建、更新或删除 Workflow 的 Deployment | 主应用与浏览器扩展；LangChain/Codex |
+| `/task` | 让 Agent 查找或管理 Task，也可以导出可搜索的事件与执行诊断包来排查问题 | 主应用与浏览器扩展；LangChain/Codex |
+| `/deployment` | 让 Agent 查找或管理 Deployment，也可以导出可搜索的调用日志与指标来排查问题 | 主应用与浏览器扩展；LangChain/Codex |
 | `/knowledge` | 让 Agent 读取、创建和更新当前组织中的 Knowledge 文件资料包 | 主应用与浏览器扩展；LangChain/Codex |
 | [`/diagram`](docs/diagram.zh-CN.md) | 使用沙盒内的 draw.io 官方 MCP 创建和调整原生图表，并完成预览与导出 | 主应用与浏览器扩展；LangChain/Codex |
 | `/document` | 创建或修改专业的 PPTX、DOCX、XLSX 或 PDF 文件，检查文档结构与实际渲染效果，然后在 Preview 中交付原生文件 | 主应用与浏览器扩展；LangChain/Codex |

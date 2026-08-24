@@ -56,8 +56,9 @@ const TOOL_META: Record<string, ToolMeta> = {
   node_execute: { icon: Zap, labelKey: 'tool.meta.node_execute' },
   // ── Media (vision) ─────────────────────────────────────────────────────
   read_images: { icon: Image, labelKey: 'tool.meta.read_images' },
-  // ── Conversation-native interactive artifacts ─────────────────────────
+  // ── Conversation-native Preview artifacts ─────────────────────────────
   render_interactive: { icon: Eye, labelKey: 'tool.meta.render_interactive' },
+  render_url_preview: { icon: Globe, labelKey: 'tool.meta.render_url_preview' },
   // ── Browser-automation tools ───────────────────────────────────────────
   browser_navigate: { icon: Globe, labelKey: 'tool.meta.browser_navigate' },
   browser_navigate_back: { icon: CornerDownLeft, labelKey: 'tool.meta.browser_navigate_back' },

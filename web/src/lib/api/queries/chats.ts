@@ -73,6 +73,15 @@ export interface DeleteChatResult {
 
 export type ChatListItem = components['schemas']['ChatListItem'];
 
+export interface ChatSessionsPage {
+  items: ChatListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const CHAT_SESSION_PAGE_SIZE = 500;
+
 export class ChatDeleteError extends Error {
   readonly code: string;
 
@@ -252,24 +261,45 @@ export const useChatWorkspace = (chatId: string | null) =>
     staleTime: 5 * 60 * 1000,
   });
 
+export async function fetchAllChatSessions(
+  scopeId: string,
+  surface: 'chat' | 'browser' = 'chat',
+): Promise<ChatSessionsPage> {
+  const base = getApiBase();
+  const items: ChatListItem[] = [];
+  let total: number;
+  let offset = 0;
+
+  do {
+    const params = new URLSearchParams({
+      surface,
+      limit: String(CHAT_SESSION_PAGE_SIZE),
+      offset: String(offset),
+    });
+    const res = await fetch(
+      `${base}/api/v1/chat-scopes/${encodeURIComponent(scopeId)}/chats?${params.toString()}`,
+      { headers: authHeaders() },
+    );
+    if (res.status === 401) {
+      useAuthStore.getState().handle401();
+      throw new Error('auth');
+    }
+    if (!res.ok) throw new Error(`chat sessions failed: ${res.status}`);
+    const page = await res.json() as ChatSessionsPage;
+    items.push(...page.items);
+    total = page.total;
+    if (page.items.length === 0) break;
+    offset += page.items.length;
+  } while (items.length < total);
+
+  return { items, total, limit: items.length, offset: 0 };
+}
+
 export const useChatSessions = (scopeId: string | null, surface: 'chat' | 'browser' = 'chat') =>
   useQuery({
     queryKey: ['chats', scopeId, surface],
     enabled: !!scopeId,
-    queryFn: async () => {
-      const base = getApiBase();
-      const params = new URLSearchParams({ surface });
-      const res = await fetch(
-        `${base}/api/v1/chat-scopes/${encodeURIComponent(scopeId!)}/chats?${params.toString()}`,
-        { headers: authHeaders() },
-      );
-      if (res.status === 401) {
-        useAuthStore.getState().handle401();
-        throw new Error('auth');
-      }
-      if (!res.ok) throw new Error(`chat sessions failed: ${res.status}`);
-      return await res.json();
-    },
+    queryFn: () => fetchAllChatSessions(scopeId!, surface),
   });
 
 export async function deleteChatSession(

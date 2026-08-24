@@ -11,7 +11,7 @@ import json
 import posixpath
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Literal
 
@@ -34,6 +34,7 @@ from vibecanvas_api.routes import deployments as deployment_routes
 from vibecanvas_api.routes import tasks as task_routes
 from vibecanvas_api.storage.db import session_scope
 from vibecanvas_api.storage.repo_kb import KbRepo
+from vibecanvas_api.storage.repo_tasks import TasksRepo
 from vibecanvas_api.services.knowledge_packages import (
     PackageFile,
     enqueue_package_indexing,
@@ -103,6 +104,91 @@ async def _route_call(awaitable):
         return await awaitable
     except HTTPException as exc:
         raise RuntimeError(str(exc.detail)) from exc
+
+
+def _diagnostics_directory(
+    value: str,
+    *,
+    resource_type: str,
+    resource_id: str,
+) -> str:
+    """Resolve a writable, versioned sandbox directory without a fixed path."""
+    candidate = str(value or "").strip().rstrip("/")
+    if not candidate:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        candidate = (
+            f"/data/diagnostics/{resource_type}-{resource_id}-{timestamp}"
+        )
+    if not candidate.startswith("/"):
+        raise ValueError("output_directory must be an absolute sandbox path")
+    normalized = posixpath.normpath(candidate)
+    if normalized != candidate or normalized in {"/data", "/memory", "/logs"}:
+        raise ValueError("output_directory must name a dedicated directory")
+    if not any(
+        normalized.startswith(f"{root}/")
+        for root in ("/data", "/memory", "/logs")
+    ):
+        raise ValueError(
+            "output_directory must be under a writable /data, /memory, or /logs path"
+        )
+    return normalized
+
+
+def _diagnostic_window(
+    from_time: datetime | None,
+    to_time: datetime | None,
+) -> tuple[datetime, datetime]:
+    end = to_time or datetime.now(timezone.utc)
+    start = from_time or (end - timedelta(days=7))
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("from_time and to_time must include a timezone offset")
+    if start > end:
+        raise ValueError("from_time must be before or equal to to_time")
+    if end - start > timedelta(days=90):
+        raise ValueError("diagnostic time range cannot exceed 90 days")
+    return start, end
+
+
+async def _write_diagnostic_files(
+    runtime: ToolRuntime,
+    *,
+    directory: str,
+    files: dict[str, Any],
+) -> dict[str, str]:
+    sandbox = await runtime.context.sandbox_session()
+    paths: dict[str, str] = {}
+    for name, value in files.items():
+        path = posixpath.join(directory, name)
+        if name.endswith(".jsonl"):
+            rows = value if isinstance(value, list) else []
+            payload = b"".join(
+                (
+                    json.dumps(
+                        jsonable_encoder(row),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                for row in rows
+            )
+        else:
+            payload = (
+                json.dumps(
+                    jsonable_encoder(value),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            ).encode("utf-8")
+        written = await sandbox.write_bytes(path, payload)
+        if not written.get("ok"):
+            raise RuntimeError(
+                f"could not write diagnostic file {path!r}: "
+                f"{written.get('error') or 'unknown error'}"
+            )
+        paths[name] = path
+    return paths
 
 
 def _knowledge_destination(value: str, fallback: str) -> str:
@@ -400,6 +486,141 @@ async def task_get(task_id: str, *, runtime: ToolRuntime) -> str:
 
 
 @tool(response_format="content_and_artifact")
+async def task_collect_diagnostics(
+    task_id: str,
+    from_time: datetime | None = None,
+    to_time: datetime | None = None,
+    event_types: list[Literal["state", "progress", "log", "result", "terminal"]]
+    | None = None,
+    event_limit: int = 100,
+    before_seq: int | None = None,
+    execution_limit: int = 50,
+    execution_offset: int = 0,
+    output_directory: str = "",
+    *,
+    runtime: ToolRuntime,
+) -> str:
+    """Export an authorized Task diagnostic package into sandbox files.
+
+    The default window is the previous seven days. ``summary.json`` contains
+    exact event counts and the current Task state, ``events.jsonl`` contains a
+    newest-first searchable event page, and scheduled Tasks also include
+    ``executions.jsonl`` plus exact execution status statistics. Use
+    ``next_event_cursor`` or ``next_execution_offset`` to collect older pages
+    into another directory when the first package is not sufficient.
+    """
+    try:
+        parsed_id = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise ValueError("task_id must be a UUID returned by task_list") from exc
+    if not 1 <= event_limit <= 200:
+        raise ValueError("event_limit must be between 1 and 200")
+    if before_seq is not None and before_seq < 1:
+        raise ValueError("before_seq must be positive")
+    if not 1 <= execution_limit <= 100:
+        raise ValueError("execution_limit must be between 1 and 100")
+    if execution_offset < 0:
+        raise ValueError("execution_offset must be non-negative")
+    start, end = _diagnostic_window(from_time, to_time)
+    directory = _diagnostics_directory(
+        output_directory,
+        resource_type="task",
+        resource_id=task_id,
+    )
+    context = runtime.context
+    request = _request(runtime)
+    auth = _auth(runtime)
+    async with session_scope(tenant_id=str(context.tenant_id)) as session:
+        service = _service(runtime, session)
+        task = await _route_call(task_routes.get_task(
+            parsed_id,
+            request=request,
+            ctx=auth,
+            session=session,
+            service=service,
+        ))
+        events_page = await _route_call(task_routes.list_task_events(
+            parsed_id,
+            request=request,
+            after_seq=None,
+            before_seq=before_seq,
+            event_type=list(event_types or []),
+            limit=event_limit,
+            from_=start,
+            to=end,
+            order="desc",
+            ctx=auth,
+            session=session,
+            service=service,
+        ))
+        repo = TasksRepo(session)
+        event_counts = await repo.event_counts_for_task(
+            task_id=parsed_id,
+            from_=start,
+            to=end,
+        )
+        schedule = await repo.get_schedule_by_task(parsed_id)
+        executions: list[dict[str, Any]] = []
+        execution_total = 0
+        execution_statistics = None
+        schedule_details = None
+        if schedule is not None:
+            execution_rows, execution_total = await repo.list_scheduled_executions(
+                schedule_id=schedule.id,
+                limit=execution_limit,
+                offset=execution_offset,
+            )
+            executions = [task_routes.execution_to_out(row) for row in execution_rows]
+            execution_statistics = await repo.scheduled_execution_summary(
+                schedule_id=schedule.id,
+                from_=start,
+                to=end,
+            )
+            schedule_details = task_routes.schedule_to_out(schedule)
+
+    next_execution_offset = (
+        execution_offset + len(executions)
+        if execution_offset + len(executions) < execution_total
+        else None
+    )
+    summary = {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "window": {"from": start.isoformat(), "to": end.isoformat()},
+        "task": task,
+        "schedule": schedule_details,
+        "statistics": {
+            "event_counts": event_counts,
+            "scheduled_executions": execution_statistics,
+        },
+        "pagination": {
+            "next_event_cursor": events_page.get("next_cursor"),
+            "next_execution_offset": next_execution_offset,
+        },
+    }
+    files: dict[str, Any] = {
+        "summary.json": summary,
+        "events.jsonl": events_page.get("items") or [],
+    }
+    if schedule is not None:
+        files["executions.jsonl"] = executions
+    paths = await _write_diagnostic_files(
+        runtime,
+        directory=directory,
+        files=files,
+    )
+    return _tool_result("task_collect_diagnostics", {
+        "task_id": task_id,
+        "output_directory": directory,
+        "files": paths,
+        "statistics": summary["statistics"],
+        "event_count_in_page": len(events_page.get("items") or []),
+        "execution_count_in_page": len(executions),
+        **summary["pagination"],
+    })
+
+
+@tool(response_format="content_and_artifact")
 async def task_create_scheduled_run(
     name: str,
     workflow_id: str,
@@ -635,6 +856,113 @@ async def deployment_get(deployment_id: str, *, runtime: ToolRuntime) -> str:
 
 
 @tool(response_format="content_and_artifact")
+async def deployment_collect_diagnostics(
+    deployment_id: str,
+    from_time: datetime | None = None,
+    to_time: datetime | None = None,
+    bucket: Literal["hour", "day"] = "hour",
+    statuses: list[str] | None = None,
+    invocation_limit: int = 100,
+    cursor: str | None = None,
+    output_directory: str = "",
+    *,
+    runtime: ToolRuntime,
+) -> str:
+    """Export deployment metrics and invocation logs as searchable files.
+
+    The default window is the previous seven days. The package contains
+    ``summary.json``, exact bucketed ``metrics.json``, and a newest-first page
+    of ``invocations.jsonl``. Reuse ``next_cursor`` in another call when the
+    first page does not contain the incident being investigated.
+    """
+    try:
+        parsed_id = uuid.UUID(deployment_id)
+    except ValueError as exc:
+        raise ValueError(
+            "deployment_id must be a UUID returned by deployment_list"
+        ) from exc
+    if not 1 <= invocation_limit <= 200:
+        raise ValueError("invocation_limit must be between 1 and 200")
+    start, end = _diagnostic_window(from_time, to_time)
+    directory = _diagnostics_directory(
+        output_directory,
+        resource_type="deployment",
+        resource_id=deployment_id,
+    )
+    context = runtime.context
+    request = _request(runtime)
+    auth = _auth(runtime)
+    async with session_scope(tenant_id=str(context.tenant_id)) as session:
+        service = _service(runtime, session)
+        deployment = await _route_call(deployment_routes.get_deployment(
+            parsed_id,
+            request=request,
+            ctx=auth,
+            session=session,
+            service=service,
+        ))
+        metrics = await _route_call(deployment_routes.metrics(
+            parsed_id,
+            request=request,
+            from_=start,
+            to=end,
+            bucket=bucket,
+            ctx=auth,
+            session=session,
+            service=service,
+        ))
+        history = await _route_call(deployment_routes.history(
+            parsed_id,
+            request=request,
+            limit=invocation_limit,
+            cursor=cursor,
+            status_filter=list(statuses or []),
+            from_=start,
+            to=end,
+            order="desc",
+            ctx=auth,
+            session=session,
+            service=service,
+        ))
+
+    series = metrics.get("series") or []
+    total_calls = sum(int(item.get("calls") or 0) for item in series)
+    total_errors = sum(int(item.get("errors") or 0) for item in series)
+    statistics = {
+        "calls": total_calls,
+        "errors": total_errors,
+        "error_rate": (total_errors / total_calls if total_calls else 0.0),
+        "bucket": bucket,
+        "bucket_count": len(series),
+    }
+    summary = {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "window": {"from": start.isoformat(), "to": end.isoformat()},
+        "deployment": deployment,
+        "statistics": statistics,
+        "pagination": {"next_cursor": history.get("next_cursor")},
+    }
+    paths = await _write_diagnostic_files(
+        runtime,
+        directory=directory,
+        files={
+            "summary.json": summary,
+            "metrics.json": metrics,
+            "invocations.jsonl": history.get("items") or [],
+        },
+    )
+    return _tool_result("deployment_collect_diagnostics", {
+        "deployment_id": deployment_id,
+        "output_directory": directory,
+        "files": paths,
+        "statistics": statistics,
+        "invocation_count_in_page": len(history.get("items") or []),
+        "next_cursor": history.get("next_cursor"),
+    })
+
+
+@tool(response_format="content_and_artifact")
 async def deployment_create(
     workflow_id: str,
     name: str,
@@ -755,6 +1083,7 @@ async def deployment_delete(
 TASK_MCP_TOOLS = [
     task_list,
     task_get,
+    task_collect_diagnostics,
     task_create_scheduled_run,
     task_update_scheduled_run,
     task_delete_scheduled_run,
@@ -765,6 +1094,7 @@ TASK_MCP_TOOLS = [
 DEPLOYMENT_MCP_TOOLS = [
     deployment_list,
     deployment_get,
+    deployment_collect_diagnostics,
     deployment_create,
     deployment_update,
     deployment_delete,

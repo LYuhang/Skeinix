@@ -386,6 +386,50 @@ async def test_delete_browser_chat_rejects_while_browser_session_is_active(
 
 
 @pytest.mark.asyncio
+async def test_delete_chat_rejects_while_agent_turn_is_active(
+    client, app_engine,
+):
+    """Deleting a Chat must not revoke a running Turn's capabilities."""
+    tok = await _register(client)
+    headers = _hdr(tok)
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    scope_id = (
+        await client.get("/api/v1/chats/bootstrap", headers=headers)
+    ).json()["carrier_scope_id"]
+    chat_id = "c_active_turn_delete"
+
+    await _seed_encrypted_chat(
+        me,
+        scope_id=scope_id,
+        chat_id=chat_id,
+        name="Running chat",
+        surface="chat",
+    )
+    async with session_scope(tenant_id=me["tenant_id"]) as session:
+        await AgentRunsRepo(session).create(
+            run_id="t_active_delete_guard",
+            tenant_id=me["tenant_id"],
+            chat_id=chat_id,
+            creator_user_id=me["user_id"],
+            client_request_id="req-active-delete-guard",
+            input_snapshot={"message": "still running"},
+        )
+
+    response = await client.delete(
+        f"/api/v1/chat-scopes/{scope_id}/chats/{chat_id}",
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["error_code"] == "chat_turn_active"
+
+    visible = await client.get(
+        f"/api/v1/chat-scopes/{scope_id}/chats/{chat_id}/messages",
+        headers=headers,
+    )
+    assert visible.status_code == 200, visible.text
+
+
+@pytest.mark.asyncio
 async def test_browser_release_is_fenced_by_session_generation_and_event_sequence(
     client, app_engine,
 ):
@@ -753,8 +797,9 @@ async def test_existing_chat_workflow_command_commits_metadata_before_stream(
     assert [item.name for item in dispatched_turns[2].instructions] == ["workflow"]
     assert dispatched_turns[2].instructions[0].activated_this_turn is False
 
-    # The Runtime remains fixed for the Chat, while the user may select a
-    # different compatible API/model and reasoning effort for each idle Turn.
+    # The first accepted Turn fixes the exact account/API connection. A stale
+    # or malicious composer may not move this Chat to another credential; use
+    # a new Chat for that connection instead.
     credential_ids: list[str] = []
     for label, model_name in (("Primary API", "gpt-audit-a"), ("Backup API", "gpt-audit-b")):
         created_credential = await client.post(
@@ -773,26 +818,21 @@ async def test_existing_chat_workflow_command_commits_metadata_before_stream(
         assert created_credential.status_code == 201, created_credential.text
         credential_ids.append(created_credential.json()["id"])
 
-    for index, (credential_id, effort) in enumerate(
-        zip(credential_ids, ("low", "high"), strict=True),
-        start=1,
-    ):
-        selected_model_id = f"langchain:credential:{credential_id}"
-        switched = await client.post(
-            f"/api/v1/chat-scopes/{wf_id}/chats/c_build/messages",
-            json={
-                "role": "user",
-                "content": f"model switch {index}",
-                "agent_settings": {
-                    "model_id": selected_model_id,
-                    "reasoning_effort": effort,
-                },
+    switched = await client.post(
+        f"/api/v1/chat-scopes/{wf_id}/chats/c_build/messages",
+        json={
+            "role": "user",
+            "content": "cross-connection switch",
+            "agent_settings": {
+                "model_id": f"langchain:credential:{credential_ids[0]}",
+                "reasoning_effort": "low",
             },
-            headers=headers,
-        )
-        assert switched.status_code == 200, switched.text
-        assert dispatched_turns[2 + index].reasoning_effort == effort
-        assert dispatched_turns[2 + index].model["id"] == f"gpt-audit-{'ab'[index - 1]}"
+        },
+        headers=headers,
+    )
+    assert switched.status_code == 409, switched.text
+    assert switched.json()["detail"]["code"] == "runtime_connection_locked"
+    assert len(dispatched_turns) == 3
 
     # Capability headers are private turn-transport data. Durable product Run
     # snapshots keep runtime/model choices, but never bearer tokens or MCP
@@ -820,32 +860,14 @@ async def test_existing_chat_workflow_command_commits_metadata_before_stream(
                 )
             )
         ).one()
-    assert len(snapshots) == 5
+    assert len(snapshots) == 3
     assert all("mcp_servers" not in snapshot for snapshot in snapshots)
     assert all("Authorization" not in str(snapshot) for snapshot in snapshots)
-    assert snapshots[-2] | {
-        "runtime_type": "langchain",
-        "model_id": f"langchain:credential:{credential_ids[0]}",
-        "provider_model_id": "gpt-audit-a",
-        "model_provider": "openai",
-        "api_source": "manual",
-        "api_protocol": "langchain_provider_adapter",
-        "reasoning_effort": "low",
-    } == snapshots[-2]
-    assert snapshots[-1] | {
-        "runtime_type": "langchain",
-        "model_id": f"langchain:credential:{credential_ids[1]}",
-        "provider_model_id": "gpt-audit-b",
-        "model_provider": "openai",
-        "api_source": "manual",
-        "api_protocol": "langchain_provider_adapter",
-        "reasoning_effort": "high",
-    } == snapshots[-1]
-    assert chat_binding.runtime_model_id == f"langchain:credential:{credential_ids[1]}"
-    assert chat_binding.runtime_connection_id == (
-        f"langchain:credential:{credential_ids[1]}"
-    )
-    assert chat_binding.runtime_agent_settings["reasoning_effort"] == "high"
+    assert chat_binding.runtime_model_id not in {
+        f"langchain:credential:{credential_id}"
+        for credential_id in credential_ids
+    }
+    assert chat_binding.runtime_connection_id == "langchain:managed"
 
     # A real host-side Platform MCP request can rebuild the context while the
     # exact Turn is active, but the same already-issued descriptor is rejected

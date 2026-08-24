@@ -20,13 +20,18 @@ from vibecanvas_api.services.platform_mcp.authorization import (
 DEFAULT_WORKFLOW_PATH = "/data/workflow.json"
 
 
-def _workflow_id(ctx) -> str:
-    workflow_id = str(getattr(ctx, "current_workflow_id", "") or "").strip()
+def _workflow_id(ctx, explicit_workflow_id: str | None = None) -> str:
+    workflow_id = str(
+        explicit_workflow_id
+        or getattr(ctx, "current_workflow_id", "")
+        or ""
+    ).strip()
     if not workflow_id:
         raise ToolError(
             "no_workflow",
-            "No workflow is selected for this chat. Use list_workflows, then "
-            "activate /workflow to select or create one.",
+            "No workflow was provided or selected for this chat. Pass an exact "
+            "workflow_id returned by list_workflows, or activate /workflow to "
+            "select or create one.",
         )
     return workflow_id
 
@@ -109,9 +114,11 @@ def _render_get_workflow(raw: dict, ctx) -> Rendered:
 async def _do_get_workflow(
     runtime: ToolRuntime,
     workflow_path: str = DEFAULT_WORKFLOW_PATH,
+    *,
+    workflow_id: str | None = None,
 ) -> dict:
     ctx = runtime.context
-    workflow_id = _workflow_id(ctx)
+    workflow_id = _workflow_id(ctx, workflow_id)
     snapshot = await load_authorized_workflow(
         ctx,
         workflow_id,
@@ -161,12 +168,17 @@ async def _do_get_workflow(
 
 @tool(response_format="content_and_artifact")
 async def get_workflow(
+    workflow_id: str | None = None,
     workflow_path: str = DEFAULT_WORKFLOW_PATH,
     *,
     runtime: ToolRuntime,
 ) -> str:
-    """Export the current workflow as ordinary JSON at a sandbox data path."""
-    return await _do_get_workflow(runtime, workflow_path)
+    """Export an exact or currently selected workflow as sandbox JSON."""
+    return await _do_get_workflow(
+        runtime,
+        workflow_path,
+        workflow_id=workflow_id,
+    )
 
 
 WORKFLOW_MCP_TOOLS = [list_workflows, get_workflow]

@@ -97,8 +97,9 @@ grouped under [`routes/`](../api/src/vibecanvas_api/routes/).
 ### Agent Runtime
 
 A Chat selects either the LangChain or Codex runtime when it first starts. The
-Runtime remains fixed for that Chat, while the user may switch a compatible API
-source, model, and reasoning effort between idle turns. The API sends both
+Runtime and exact account or API connection remain fixed for that Chat, while
+the user may switch the model and reasoning effort within that connection
+between idle turns. The API sends both
 runtimes the same internal request format, and each adapter translates that
 request into the format expected by its SDK. SDK-specific state and event
 formats are therefore not exposed to the rest of the application. The common
@@ -117,10 +118,16 @@ For OpenRouter, the broker keeps Codex on the Responses API while translating
 newer Codex namespace and hosted-tool descriptors into OpenRouter's documented
 OpenResponses vocabulary. It restores function-call identities on the return
 path, so the Runtime and sandbox see the same tool contract regardless of the
-provider transport.
-The Chat row stores the latest accepted selection for Resume; each Agent Run
-stores an immutable snapshot of the Runtime, connection, provider model, source,
-protocol, and reasoning effort used by that turn.
+provider transport. Hosted Web Search remains capability-driven: the broker
+enables it only when OpenRouter reports `web_search_options` for the selected
+model, while ordinary sandbox and MCP tools remain available independently.
+The first accepted turn fixes the Chat row's exact non-secret connection
+identity. This prevents provider-native history and credentials from crossing
+accounts, while allowing later turns to select another model or reasoning level
+within the same connection. The Chat row stores the latest accepted selection
+for Resume; each Agent Run stores an immutable snapshot of the Runtime,
+connection, provider model, source, protocol, and reasoning effort used by that
+turn.
 
 This common interface is defined in the
 [runtime protocol](../api/src/vibecanvas_api/services/agent_runtime/protocol.py).
@@ -245,6 +252,13 @@ and egress controls to each upstream request. Credential-free `stdio` servers,
 including Diagram, Document, and the pinned Playwright MCP, run inside the Chat
 sandbox.
 
+Document and Diagram commands also enforce a small deterministic completion
+boundary. The Agent must validate the exact current file revision (and inspect
+rendered feedback for visual office formats); once that evidence is current,
+the sandbox Hub publishes the same revision to Preview. A later file mutation
+invalidates the earlier evidence, so a stale review or Preview cannot approve a
+newer file silently.
+
 The boundary is implemented by the [secret-free Runtime contracts](../api/src/vibecanvas_api/services/agent_runtime/mcp_runtime_protocol.py),
 [Host authority resolver](../api/src/vibecanvas_api/services/agent_runtime/mcp_host_resolution.py),
 [sandbox Hub](../api/src/vibecanvas_api/services/agent_runtime/mcp_hub.py),
@@ -309,6 +323,16 @@ A Deployment can track the current Workflow version or pin an explicit major
 and subversion. The invocation endpoint authenticates the caller, resolves the
 configured version, and submits asynchronous work to Celery. Workflow code is
 still executed through the sandbox service rather than inside the worker.
+
+The `/task` and `/deployment` Platform MCPs expose the same observability data
+through file-oriented diagnostic exports. A Task export contains the current
+resource state, exact event counts, searchable JSONL events, and—when
+applicable—scheduled execution history. A Deployment export contains its
+current configuration, bucketed call/error/latency metrics, and cursor-paginated
+invocation logs. The Agent can inspect these ordinary sandbox files with its
+normal search and scripting tools without placing a large log stream in model
+context. Export calls remain read-only and use the existing `INSPECT_RUNS`
+authorization boundary.
 
 See the [Task API](../api/src/vibecanvas_api/routes/tasks.py),
 [Deployment API](../api/src/vibecanvas_api/routes/deployments.py),
@@ -418,6 +442,13 @@ and temporary credentials for the current turn are therefore excluded from the
 checkpoint. When the session resumes, these connections and credentials are
 created again. If snapshot mode is disabled, an idle session is released
 directly instead of being hibernated.
+
+An explicit release request is a quiescent boundary: it does not return until
+the old Runtime process has stopped and the volume release has completed. This
+prevents a new turn from reacquiring the same Chat scope while stale cleanup is
+still able to remove its restored Runtime state. Idle eviction may run in the
+background because it does not promise an immediate same-scope restart to the
+caller.
 
 Reusable baseline snapshots and Chat-specific hibernation snapshots are stored
 separately and cannot be used interchangeably. The lifecycle states and valid

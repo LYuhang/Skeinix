@@ -1394,7 +1394,9 @@ function StatusLine({ call }: { call: MergedToolCall }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
       <CheckCircle2 className="h-3 w-3 text-state-success" />
-      {t('tool.meta.render_interactive', 'Interactive view')}
+      {call.name === 'render_url_preview'
+        ? t('tool.meta.render_url_preview', 'Web preview')
+        : t('tool.meta.render_interactive', 'File preview')}
     </span>
   );
 }
@@ -1566,7 +1568,7 @@ export function InteractiveArtifactBlock({
     <div
       className="flex items-start justify-start gap-3"
       data-message-role="assistant"
-      data-tool-name="render_interactive"
+      data-tool-name={call.name}
       data-role="interactive-artifact"
       data-preview-render-state={isFilePreviewSummary ? 'summary' : undefined}
       data-file-preview-type={isFilePreviewSummary ? fileSummaryAppearance.type : undefined}

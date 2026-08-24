@@ -249,9 +249,9 @@ class Chat(Base):
     # mutable only between Turns and seed Resume; each AgentRun retains the
     # immutable model/source/effort snapshot used by that historical Turn.
     runtime_agent_settings: Mapped[dict | None] = mapped_column(JSONB)
-    # Current Runtime connection variant: ``langchain``, ``codex:api``, or
-    # ``codex:account``. Changing it keeps the Chat history/workspace while the
-    # adapter safely reconfigures or forks its provider-native thread.
+    # Exact non-secret Runtime connection identity. It is fixed by the first
+    # accepted Turn so provider-native history, credentials, and billing never
+    # cross accounts; models and reasoning remain mutable within the connection.
     runtime_connection_id: Mapped[str | None] = mapped_column(Text)
     # Fixed when a LangChain Chat binds on its first Turn.  These values are
     # deliberately immutable afterwards: regenerating a wall clock value for

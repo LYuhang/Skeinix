@@ -17,20 +17,28 @@ from vibecanvas_api.services.agent_runtime.codex import (
     _CODEX_REJECTED_SERVER_REQUESTS,
     _CODEX_SUPPRESSED_ITEM_KINDS,
     _CODEX_SUPPRESSED_NOTIFICATIONS,
+    _ToolCompletionEvidence,
     _approval_policy,
     _approval_response,
+    _broker_model_catalog,
     _broker_model_config,
+    codex_app_server_startup_key,
     _codex_env,
+    create_codex_app_server,
     _file_change_progress,
     _interaction_definition,
     _interaction_response,
     _interactive_artifact_from_item,
+    _read_history_coverage,
     _McpItemCorrelator,
+    _command_completion_reminder,
+    _missing_command_completion_tools,
     _normalize_codex_plan,
     _RuntimeControlRouter,
     _safe_codex_notice,
     _tool_completion_status,
     _tool_projection,
+    _write_history_coverage,
     run_codex_turn as _run_codex_turn,
 )
 from vibecanvas_api.services.agent_runtime.codex_app_server import (
@@ -51,6 +59,16 @@ _BROKER_MODEL = {
     "id": "gpt-codex-current",
     "base_url": "http://platform.test/api/internal/runtime-model/v1",
     "api_key": "turn-capability",
+    "label": "Broker model",
+    "description": "Dynamic provider model",
+    "context_length": 1_000_000,
+    "input_modalities": ["text"],
+    "supports_tools": True,
+    "supported_reasoning_efforts": [
+        {"id": "low", "label": "low", "description": "Fast"},
+        {"id": "high", "label": "high", "description": "Deep"},
+    ],
+    "default_reasoning_effort": "high",
 }
 _LOCKED_CODEX_VERSION = "codex-cli 0.147.0"
 _LOCKED_CODEX_SCHEMA_SHA256 = (
@@ -62,6 +80,210 @@ _RESIDENT_TEST_HUBS: dict[
 ] = {}
 
 
+def test_command_completion_gate_is_format_aware(tmp_path):
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "create a presentation"},
+        model=_BROKER_MODEL,
+        command_context={
+            "active_modes": ["document"],
+            "activated_this_turn": ["document"],
+        },
+        instructions=[{
+            "instruction_id": "command:document:v1",
+            "kind": "command_context",
+            "scope": "chat",
+            "name": "document",
+            "version": 1,
+            "content": "Create and review the document.",
+            "activated_this_turn": True,
+        }],
+    )
+
+    deck = tmp_path / "deck.pptx"
+    deck.write_bytes(b"presentation-v1")
+    deck_hash = hashlib.sha256(deck.read_bytes()).hexdigest()
+    review = _ToolCompletionEvidence(
+        tool_input={"path": str(deck)},
+        path=str(deck),
+        sha256=deck_hash,
+    )
+    assert _missing_command_completion_tools(request, {}) == (
+        "review_document",
+        "render_interactive",
+    )
+    assert _missing_command_completion_tools(
+        request,
+        {"review_document": [review]},
+    ) == ("render_document_feedback", "render_interactive")
+    brief = tmp_path / "brief.md"
+    brief.write_text("Ready", encoding="utf-8")
+    brief_hash = hashlib.sha256(brief.read_bytes()).hexdigest()
+    brief_evidence = _ToolCompletionEvidence(
+        tool_input={"path": str(brief)},
+        path=str(brief),
+        sha256=brief_hash,
+    )
+    assert _missing_command_completion_tools(
+        request,
+        {
+            "review_document": [brief_evidence],
+            "render_interactive": [brief_evidence],
+        },
+    ) == ()
+
+
+def test_command_completion_gate_invalidates_stale_file_evidence(tmp_path):
+    path = tmp_path / "report.xlsx"
+    path.write_bytes(b"accepted-v1")
+    accepted_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    item = _ToolCompletionEvidence(
+        tool_input={"path": str(path)},
+        path=str(path),
+        sha256=accepted_hash,
+    )
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "create a workbook"},
+        model=_BROKER_MODEL,
+        command_context={
+            "active_modes": ["document"],
+            "activated_this_turn": ["document"],
+        },
+        instructions=[{
+            "instruction_id": "command:document:v1",
+            "kind": "command_context",
+            "scope": "chat",
+            "name": "document",
+            "version": 1,
+            "content": "Create and review the document.",
+            "activated_this_turn": True,
+        }],
+    )
+    evidence = {
+        "review_document": [item],
+        "render_document_feedback": [item],
+        "render_interactive": [item],
+    }
+    assert _missing_command_completion_tools(request, evidence) == ()
+
+    path.write_bytes(b"modified-after-preview")
+
+    assert _missing_command_completion_tools(request, evidence) == (
+        "review_document",
+        "render_document_feedback",
+        "render_interactive",
+    )
+
+
+def test_command_completion_gate_requires_validated_workflow_publication():
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "create a workflow"},
+        model=_BROKER_MODEL,
+        command_context={
+            "active_modes": ["workflow"],
+            "activated_this_turn": ["workflow"],
+        },
+        instructions=[{
+            "instruction_id": "command:workflow:v1",
+            "kind": "command_context",
+            "scope": "chat",
+            "name": "workflow",
+            "version": 1,
+            "content": "Build, validate, and publish the workflow.",
+            "activated_this_turn": True,
+        }],
+    )
+    checked = _ToolCompletionEvidence(
+        tool_input={"workflow_path": "/data/workflow.json"},
+        path="/data/workflow.json",
+        sha256=None,
+    )
+    published = _ToolCompletionEvidence(
+        tool_input={"workflow_path": "/data/workflow.json"},
+        path="/data/workflow.json",
+        sha256=None,
+    )
+
+    assert _missing_command_completion_tools(request, {}) == (
+        "check_workflow",
+        "update_canvas",
+    )
+    assert _missing_command_completion_tools(
+        request,
+        {"check_workflow": [checked]},
+    ) == ("update_canvas",)
+    assert _missing_command_completion_tools(
+        request,
+        {"check_workflow": [checked], "update_canvas": [published]},
+    ) == ()
+
+    wrong_file = _ToolCompletionEvidence(
+        tool_input={"workflow_path": "/data/other.json"},
+        path="/data/other.json",
+        sha256=None,
+    )
+    assert _missing_command_completion_tools(
+        request,
+        {"check_workflow": [checked], "update_canvas": [wrong_file]},
+    ) == ("check_workflow",)
+
+    bypassed_validation = _ToolCompletionEvidence(
+        tool_input={
+            "workflow_path": "/data/workflow.json",
+            "require_valid": False,
+        },
+        path="/data/workflow.json",
+        sha256=None,
+    )
+    assert _missing_command_completion_tools(
+        request,
+        {
+            "check_workflow": [checked],
+            "update_canvas": [bypassed_validation],
+        },
+    ) == ("update_canvas",)
+
+
+def test_command_completion_reminder_identifies_reviewed_publication_path():
+    reminder = _command_completion_reminder(
+        ("render_interactive",),
+        {
+            "review_document": [
+                _ToolCompletionEvidence(
+                    tool_input={"path": "/data/final/report.xlsx"},
+                    path="/data/final/report.xlsx",
+                    sha256="digest",
+                )
+            ]
+        },
+    )
+
+    assert "path=\"/data/final/report.xlsx\"" in reminder
+    assert "do not merely describe the call" in reminder
+    assert "your very next action must be that `render_interactive` tool call" in reminder
+    assert "Do not inspect, edit, review, render feedback" in reminder
+
+
 @pytest.fixture(autouse=True)
 def _isolate_broker_capability_file(monkeypatch):
     monkeypatch.setattr(
@@ -71,6 +293,16 @@ def _isolate_broker_capability_file(monkeypatch):
     monkeypatch.setattr(
         "vibecanvas_api.services.agent_runtime.codex._remove_broker_capability",
         lambda: None,
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._install_broker_model_catalog",
+        lambda _request, _executable: (
+            "/tmp/vibecanvas-runtime/model-catalog-test.json"
+        ),
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._write_history_coverage",
+        lambda *_args, **_kwargs: None,
     )
 
 
@@ -359,6 +591,10 @@ def test_codex_model_provider_uses_volatile_command_auth_without_token_in_config
 
     assert capability == "turn-capability"
     assert capability not in repr(config)
+    assert config["model_catalog_json"].startswith(
+        "/tmp/vibecanvas-runtime/model-catalog-"
+    )
+    assert config["model_context_window"] == 1_000_000
     provider = config["model_providers"]["vibecanvas_runtime_model"]
     assert provider["base_url"].endswith("/api/internal/runtime-model/v1")
     assert provider["namespace_tools"] is False
@@ -368,6 +604,131 @@ def test_codex_model_provider_uses_volatile_command_auth_without_token_in_config
         "timeout_ms": 1_000,
         "refresh_interval_ms": 1,
     }
+
+
+def test_codex_openrouter_model_disables_unadvertised_hosted_search() -> None:
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model={
+            **_BROKER_MODEL,
+            "provider": "openrouter",
+            "api_source": "openrouter_oauth",
+            "supports_web_search": False,
+        },
+    )
+
+    _, config = _broker_model_config(request)
+
+    assert config["web_search"] == "disabled"
+
+
+def test_codex_openrouter_model_enables_advertised_hosted_search() -> None:
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model={
+            **_BROKER_MODEL,
+            "provider": "openrouter",
+            "api_source": "openrouter_oauth",
+            "supports_web_search": True,
+        },
+    )
+
+    _, config = _broker_model_config(request)
+
+    assert config["web_search"] == "live"
+
+
+def test_codex_dynamic_catalog_uses_provider_metadata_and_versioned_prompt(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._bundled_model_template",
+        lambda _executable: {
+            "base_instructions": "Version-matched Codex instructions",
+            "shell_type": "shell_command",
+            "truncation_policy": {"mode": "tokens", "limit": 10_000},
+            "context_window": 200_000,
+        },
+    )
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model={**_BROKER_MODEL, "id": "stealth/ox-alpha"},
+    )
+
+    catalog = _broker_model_catalog(request, "/opt/codex/bin/codex")
+
+    assert len(catalog["models"]) == 1
+    model = catalog["models"][0]
+    assert model["slug"] == "stealth/ox-alpha"
+    assert model["display_name"] == "Broker model"
+    assert model["context_window"] == 1_000_000
+    assert model["input_modalities"] == ["text"]
+    assert model["default_reasoning_level"] == "high"
+    assert [item["effort"] for item in model["supported_reasoning_levels"]] == [
+        "low",
+        "high",
+    ]
+    assert model["base_instructions"] == "Version-matched Codex instructions"
+    assert model["support_verbosity"] is False
+    assert _BROKER_MODEL["api_key"] not in json.dumps(catalog)
+
+
+def test_codex_app_server_loads_dynamic_catalog_at_process_start(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._codex_executable",
+        lambda: "/opt/codex/bin/codex",
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._codex_env",
+        lambda _runtime_root: {"CODEX_HOME": "/runtime/.codex"},
+    )
+    broker = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="turn",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "hello"},
+        model={**_BROKER_MODEL, "id": "stealth/ox-alpha"},
+    )
+    account = broker.model_copy(update={
+        "model": {
+            "id": "gpt-5.6-sol",
+            "connection_type": "chatgpt_account",
+        },
+    })
+
+    client = create_codex_app_server(broker)
+
+    assert client._config_overrides == (
+        f'model_catalog_json="{_broker_model_config(broker)[1]["model_catalog_json"]}"',
+    )
+    assert codex_app_server_startup_key(broker).startswith("broker:")
+    assert create_codex_app_server(account)._config_overrides == ()
+    assert codex_app_server_startup_key(account) == "chatgpt-account"
 
 
 def test_codex_extracts_interactive_artifact_from_mcp_structured_content() -> None:
@@ -796,6 +1157,21 @@ async def test_codex_resident_thread_suppresses_repeated_mcp_startup(monkeypatch
                 "method": "mcpServer/startupStatus/updated",
                 "params": {"name": "config", "status": "ready"},
             }
+            message_id = f"answer-{self.turn_number}"
+            yield {
+                "method": "item/started",
+                "params": {"item": {"id": message_id, "type": "agentMessage"}},
+            }
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": message_id,
+                        "type": "agentMessage",
+                        "text": "done",
+                    }
+                },
+            }
             yield {
                 "method": "turn/completed",
                 "params": {
@@ -868,6 +1244,383 @@ async def test_codex_resident_thread_suppresses_repeated_mcp_startup(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_codex_retries_one_empty_provider_completion(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+            self.turn_number = 0
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread", "turns": []}}
+            if method == "turn/start":
+                self.turn_number += 1
+                return {"turn": {"id": f"codex-turn-{self.turn_number}"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {"id": "codex-turn-1", "status": "completed"}
+                },
+            }
+            yield {
+                "method": "item/started",
+                "params": {"item": {"id": "answer-2", "type": "agentMessage"}},
+            }
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "answer-2",
+                        "type": "agentMessage",
+                        "text": "Recovered answer",
+                    }
+                },
+            }
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {"id": "codex-turn-2", "status": "completed"}
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    channel = _Channel()
+    await run_codex_turn(
+        channel,
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="platform-turn",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            message={"role": "user", "content": "hello"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+        resident_threads={},
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/start",
+        "turn/start",
+        "turn/start",
+    ]
+    assert any(
+        message.get("event", {}).get("payload", {}).get("payload", {}).get("code")
+        == "codex_empty_completion_retry"
+        for message in channel.sent
+    )
+    assert any(
+        message.get("event", {}).get("payload", {}).get("delta")
+        == "Recovered answer"
+        for message in channel.sent
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_publishes_reviewed_document_through_completion_hub(
+    monkeypatch,
+):
+    gateway_calls: list[tuple[str, dict]] = []
+
+    class FakeCallResult:
+        isError = False
+
+        def model_dump(self, **_kwargs):
+            return {
+                "structuredContent": {
+                    "schema_version": 1,
+                    "status": "success",
+                    "payload": {
+                        "kind": "interactive_artifact",
+                        "artifact": {
+                            "kind": "interactive_artifact",
+                            "schema_version": 1,
+                            "artifact_id": "ia_completion_preview",
+                            "title": "deck.pptx",
+                            "component_type": "file_preview",
+                            "props": {"path": "/data/deck.pptx"},
+                            "completion_mode": "render_only",
+                            "require_human_confirm": False,
+                        },
+                    },
+                    "meta": {"tool": "render_interactive"},
+                },
+            }
+
+    class FakeGateway:
+        def __init__(self, *_args):
+            self.url = "http://127.0.0.1:12345/"
+
+        async def activate(self, **_kwargs):
+            return [{
+                "name": "interactive",
+                "tools": [{"name": "render_interactive"}],
+            }]
+
+        async def call_tool(self, name, arguments):
+            gateway_calls.append((name, dict(arguments)))
+            return FakeCallResult()
+
+        def deactivate(self):
+            return None
+
+        async def close(self):
+            return None
+
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+            self.turn_number = 0
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread", "turns": []}}
+            if method == "turn/start":
+                self.turn_number += 1
+                return {"turn": {"id": f"codex-turn-{self.turn_number}"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "item/started",
+                "params": {"item": {"id": "answer-1", "type": "agentMessage"}},
+            }
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "answer-1",
+                        "type": "agentMessage",
+                        "text": "The presentation is ready.",
+                    }
+                },
+            }
+            for item_id, tool in (
+                ("review", "review_document"),
+                ("feedback", "render_document_feedback"),
+            ):
+                item = {
+                    "id": item_id,
+                    "type": "mcpToolCall",
+                    "tool": tool,
+                    "arguments": {"path": "/data/deck.pptx"},
+                }
+                yield {"method": "item/started", "params": {"item": item}}
+                yield {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            **item,
+                            "status": "completed",
+                            "result": {"ok": True},
+                        }
+                    },
+                }
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {"id": "codex-turn-1", "status": "completed"}
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._completion_file_hash",
+        lambda path: "stable" if path == "/data/deck.pptx" else None,
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.CodexMcpHubGateway",
+        FakeGateway,
+    )
+
+    client = FakeAppServer()
+    channel = _Channel()
+    request = RuntimeTurnRequest(
+        tenant_id="tenant",
+        user_id="user",
+        chat_id="chat",
+        turn_id="platform-turn",
+        runtime_type="codex",
+        runtime_session_id="runtime-session",
+        runtime_root="/runtime/.codex",
+        message={"role": "user", "content": "Create a presentation"},
+        model=_BROKER_MODEL,
+        command_context={
+            "active_modes": ["document"],
+            "activated_this_turn": ["document"],
+        },
+        instructions=[{
+            "instruction_id": "command:document:v1",
+            "kind": "command_context",
+            "scope": "chat",
+            "name": "document",
+            "version": 1,
+            "content": "Create and review the document.",
+            "activated_this_turn": True,
+        }],
+    )
+
+    await run_codex_turn(channel, request, client=client, close_client=False)
+
+    turn_starts = [
+        params for method, params in client.requests if method == "turn/start"
+    ]
+    assert len(turn_starts) == 1
+    assert gateway_calls == [
+        ("render_interactive", {"path": "/data/deck.pptx"}),
+    ]
+    events = [message["event"] for message in channel.sent if "event" in message]
+    preview = next(
+        event for event in events
+        if event["type"] == "tool.end"
+        and event["payload"]["name"] == "render_interactive"
+    )
+    assert preview["payload"]["status"] == "done"
+    assert preview["payload"]["artifact"]["payload"]["artifact"][
+        "artifact_id"
+    ] == "ia_completion_preview"
+    assert events[-1]["type"] == "runtime.completed"
+
+
+@pytest.mark.asyncio
+async def test_codex_reconciles_broker_turn_after_final_message_without_terminal(
+    monkeypatch,
+):
+    """A compatible provider must not leave a completed answer running forever."""
+
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+            self._never = asyncio.Event()
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread", "turns": []}}
+            if method == "turn/start":
+                return {"turn": {"id": "codex-turn"}}
+            if method == "thread/turns/list":
+                return {
+                    "data": [{
+                        "id": "codex-turn",
+                        "status": "inProgress",
+                        "items": [],
+                    }],
+                    "nextCursor": None,
+                }
+            if method == "turn/interrupt":
+                return {}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "item/started",
+                "params": {"item": {"id": "answer", "type": "agentMessage"}},
+            }
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "answer",
+                        "type": "agentMessage",
+                        "text": "The document is ready.",
+                    }
+                },
+            }
+            await self._never.wait()
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex."
+        "_BROKER_TERMINAL_RECONCILIATION_IDLE_S",
+        0.01,
+    )
+
+    client = FakeAppServer()
+    channel = _Channel()
+    await run_codex_turn(
+        channel,
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="platform-turn",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            message={"role": "user", "content": "Create the document"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+    )
+
+    assert [method for method, _params in client.requests][-2:] == [
+        "thread/turns/list",
+        "turn/interrupt",
+    ]
+    assert any(
+        message.get("event", {}).get("type") == "message.end"
+        for message in channel.sent
+    )
+    assert any(
+        message.get("event", {}).get("type") == "runtime.completed"
+        for message in channel.sent
+    )
+    assert channel.sent[-1] == {"type": MSG_RUNTIME_RESULT}
+
+
+@pytest.mark.asyncio
 async def test_codex_reuses_one_aggregate_hub_endpoint_across_turns(monkeypatch):
     class FakeAppServer:
         def __init__(self):
@@ -892,6 +1645,16 @@ async def test_codex_reuses_one_aggregate_hub_endpoint_across_turns(monkeypatch)
             raise AssertionError(method)
 
         async def messages(self):
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "agent-message",
+                        "type": "agentMessage",
+                        "text": "Completed response",
+                    }
+                },
+            }
             yield {
                 "method": "turn/completed",
                 "params": {
@@ -1032,6 +1795,16 @@ async def test_codex_forks_loaded_thread_when_turn_config_changes(monkeypatch):
 
         async def messages(self):
             yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "agent-message",
+                        "type": "agentMessage",
+                        "text": "Completed response",
+                    }
+                },
+            }
+            yield {
                 "method": "turn/completed",
                 "params": {"turn": {"id": "codex-turn", "status": "completed"}},
             }
@@ -1100,7 +1873,7 @@ async def test_codex_replaces_only_an_explicitly_missing_native_rollout(monkeypa
 
         async def request(self, method, params, **_kwargs):
             self.requests.append((method, params))
-            if method == "thread/resume":
+            if method == "thread/fork":
                 raise CodexAppServerError(
                     "codex_app_server_request_failed",
                     "no rollout found for thread id codex-thread-missing",
@@ -1115,6 +1888,16 @@ async def test_codex_replaces_only_an_explicitly_missing_native_rollout(monkeypa
             raise AssertionError(method)
 
         async def messages(self):
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "agent-message",
+                        "type": "agentMessage",
+                        "text": "Completed response",
+                    }
+                },
+            }
             yield {
                 "method": "turn/completed",
                 "params": {"turn": {"id": "codex-turn", "status": "completed"}},
@@ -1153,7 +1936,7 @@ async def test_codex_replaces_only_an_explicitly_missing_native_rollout(monkeypa
     )
 
     assert [method for method, _params in client.requests] == [
-        "thread/resume",
+        "thread/fork",
         "thread/start",
         "turn/start",
     ]
@@ -1168,6 +1951,288 @@ async def test_codex_replaces_only_an_explicitly_missing_native_rollout(monkeypa
             "previous_state_ref": "codex-thread-missing",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_rebuilds_partial_native_history_from_durable_transcript(
+    monkeypatch,
+):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/start":
+                return {"thread": {"id": "codex-thread-rebuilt"}}
+            if method == "turn/start":
+                text = params["input"][0]["text"]
+                assert "authoritative prior conversation" in text
+                assert "EARLY-DURABLE-MARKER" in text
+                assert "current request" in text
+                return {"turn": {"id": "codex-turn"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "agent-message",
+                        "type": "agentMessage",
+                        "text": "Completed response",
+                    }
+                },
+            }
+            yield {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "codex-turn", "status": "completed"}},
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._read_history_coverage",
+        lambda _root: {},
+    )
+    writes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._write_history_coverage",
+        lambda _root, *, thread_id, turn_id: writes.append((thread_id, turn_id)),
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    await run_codex_turn(
+        _Channel(),
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="platform-current-turn",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            runtime_state_ref="codex-thread-partial",
+            durable_history={
+                "last_turn_id": "platform-previous-turn",
+                "messages": [{
+                    "message_id": "m-early",
+                    "turn_id": "platform-previous-turn",
+                    "role": "user",
+                    "text": "EARLY-DURABLE-MARKER",
+                }],
+            },
+            message={"role": "user", "content": "current request"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+        resident_threads={"codex-thread-partial": "stale-config"},
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/start",
+        "turn/start",
+    ]
+    assert writes == [("codex-thread-rebuilt", "platform-current-turn")]
+
+
+def test_codex_history_coverage_file_is_atomic_and_bounded(tmp_path, monkeypatch):
+    coverage_path = tmp_path / "coverage.json"
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._history_coverage_path",
+        lambda _root: str(coverage_path),
+    )
+
+    _write_history_coverage(
+        "/runtime/.codex",
+        thread_id="native-thread-a",
+        turn_id="product-turn-a",
+    )
+    _write_history_coverage(
+        "/runtime/.codex",
+        thread_id="native-thread-b",
+        turn_id="product-turn-b",
+    )
+
+    assert _read_history_coverage("/runtime/.codex") == {
+        "native-thread-a": "product-turn-a",
+        "native-thread-b": "product-turn-b",
+    }
+    assert coverage_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_codex_matching_history_watermark_keeps_native_transcript(monkeypatch):
+    class FakeAppServer:
+        def __init__(self):
+            self.requests: list[tuple[str, dict]] = []
+
+        async def start(self):
+            return None
+
+        async def request(self, method, params, **_kwargs):
+            self.requests.append((method, params))
+            if method == "thread/fork":
+                return {"thread": {"id": "native-fork"}}
+            if method == "turn/start":
+                assert "durable-conversation-history" not in params["input"][0]["text"]
+                return {"turn": {"id": "native-turn"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "agent-message",
+                        "type": "agentMessage",
+                        "text": "Completed response",
+                    }
+                },
+            }
+            yield {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "native-turn", "status": "completed"}},
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._read_history_coverage",
+        lambda _root: {"native-old": "product-prior"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    client = FakeAppServer()
+    await run_codex_turn(
+        _Channel(),
+        RuntimeTurnRequest(
+            tenant_id="tenant",
+            user_id="user",
+            chat_id="chat",
+            turn_id="product-current",
+            runtime_type="codex",
+            runtime_session_id="runtime-session",
+            runtime_root="/runtime/.codex",
+            runtime_state_ref="native-old",
+            durable_history={
+                "last_turn_id": "product-prior",
+                "messages": [{
+                    "message_id": "message-prior",
+                    "turn_id": "product-prior",
+                    "role": "user",
+                    "text": "already native",
+                }],
+            },
+            message={"role": "user", "content": "continue"},
+            model=_BROKER_MODEL,
+        ),
+        client=client,
+        close_client=False,
+    )
+
+    assert [method for method, _params in client.requests] == [
+        "thread/fork",
+        "turn/start",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_failed_turn_does_not_advance_history_watermark(monkeypatch):
+    class FakeAppServer:
+        async def start(self):
+            return None
+
+        async def request(self, method, _params, **_kwargs):
+            if method == "thread/start":
+                return {"thread": {"id": "native-recovery"}}
+            if method == "turn/start":
+                return {"turn": {"id": "native-failed"}}
+            raise AssertionError(method)
+
+        async def messages(self):
+            yield {
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "id": "native-failed",
+                        "status": "failed",
+                        "error": {"message": "provider interrupted"},
+                    }
+                },
+            }
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._read_history_coverage",
+        lambda _root: {},
+    )
+    writes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex._write_history_coverage",
+        lambda _root, *, thread_id, turn_id: writes.append((thread_id, turn_id)),
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.path.isdir",
+        lambda path: path in {"/runtime", "/data"},
+    )
+    monkeypatch.setattr(
+        "vibecanvas_api.services.agent_runtime.codex.os.makedirs",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="provider interrupted"):
+        await run_codex_turn(
+            _Channel(),
+            RuntimeTurnRequest(
+                tenant_id="tenant",
+                user_id="user",
+                chat_id="chat",
+                turn_id="product-current",
+                runtime_type="codex",
+                runtime_session_id="runtime-session",
+                runtime_root="/runtime/.codex",
+                runtime_state_ref="native-partial",
+                durable_history={
+                    "last_turn_id": "product-prior",
+                    "messages": [{
+                        "message_id": "message-prior",
+                        "turn_id": "product-prior",
+                        "role": "user",
+                        "text": "recover me",
+                    }],
+                },
+                message={"role": "user", "content": "continue"},
+                model=_BROKER_MODEL,
+            ),
+            client=FakeAppServer(),
+            close_client=False,
+        )
+
+    assert writes == []
 
 
 class _ApprovalChannel:
@@ -1370,6 +2435,7 @@ async def test_codex_request_user_input_resumes_the_same_native_turn(monkeypatch
         "tool.end",
         "interaction.resolved",
         "projection",
+        "projection",
         "usage",
         "runtime.completed",
     ]
@@ -1382,7 +2448,7 @@ async def test_codex_request_user_input_resumes_the_same_native_turn(monkeypatch
         "codex_request_unknown"
     )
     assert "private" not in json.dumps(events[8])
-    assert events[9]["payload"] == {
+    assert events[10]["payload"] == {
         "model": "gpt-codex-current",
         "prompt_tokens": 120,
         "completion_tokens": 30,

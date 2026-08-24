@@ -1,9 +1,10 @@
-"""Platform MCP ``render_interactive`` — durable HTML and file previews."""
+"""Platform MCP ``render_interactive`` — durable local-file previews."""
 from __future__ import annotations
 
 import hashlib
 import logging
 import uuid
+from pathlib import PurePosixPath
 from typing import Any
 
 from langchain.tools import ToolRuntime
@@ -19,10 +20,7 @@ from vibecanvas_api.agents.tools.decorator import (
     _serialize,
     tool_error_boundary,
 )
-from vibecanvas_api.services.platform_mcp.interactive_tools.schema import (
-    ViewArgument,
-    validate_view,
-)
+from vibecanvas_api.services.platform_mcp.interactive_tools.schema import validate_view
 from vibecanvas_api.config import config
 
 logger = logging.getLogger(__name__)
@@ -71,105 +69,83 @@ async def _prepare_file_preview(*, runtime: ToolRuntime, path: str) -> None:
 @tool(response_format="content_and_artifact")
 @tool_error_boundary(tool="render_interactive")
 async def render_interactive(
-    title: str,
-    view: ViewArgument,
+    path: str,
+    title: str = "",
+    file_type: str = "auto",
+    description: str = "",
     require_human_confirm: bool = False,
     *,
     runtime: ToolRuntime,
 ) -> tuple[str, dict[str, Any]]:
-    """Show a durable rich-content card in the conversation.
+    """Publish an existing local file as a durable Preview card.
 
-    Use this instead of a long text response when a rich visual, interactive
-    control, or file preview communicates the result better. The public surface
-    intentionally has three view types:
+    Pass the absolute ``path`` returned by a file-producing tool. ``file_type``
+    defaults to ``auto`` so the browser selects the renderer from the file
+    extension and MIME metadata. Set it only for an extensionless or ambiguous
+    file. ``title`` is optional and defaults to the file name.
 
-    - ``html_preview`` for any custom UI. It accepts self-contained HTML with
-      inline JavaScript/CSS and local VFS/data/blob resources, and can render
-      images, tables, charts, Canvas/SVG, sliders, forms, and other dynamic
-      presentations in an isolated iframe. External code and network
-      subresources are blocked; save any required remote asset into VFS first.
-    - ``file_preview`` for any file that already exists in your local
-      environment. Supply the file path and optional description. ``file_type``
-      defaults to ``auto``; set it only when the file has no reliable extension
-      or MIME metadata. The Preview service interprets the hint and selects a
-      renderer.
-    - ``url_preview`` for an ordinary HTTP(S) page. The browser opens the URL
-      in an isolated interactive WebView without Skeinix authentication data.
-      There is no destination allowlist, but sites may refuse iframe embedding
-      through their own browser security headers.
+    Examples: ``path="/data/report.pdf"`` or
+    ``path="/data/diagrams/system.drawio", description="System diagram"``.
+    To preview a web address, use the separate ``render_url_preview`` tool. To
+    show generated HTML, save it as an ``.html`` file first and publish that
+    file here. Do not add a ``type`` field or a nested ``view`` object.
+    """
+    return await _render_view(
+        type="file_preview",
+        path=path,
+        title=title,
+        file_type=file_type,
+        description=description,
+        require_human_confirm=require_human_confirm,
+        runtime=runtime,
+    )
 
-    ``view`` is a strict object selected by ``view.type``. Valid examples:
 
-    - Display an image created earlier:
-      ``{"type":"html_preview","html":"<img src='/data/shot.png' alt='Screenshot'>"}``
-    - Render a dataset dynamically:
-      ``{"type":"html_preview","html":"<div id='grid'></div><script>for(let i=1;i<=8;i++){const img=document.createElement('img');img.src=`/data/dataset/images/${i}.png`;document.querySelector('#grid').append(img)}</script>"}``
-    - Collect and save user input with ordinary HTML and JavaScript. For
-      example, a user-triggered Save button can write structured data to an
-      Agent-selected path:
-      ``save.onclick=()=>fetch('/data/labels.json', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(labels)})``.
-      A standard named form with ``action="/data/labels.json"`` also saves its
-      current values as JSON when the user submits it.
-    - Preview an existing file:
-      ``{"type":"file_preview","path":"/data/report.pdf","description":"Generated report"}``
-    - Preview a mounted file without copying its contents into the call:
-      ``{"type":"file_preview","path":"/mount/data/report.docx"}``
-    - Open a web page in Preview:
-      ``{"type":"url_preview","url":"https://example.com/docs","description":"Reference"}``
+async def _render_view(
+    type: str,
+    path: str = "",
+    title: str = "",
+    file_type: str = "auto",
+    description: str = "",
+    html: str = "",
+    url: str = "",
+    require_human_confirm: bool = False,
+    *,
+    runtime: ToolRuntime,
+) -> tuple[str, dict[str, Any]]:
+    """Build and persist one Preview artifact behind a flat public tool.
 
-    Agent contract for HTML:
-
-    1. Write an ordinary, self-contained web page. Do not use or invent a
-       Skeinix platform SDK.
-    2. Read local files using their normal absolute paths in ``src``, ``href``,
-       CSS URLs, dynamic DOM assignments, or ``fetch``. The rendering runtime
-       resolves those paths transparently, including paths constructed at
-       runtime from a statically declared directory prefix. Normal HTTP(S), ``data:``, and ``blob:`` URLs remain unchanged by local-path rewriting;
-       however, the isolated iframe may block remote network access, so download
-       required remote assets into VFS before referencing them.
-    3. For editable UI, either attach a normal Save-button handler that calls
-       ``fetch`` or use named form controls and
-       ``<form action="/data/<file>" method="post">``. Both save to VFS only;
-       neither action continues the Agent conversation.
-    4. For custom save logic, use an ordinary user-triggered ``fetch`` with
-       ``PUT`` or ``POST`` to ``/data/<file>`` and a text or JSON body. Treat
-       the returned ``Response`` like a normal fetch response.
-    5. ``/data`` is writable after a real user interaction; ``/mount`` is
-       read-only. Do not write during page load or from timers without a recent
-       user action.
-    6. Keep the HTML definition separate from submitted data. Save labels,
-       annotations, or other results to a data file; do not overwrite the HTML
-       source to persist UI state.
-
-    Set ``require_human_confirm=true`` when the Agent must stop after rendering
-    and wait for the user to click Continue below the card. Continue starts a
-    new Human Turn; the platform does not suspend or resume the tool execution
-    stack. Omit it for display-only content and the Agent Turn continues.
-
-    Layout and optional larger preview presentation are selected automatically.
-    HTML runs with inline scripts enabled in an isolated rendering environment.
-    Local resources may use the same absolute file paths that are available to
-    you, such as ``/data/shot.png``;
-    no URL conversion, user/Chat identifier, authentication token, or
-    platform-specific JavaScript object is needed. Writes are allowed under
-    ``/data`` after a user interaction; ``/mount`` is read-only. Use standard
-    named HTML form controls for durable user input. Do not access the parent
-    page or authentication state.
-
-    Invalid fields return an ``invalid_interactive_input`` tool error containing
-    precise field paths. Correct the input and call this tool again.
+    Agents never call this helper. ``render_interactive`` exposes only a local
+    file path, while ``render_url_preview`` exposes only an HTTP(S) URL. Keeping
+    the shared artifact/persistence machinery internal prevents heterogeneous
+    models from seeing a nested or discriminated Preview protocol. The legacy
+    HTML branch remains an internal data-model path for durable artifacts; it is
+    not part of either current MCP input schema.
     """
     cfg = config.agent.compaction_v2
-    title_clean = (title or "").strip()
-    if not title_clean:
-        raise ToolError(
-            "invalid_interactive_input",
-            "Invalid render_interactive title: provide a short, user-facing title and call the tool again.",
-            info={"field": "title"},
+    component_type = (type or "").strip()
+    view_input: dict[str, Any] = {"type": component_type}
+    if component_type == "file_preview":
+        view_input.update(
+            path=path,
+            file_type=file_type or "auto",
+            description=description,
         )
-    view_obj = validate_view(view)
+    elif component_type == "html_preview":
+        view_input["html"] = html
+    elif component_type == "url_preview":
+        view_input.update(url=url, description=description)
+    view_obj = validate_view(view_input)
     component_type = view_obj.type
     props_obj = view_obj.model_dump(exclude={"type"}, exclude_none=True, mode="json")
+    title_clean = (title or "").strip()
+    if not title_clean:
+        if component_type == "file_preview":
+            title_clean = PurePosixPath(str(props_obj.get("path") or "")).name
+        elif component_type == "url_preview":
+            title_clean = "Web preview"
+        else:
+            title_clean = "Interactive preview"
     if component_type == "file_preview":
         preview_path = str(props_obj.get("path") or "")
         await _prepare_file_preview(
@@ -252,7 +228,12 @@ async def render_interactive(
     if path:
         output["path"] = path
 
-    abstract = f"render_interactive → {component_type}: {title_clean}"
+    publisher_tool = (
+        "render_url_preview"
+        if component_type == "url_preview"
+        else "render_interactive"
+    )
+    abstract = f"{publisher_tool} → {component_type}: {title_clean}"
     content = tool_ok(abstract, output)
     artifact = {
         "schema_version": 1,
@@ -260,7 +241,7 @@ async def render_interactive(
         "error": None,
         "content": content,
         "content_abstract": abstract,
-        "ref": path or f"tool://render_interactive/{content_hash[:12]}",
+        "ref": path or f"tool://{publisher_tool}/{content_hash[:12]}",
         "artifact": {
             "kind": "interactive_artifact",
             "target": {"path": path} if path else {},
@@ -276,7 +257,7 @@ async def render_interactive(
             "size": {"chars": len(serialized), "tokens": _approx_tokens(serialized)},
         },
         "meta": {
-            "tool": "render_interactive",
+            "tool": publisher_tool,
             "content_type": INTERACTIVE_CONTENT_TYPE,
             "stale_on_reread": False,
             "tokens": {

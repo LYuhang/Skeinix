@@ -46,7 +46,8 @@ export function initAuthExtensionSync(): void {
       state.modelId !== previous.modelId ||
       state.temperature !== previous.temperature ||
       state.maxTokens !== previous.maxTokens ||
-      state.timeout !== previous.timeout
+      state.timeout !== previous.timeout ||
+      state.reasoningEffort !== previous.reasoningEffort
     ) {
       push();
     }

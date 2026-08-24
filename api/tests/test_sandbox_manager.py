@@ -167,6 +167,36 @@ async def test_session_rebuilds_when_exposed_roots_change():
     second.close.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_manual_close_finishes_before_same_scope_can_be_reacquired():
+    manager = SandboxManager(max_resident=8, idle_ttl_s=600)
+    release_started = asyncio.Event()
+    allow_release = asyncio.Event()
+
+    async def close() -> None:
+        release_started.set()
+        await allow_release.wait()
+
+    session = MagicMock(
+        tenant_id="tenant",
+        wf_id="chat",
+        closed=False,
+        close=AsyncMock(side_effect=close),
+    )
+    manager._sessions[("tenant", "chat")] = session
+
+    closing = asyncio.create_task(manager.close_session("tenant", "chat"))
+    await release_started.wait()
+    await asyncio.sleep(0)
+    assert not closing.done()
+
+    allow_release.set()
+    result = await closing
+
+    assert result["status"] == "closed"
+    session.close.assert_awaited_once()
+
+
 def test_session_mounts_only_current_workspace_user_mount_and_runtime(tmp_path):
     run_dir = tmp_path / "workspace"
     mount_dir = tmp_path / "mount"

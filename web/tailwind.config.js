@@ -11,6 +11,15 @@ export default {
       screens: { '2xl': '1400px' },
     },
     extend: {
+      fontFamily: {
+        sans: ['var(--font-ui)'],
+        mono: ['var(--font-code)'],
+      },
+      fontWeight: {
+        normal: 'var(--weight-regular)',
+        medium: 'var(--weight-medium)',
+        semibold: 'var(--weight-semibold)',
+      },
       colors: {
         border: 'oklch(var(--border) / <alpha-value>)',
         input: 'oklch(var(--input) / <alpha-value>)',

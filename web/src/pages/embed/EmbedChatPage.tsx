@@ -60,6 +60,7 @@ interface RelayedAgentSettings {
   temperature?: number;
   max_tokens?: number;
   timeout?: number;
+  reasoning_effort?: string;
 }
 
 /** The shell's reply to REQUEST_BINDING from extension to iframe. */
@@ -93,7 +94,10 @@ function seedAgentSettings(s: RelayedAgentSettings): void {
     temperature: typeof s.temperature === 'number' ? s.temperature : null,
     maxTokens: typeof s.max_tokens === 'number' ? s.max_tokens : null,
     timeout: typeof s.timeout === 'number' ? s.timeout : null,
-    reasoningEffort: null,
+    reasoningEffort:
+      typeof s.reasoning_effort === 'string' && s.reasoning_effort.trim()
+        ? s.reasoning_effort
+        : null,
   });
 }
 

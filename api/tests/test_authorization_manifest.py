@@ -131,8 +131,13 @@ def test_platform_mcp_manifest_has_one_policy_per_exported_tool():
     assert actions[("workflow", "get_workflow")] is Action.VIEW
     assert actions[("task", "task_cancel")] is Action.CANCEL
     assert actions[("task", "task_resume")] is Action.RESUME
+    assert actions[("task", "task_collect_diagnostics")] is Action.INSPECT_RUNS
     assert actions[("deployment", "deployment_create")] is Action.DEPLOY
     assert actions[("deployment", "deployment_delete")] is Action.DELETE
+    assert (
+        actions[("deployment", "deployment_collect_diagnostics")]
+        is Action.INSPECT_RUNS
+    )
     assert (
         actions[("knowledge", "knowledge_list")]
         is Action.VIEW_METADATA

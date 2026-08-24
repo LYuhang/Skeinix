@@ -40,15 +40,20 @@ def platform_mcp_names_for_modes(
 ) -> list[str]:
     """Return base capabilities plus command-activated capabilities."""
     modes = set(active_modes)
-    command_servers = [
-        name for name in ("task", "deployment", "knowledge") if name in modes
-    ]
+    command_servers: list[str] = []
     # /workflow composes the read-only Workflow discovery facade with the
     # mutation/execution facade. Keeping Workflow out of the base set avoids
     # granting ordinary Chat turns access to platform Workflow resources.
-    if "workflow" in modes:
+    # Task and Deployment mutations also require an exact existing Workflow;
+    # give those commands the same read-only discovery facade without the
+    # Workflow build/mutation server.
+    if modes.intersection({"workflow", "task", "deployment"}):
         command_servers.append("workflow")
+    if "workflow" in modes:
         command_servers.append("build")
+    command_servers.extend(
+        name for name in ("task", "deployment", "knowledge") if name in modes
+    )
     command_servers.extend(
         name for name in ("browser", "diagram", "document") if name in modes
     )

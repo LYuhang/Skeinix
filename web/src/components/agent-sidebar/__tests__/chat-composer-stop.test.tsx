@@ -25,6 +25,7 @@ function renderComposer(
   chatId: string,
   showModelSelector = false,
   onSendStart?: () => void,
+  embedded = false,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -35,6 +36,7 @@ function renderComposer(
         <ChatComposer
           wfId="wf_x"
           chatId={chatId}
+          embedded={embedded}
           showModelSelector={showModelSelector}
           onSendStart={onSendStart}
         />
@@ -231,6 +233,123 @@ describe('ChatComposer Stop', () => {
     expect(screen.queryByRole('option', { name: 'Medium' })).toBeNull();
   });
 
+  it('sends and resumes the same model selection contract in the side panel', async () => {
+    const user = userEvent.setup();
+    const accountModel = 'codex:account:gpt-5.6-sol';
+    const openRouterModel = 'codex:openrouter:11111111-1111-4111-8111-111111111111:b3gtYWxwaGE';
+    let requestBody: Record<string, unknown> | null = null;
+    let bound = false;
+    server.use(
+      http.get('*/api/v1/chats/bootstrap', () => HttpResponse.json({
+        carrier_scope_id: 'wf_x',
+        surface: 'browser',
+        available_commands: [],
+        debug_view_enabled: false,
+      })),
+      http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
+        protocol_version: 2,
+        runtime_type: 'codex',
+        runtime_available: true,
+        authenticated: true,
+        source: 'test-sidepanel-openrouter',
+        models: [
+          ...(!bound ? [
+          {
+            id: accountModel,
+            label: 'GPT-5.6-Sol',
+            api_source: 'chatgpt_account',
+            provider_model_id: 'gpt-5.6-sol',
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          },
+          ] : []),
+          {
+            id: openRouterModel,
+            label: 'Ox Alpha',
+            api_source: 'openrouter_oauth',
+            provider_model_id: 'stealth/ox-alpha',
+            supports_tools: true,
+            input_price: '0',
+            output_price: '0',
+            supported_reasoning_efforts: [
+              { id: 'low', label: 'Low', description: '' },
+              { id: 'max', label: 'Maximum', description: '' },
+            ],
+            default_reasoning_effort: 'max',
+          },
+        ],
+        default_model_id: bound ? openRouterModel : accountModel,
+        bound_agent_settings: bound ? {
+          model_id: openRouterModel,
+          temperature: null,
+          max_tokens: null,
+          timeout: null,
+          reasoning_effort: 'max',
+        } : null,
+        error_code: null,
+      })),
+      http.get('*/api/v1/chat-scopes/wf_x/chats/chat_sidepanel_model/state', () =>
+        HttpResponse.json({
+          todo_items: [],
+          background_jobs: [],
+          active_modes: [],
+          mcp_server_ids: [],
+          mcp_config_revision: 0,
+        })),
+      http.post(
+        '*/api/v1/chat-scopes/wf_x/chats/chat_sidepanel_model/messages',
+        async ({ request }) => {
+          requestBody = await request.json() as Record<string, unknown>;
+          bound = true;
+          return new HttpResponse('id: 1\nevent: done\ndata: {}\n\n', {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'X-Turn-Id': 'turn_sidepanel_model',
+            },
+          });
+        },
+      ),
+    );
+
+    const first = renderComposer('chat_sidepanel_model', true, undefined, true);
+    await user.click(await screen.findByRole('button', { name: 'Model' }));
+    await user.click(screen.getByText('OpenRouter'));
+    await user.click(screen.getByRole('button', { name: /Ox Alpha/ }));
+    await user.click(screen.getByRole('button', { name: 'Options' }));
+    await user.click(screen.getByRole('combobox', { name: 'Thinking' }));
+    await user.click(screen.getByRole('option', { name: 'Maximum' }));
+    await user.type(screen.getByRole('textbox'), 'side panel model switch');
+    await user.click(screen.getByRole('button', { name: /send|发送/i }));
+
+    await waitFor(() => expect(requestBody).not.toBeNull());
+    expect(requestBody).toMatchObject({
+      surface: 'sidepanel',
+      agent_surface: 'browser',
+      agent_settings: {
+        model_id: openRouterModel,
+        reasoning_effort: 'max',
+      },
+    });
+
+    first.unmount();
+    useChatAgentSettingsStore.setState({ entries: {} });
+    const resumed = renderComposer('chat_sidepanel_model', true, undefined, true);
+    await waitFor(() => {
+      expect(resumed.container.querySelector('[data-role="chat-model-select"]'))
+        .toHaveTextContent('Ox Alpha');
+    });
+    await user.click(resumed.container.querySelector(
+      '[data-role="chat-composer-options-toggle"]',
+    ) as HTMLElement);
+    expect(resumed.container.querySelector('[data-role="chat-reasoning-effort-select"]'))
+      .toHaveTextContent('Maximum');
+    await user.click(resumed.container.querySelector(
+      '[data-role="chat-model-select"]',
+    ) as HTMLElement);
+    expect(screen.getByText('OpenRouter')).toBeInTheDocument();
+    expect(screen.queryByText('OpenAI account')).not.toBeInTheDocument();
+  });
+
   it('does not infer free pricing from a manual connection model id', async () => {
     const user = userEvent.setup();
     server.use(
@@ -268,9 +387,9 @@ describe('ChatComposer Stop', () => {
     expect(screen.queryByText('Free')).not.toBeInTheDocument();
   });
 
-  it('hydrates the server-bound model and allows switching it for the next turn', async () => {
+  it('hydrates the server-bound model and allows switching within that connection', async () => {
     const accountModelId = 'codex:account:gpt-5.6-sol';
-    const apiModelId = 'codex:credential:11111111-1111-4111-8111-111111111111';
+    const alternateAccountModelId = 'codex:account:gpt-5.5-codex';
     server.use(
       http.get('*/api/v1/agent-runtime/capabilities', () => HttpResponse.json({
         protocol_version: 2,
@@ -289,10 +408,11 @@ describe('ChatComposer Stop', () => {
             default_reasoning_effort: null,
           },
           {
-            id: apiModelId,
-            label: 'Production OpenAI',
-            description: 'openai · gpt-5.2-codex',
-            provider: 'openai',
+            id: alternateAccountModelId,
+            label: 'GPT-5.5 Codex',
+            description: 'Connected OpenAI account',
+            provider: 'chatgpt',
+            api_source: 'chatgpt_account',
             is_default: false,
             supported_reasoning_efforts: [],
             default_reasoning_effort: null,
@@ -323,14 +443,14 @@ describe('ChatComposer Stop', () => {
     });
 
     await userEvent.click(picker);
-    await userEvent.click(screen.getByText('My API connections'));
-    await userEvent.click(screen.getByRole('button', { name: /Production OpenAI/ }));
+    await userEvent.click(screen.getByText('OpenAI account'));
+    await userEvent.click(screen.getByRole('button', { name: /GPT-5.5 Codex/ }));
 
     expect(
       useChatAgentSettingsStore.getState().entries.chat_bound_codex_model?.settings.modelId,
-    ).toBe(apiModelId);
+    ).toBe(alternateAccountModelId);
     expect(container.querySelector('[data-role="chat-model-select"]'))
-      .toHaveTextContent('Production OpenAI');
+      .toHaveTextContent('GPT-5.5 Codex');
   });
 
   it('preserves an unavailable explicit API instead of switching to another one', async () => {

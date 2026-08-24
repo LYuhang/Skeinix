@@ -199,8 +199,9 @@ async def test_codex_catalog_projects_each_openrouter_model_and_effort(monkeypat
             "input_modalities": ["text"],
             "output_modalities": ["text"],
             "supports_tools": True,
+            "supports_web_search": False,
             "supported_reasoning_efforts": ["low", "high", "max"],
-            "default_reasoning_effort": "max",
+            "default_reasoning_effort": "low",
             "pricing": {"prompt": "0", "completion": "0"},
             "available": True,
         }],
@@ -212,10 +213,11 @@ async def test_codex_catalog_projects_each_openrouter_model_and_effort(monkeypat
     assert model.api_source == "openrouter_oauth"
     assert model.api_protocol == "openai_responses"
     assert model.provider_model_id == "stealth/ox-alpha"
+    assert model.supports_web_search is False
     assert [effort.id for effort in model.supported_reasoning_efforts] == [
         "low", "high", "max",
     ]
-    assert model.default_reasoning_effort == "max"
+    assert model.default_reasoning_effort == "low"
     assert codex_openrouter_model(model.id) == "stealth/ox-alpha"
 
 

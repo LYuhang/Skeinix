@@ -89,6 +89,7 @@ class OpenRouterModelOut(BaseModel):
     input_modalities: list[str] = Field(default_factory=list)
     output_modalities: list[str] = Field(default_factory=list)
     supports_tools: bool = False
+    supports_web_search: bool = False
     supported_reasoning_efforts: list[str] = Field(default_factory=list)
     default_reasoning_effort: str | None = None
     pricing: dict[str, str | None] = Field(default_factory=dict)

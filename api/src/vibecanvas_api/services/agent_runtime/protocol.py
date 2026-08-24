@@ -242,6 +242,74 @@ class RuntimeConversationClock(BaseModel):
     started_at: datetime
 
 
+class RuntimeDurableToolCall(BaseModel):
+    """Bounded, provider-neutral tool call retained in product history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_call_id: str = Field(default="", max_length=512)
+    name: str = Field(default="", max_length=256)
+    arguments: str = Field(default="", max_length=32_768)
+
+
+class RuntimeDurableAttachment(BaseModel):
+    """Non-secret attachment reference suitable for Runtime recovery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="", max_length=512)
+    path: str = Field(default="", max_length=2_048)
+    media_type: str = Field(default="", max_length=256)
+
+
+class RuntimeDurableHistoryMessage(BaseModel):
+    """One completed product-transcript entry used only for recovery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str = Field(min_length=1, max_length=1_024)
+    turn_id: str | None = Field(default=None, max_length=1_024)
+    role: Literal["user", "assistant", "tool", "system"]
+    text: str = Field(default="", max_length=32_768)
+    tool_calls: list[RuntimeDurableToolCall] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    tool_call_id: str | None = Field(default=None, max_length=512)
+    attachments: list[RuntimeDurableAttachment] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    status: str | None = Field(default=None, max_length=128)
+
+
+class RuntimeDurableHistorySnapshot(BaseModel):
+    """Backend-owned bounded transcript for reconstructing lost native state.
+
+    The native Runtime thread remains the ordinary fast path. This snapshot is
+    deliberately carried on every Turn so a newly provisioned sandbox can
+    recover without direct database access. Runtime adapters must treat its
+    contents as untrusted conversation/tool data, never as platform policy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[RuntimeDurableHistoryMessage] = Field(
+        default_factory=list,
+        max_length=512,
+    )
+    last_turn_id: str | None = Field(default=None, max_length=1_024)
+    truncated: bool = False
+    omitted_message_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_wire_budget(self) -> "RuntimeDurableHistorySnapshot":
+        encoded = self.model_dump_json().encode("utf-8")
+        if len(encoded) > 768 * 1024:
+            raise ValueError("durable history exceeds the Runtime wire budget")
+        return self
+
+
 class RuntimeTurnRequest(BaseModel):
     protocol_version: Literal[2] = RUNTIME_PROTOCOL_VERSION
     tenant_id: str
@@ -263,6 +331,12 @@ class RuntimeTurnRequest(BaseModel):
     # prefix remains byte-stable. Codex owns its native context and never
     # receives this platform prompt block.
     conversation_clock: RuntimeConversationClock | None = None
+    # PostgreSQL is the authoritative product transcript. Native SDK threads
+    # are an optimization and may disappear with a sandbox; adapters consume
+    # this bounded snapshot only when native coverage cannot be proven.
+    durable_history: RuntimeDurableHistorySnapshot = Field(
+        default_factory=RuntimeDurableHistorySnapshot
+    )
     message: dict[str, Any]
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     model: dict[str, Any] = Field(default_factory=dict)
@@ -522,6 +596,7 @@ class RuntimeModelOption(BaseModel):
     input_modalities: list[str] = Field(default_factory=list)
     output_modalities: list[str] = Field(default_factory=list)
     supports_tools: bool | None = None
+    supports_web_search: bool = False
     input_price: str | None = None
     output_price: str | None = None
     available: bool = True
@@ -542,8 +617,8 @@ class RuntimeCapabilities(BaseModel):
     default_model_id: str | None = None
     error_code: str | None = None
     # Chat projection for the composer. Bound settings are the last accepted
-    # selection used to seed Resume; model and effort remain mutable between
-    # idle Turns while Runtime type stays fixed.
+    # selection used to seed Resume; model and effort remain mutable within the
+    # Chat's fixed connection between idle Turns.
     bound_agent_settings: dict[str, Any] | None = None
 
 

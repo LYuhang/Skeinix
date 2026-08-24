@@ -1504,12 +1504,14 @@ export function ChatPage() {
     },
   });
   const initialChatSelectionRef = useRef(false);
+  const activeRunDiscoveryGenerationRef = useRef(0);
   const [activeRunDiscoveryStatus, setActiveRunDiscoveryStatus] = useState<
     'pending' | 'ready' | 'error'
   >('pending');
 
   useEffect(() => {
     if (!carrierScopeId) return;
+    const discoveryGeneration = ++activeRunDiscoveryGenerationRef.current;
     // Explicit navigation intent is already authoritative client state. It
     // must not wait for the durable list or active-run discovery before the
     // requested shell becomes usable.
@@ -1531,6 +1533,15 @@ export function ChatPage() {
       queueMicrotask(() => setActiveRunDiscoveryStatus('ready'));
       return;
     }
+    // A non-null route selection is already authoritative. Startup discovery
+    // exists only to choose a destination when a hard refresh has no active
+    // Chat in the in-memory store; it must never replace an id chosen by the
+    // user or by an explicit navigation intent.
+    if (activeChatId) {
+      initialChatSelectionRef.current = true;
+      queueMicrotask(() => setActiveRunDiscoveryStatus('ready'));
+      return;
+    }
     // A hard refresh resets the in-memory UI store. Wait for the durable Chat
     // list before choosing a destination; otherwise the bootstrap races the
     // sessions query, creates a fresh draft, and hides the conversation the
@@ -1541,7 +1552,17 @@ export function ChatPage() {
     let disposed = false;
     void (async () => {
       const discovered = await readServerActiveTurns(carrierScopeId);
-      if (disposed) return;
+      // A user may explicitly select or create a Chat while active-turn
+      // discovery is in flight. That navigation intent is authoritative even
+      // before React has committed the resulting activeChatId render. Without
+      // this synchronous store check, the stale discovery result can win the
+      // race and switch the page back to an older, connection-bound Chat.
+      if (
+        disposed
+        || discoveryGeneration !== activeRunDiscoveryGenerationRef.current
+        || useUIStore.getState().chatEntryIntent !== null
+        || useUIStore.getState().activeChatIds.chat !== activeChatId
+      ) return;
       if (discovered === null) {
         setActiveRunDiscoveryStatus('error');
         return;
@@ -1996,6 +2017,11 @@ export function ChatPage() {
           onClick={() => {
             if (!carrierScopeId) return;
             const draftChatId = ensureDraftChatSession(carrierScopeId, 'chat');
+            activeRunDiscoveryGenerationRef.current += 1;
+            // Mark this as an explicit user selection before changing the id.
+            // In-flight startup discovery checks this store value and must not
+            // overwrite the newly requested empty Chat.
+            setChatEntryIntent('select');
             // A user can click New Chat while the initial active-run discovery
             // request is still pending. Changing activeChatId disposes that
             // request; without completing the gate the composer remains in an

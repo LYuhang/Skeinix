@@ -107,10 +107,15 @@ def test_bound_chat_model_replaces_only_the_catalog_default():
         authenticated=True,
         source="test",
         models=[
-            RuntimeModelOption(id="codex:default", label="Managed", is_default=True),
+            RuntimeModelOption(
+                id="codex:managed:corp:gpt-managed",
+                label="Managed",
+                is_default=True,
+            ),
             RuntimeModelOption(id="codex:account:gpt", label="Account"),
+            RuntimeModelOption(id="codex:account:gpt-alt", label="Account alt"),
         ],
-        default_model_id="codex:default",
+        default_model_id="codex:managed:corp:gpt-managed",
     )
 
     rebound = agent_runtime_routes._with_chat_model_default(
@@ -123,14 +128,18 @@ def test_bound_chat_model_replaces_only_the_catalog_default():
 
     assert rebound.default_model_id == "codex:account:gpt"
     assert [model.id for model in rebound.models] == [
-        "codex:default",
         "codex:account:gpt",
+        "codex:account:gpt-alt",
     ]
-    assert [model.is_default for model in rebound.models] == [False, True]
+    assert [model.is_default for model in rebound.models] == [True, False]
     # The helper returns copies; a per-Chat projection cannot mutate the
     # process-shared catalog used by another Chat.
-    assert capabilities.default_model_id == "codex:default"
-    assert [model.is_default for model in capabilities.models] == [True, False]
+    assert capabilities.default_model_id == "codex:managed:corp:gpt-managed"
+    assert [model.is_default for model in capabilities.models] == [
+        True,
+        False,
+        False,
+    ]
 
 
 def test_bound_chat_does_not_fall_back_to_another_api_when_its_model_is_missing():
@@ -157,14 +166,14 @@ def test_bound_chat_does_not_fall_back_to_another_api_when_its_model_is_missing(
             "runtime_model_id": (
                 "codex:credential:11111111-1111-4111-8111-111111111111"
             ),
-            "runtime_connection_id": "codex:api",
+            "runtime_connection_id": (
+                "codex:credential:11111111-1111-4111-8111-111111111111"
+            ),
         },
     )
 
     assert rebound.authenticated is True
-    assert [model.id for model in rebound.models] == [
-        "codex:credential:22222222-2222-4222-8222-222222222222"
-    ]
+    assert rebound.models == []
     assert rebound.default_model_id is None
     assert rebound.error_code == "runtime_model_unavailable"
 

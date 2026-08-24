@@ -20,6 +20,11 @@ import i18n from '@/lib/i18n';
 const historyMock = vi.fn();
 const sessionsMock = vi.fn();
 const fetchHistoryPageMock = vi.fn();
+const readServerActiveTurnsMock = vi.fn(async (..._args: unknown[]) => [] as Array<{
+  wfId: string;
+  chatId: string;
+  turnId: string;
+}>);
 vi.mock('@/lib/api/queries/chats', () => ({
   CHAT_INITIAL_HISTORY_LIMIT: 30,
   fetchChatHistory: vi.fn(),
@@ -43,7 +48,7 @@ vi.mock('@/lib/api/queries/chats', () => ({
   }),
 }));
 vi.mock('@/lib/api/sse/server-active-turn', () => ({
-  readServerActiveTurns: vi.fn(async () => []),
+  readServerActiveTurns: (...args: unknown[]) => readServerActiveTurnsMock(...args),
 }));
 vi.mock('@/lib/api/sse/resume-turn', () => ({
   resumeActiveTurn: vi.fn(async () => undefined),
@@ -911,6 +916,8 @@ function SidebarWrapper({ children }: { children: ReactNode }) {
 
 describe('AgentChatSidebar redesign', () => {
   beforeEach(() => {
+    readServerActiveTurnsMock.mockReset();
+    readServerActiveTurnsMock.mockResolvedValue([]);
     useUIStore.setState({ lastActiveWorkflowId: 'wf', activeChatIds: { chat: null, browser: null } });
     sessionsMock.mockReturnValue({ data: { items: [] }, isLoading: false });
     historyMock.mockReturnValue({ data: { items: [] }, isLoading: false });
@@ -929,6 +936,34 @@ describe('AgentChatSidebar redesign', () => {
     await userEvent.click(screen.getByRole('button', { name: /new chat/i }));
     const id = useUIStore.getState().activeChatIds.chat;
     expect(typeof id === 'string' && id.length > 0).toBe(true);
+  });
+
+  it('does not let delayed startup discovery replace an explicit New Chat', async () => {
+    let finishDiscovery!: (turns: Array<{
+      wfId: string;
+      chatId: string;
+      turnId: string;
+    }>) => void;
+    readServerActiveTurnsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      finishDiscovery = resolve;
+    }));
+    render(<AgentChatSidebar />, { wrapper: SidebarWrapper });
+    await waitFor(() => expect(readServerActiveTurnsMock).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('button', { name: /new chat/i }));
+    const chosen = useUIStore.getState().activeChatIds.chat;
+    expect(chosen).toBeTruthy();
+
+    await act(async () => {
+      finishDiscovery([{
+        wfId: 'wf',
+        chatId: 'older-running-chat',
+        turnId: 'turn-old',
+      }]);
+      await Promise.resolve();
+    });
+
+    expect(useUIStore.getState().activeChatIds.chat).toBe(chosen);
   });
 
   it('restores the latest persisted browser Chat after Sidepanel reload', async () => {

@@ -19,28 +19,31 @@ from vibecanvas_api.services.platform_mcp.interactive_tools.render_url_preview i
 from vibecanvas_api.services.platform_mcp.interactive_tools.schema import interactive_view_json_schema
 
 
-def test_public_schema_has_html_file_and_url_views():
+def test_public_schema_is_flat_and_file_only():
     schema = render_interactive.tool_call_schema.model_json_schema()
     assert set(schema["properties"]) == {
+        "path",
         "title",
-        "view",
+        "file_type",
+        "description",
         "require_human_confirm",
     }
-    variants = schema["properties"]["view"]["oneOf"]
-    assert {
-        variant["properties"]["type"]["const"] for variant in variants
-    } == {"html_preview", "file_preview", "url_preview"}
-    assert '<form action="/data/<file>" method="post">' in render_interactive.description
-    assert "fetch('/data/labels.json'" in render_interactive.description
-    assert "platform-specific JavaScript object" in render_interactive.description
-    assert "``/mount`` is read-only" in render_interactive.description
-    assert "including paths constructed at" in render_interactive.description
-    assert "Normal HTTP(S), ``data:``, and ``blob:`` URLs remain unchanged" in (
-        render_interactive.description
-    )
-    assert "ordinary user-triggered ``fetch``" in render_interactive.description
-    assert "do not overwrite the HTML" in render_interactive.description
-    assert "Continue starts a" in render_interactive.description
+    assert schema["required"] == ["path"]
+    serialized = json.dumps(schema)
+    assert "oneOf" not in serialized
+    assert "anyOf" not in serialized
+    assert "discriminator" not in serialized
+    assert "render_url_preview" in render_interactive.description
+    assert "nested ``view``" in render_interactive.description
+
+
+def test_url_preview_schema_is_flat_and_only_requires_the_url():
+    schema = render_url_preview.tool_call_schema.model_json_schema()
+    assert set(schema["properties"]) == {"url", "title", "description"}
+    assert schema["required"] == ["url"]
+    serialized = json.dumps(schema)
+    assert all(token not in serialized for token in ("oneOf", "anyOf"))
+    assert "view" not in schema["properties"]
 
 
 @pytest.mark.asyncio
@@ -72,7 +75,9 @@ async def test_url_preview_tool_publishes_isolated_webview_artifact(monkeypatch)
         "description": "External documentation",
     }
     assert definition["height"] == 520
-    assert "render_interactive → url_preview" in content
+    assert "render_url_preview → url_preview" in content
+    assert artifact["ref"].startswith("tool://render_url_preview/")
+    assert artifact["meta"]["tool"] == "render_url_preview"
     persist.assert_awaited_once()
 
 
@@ -105,8 +110,8 @@ async def test_require_human_confirm_creates_continue_only_post_tool_gate(monkey
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
 
     _, artifact = await render_interactive.coroutine(
+        path="/mount/data/review.pdf",
         title="Review the result",
-        view={"type": "html_preview", "html": "<p>Ready</p>"},
         require_human_confirm=True,
         runtime=SimpleNamespace(
             context=SimpleNamespace(
@@ -136,10 +141,9 @@ def test_generated_frontend_contract_matches_backend_schema():
 
 
 @pytest.mark.asyncio
-async def test_invalid_view_is_an_agent_readable_tool_error():
+async def test_invalid_path_is_an_agent_readable_tool_error():
     content, artifact = await render_interactive.coroutine(
-        title="Dataset review",
-        view={"type": "slider", "min": 1, "max": 10},
+        path="relative/report.pdf",
         runtime=SimpleNamespace(context=SimpleNamespace()),
     )
     assert "Fix these fields and call the tool again" in content
@@ -149,40 +153,39 @@ async def test_invalid_view_is_an_agent_readable_tool_error():
 
 
 @pytest.mark.asyncio
-async def test_successful_html_preserves_scripts_and_vfs_save_form(monkeypatch):
+async def test_flat_file_preview_preserves_file_metadata(monkeypatch):
     module = importlib.import_module(
         "vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive"
     )
 
     persist = AsyncMock()
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
-    html = (
-        "<form action='/data/labels.json' method='post'><img src='/data/items/1.png'>"
-        "<input name='item-1.label'><button type='submit'>Save</button>"
-        "<script>document.body.dataset.ready='1'</script></form>"
-    )
     content, artifact = await render_interactive.coroutine(
-        title="Dataset review",
-        view={"type": "html_preview", "html": html},
+        path="/mount/data/ecommerce-checkout-sequence.drawio",
+        description="Checkout sequence",
         runtime=SimpleNamespace(
             context=SimpleNamespace(tenant_id="tenant_1", chat_id="chat_1", turn_id="turn_1")
         ),
     )
     definition = artifact["payload"]["artifact"]
     assert artifact["status"] == "success"
-    assert definition["component_type"] == "html_preview"
-    assert definition["props"]["html"] == html
+    assert definition["title"] == "ecommerce-checkout-sequence.drawio"
+    assert definition["component_type"] == "file_preview"
+    assert definition["props"] == {
+        "path": "/mount/data/ecommerce-checkout-sequence.drawio",
+        "file_type": "auto",
+        "description": "Checkout sequence",
+    }
     assert definition["completion_mode"] == "render_only"
     assert definition["interaction_schema"] == {}
-    assert "render_interactive → html_preview" in content
+    assert "render_interactive → file_preview" in content
     persist.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_tool_does_not_return_a_nonrecoverable_card_without_chat_context():
     content, artifact = await render_interactive.coroutine(
-        title="Dataset review",
-        view={"type": "html_preview", "html": "<p>Review</p>"},
+        path="/mount/data/review.pdf",
         runtime=SimpleNamespace(context=SimpleNamespace()),
     )
     assert "durable chat context" in content
@@ -228,11 +231,8 @@ async def test_file_preview_defers_type_validation_to_preview(monkeypatch):
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
     session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=True))
     content, artifact = await render_interactive.coroutine(
+        path="/data/diagrams/broken.drawio",
         title="Broken flow",
-        view={
-            "type": "file_preview",
-            "path": "/data/diagrams/broken.drawio",
-        },
         runtime=SimpleNamespace(context=SimpleNamespace(_attached_session=session)),
     )
 
@@ -258,12 +258,9 @@ async def test_file_preview_preserves_optional_type_hint(monkeypatch):
     monkeypatch.setattr(module, "_persist_interactive_state", persist)
     session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=True))
     _, artifact = await render_interactive.coroutine(
+        path="/data/diagrams/flow.drawio",
         title="Interactive flow",
-        view={
-            "type": "file_preview",
-            "path": "/data/diagrams/flow.drawio",
-            "file_type": "drawio",
-        },
+        file_type="drawio",
         runtime=SimpleNamespace(
             context=SimpleNamespace(
                 tenant_id="tenant_1",
@@ -294,11 +291,8 @@ async def test_unsynced_diagram_file_creates_no_interactive_card(monkeypatch):
     session = SimpleNamespace(sync_workspace_path=AsyncMock(return_value=False))
 
     content, artifact = await render_interactive.coroutine(
+        path="/data/diagrams/unsynced.drawio",
         title="Unsynced flow",
-        view={
-            "type": "file_preview",
-            "path": "/data/diagrams/unsynced.drawio",
-        },
         runtime=SimpleNamespace(context=SimpleNamespace(_attached_session=session)),
     )
 

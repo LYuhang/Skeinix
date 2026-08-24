@@ -1643,6 +1643,8 @@ describe('InteractiveArtifactBlock HITL behavior', () => {
     expect(frame).toHaveAttribute('src', 'https://example.com/docs');
     expect(frame).toHaveAttribute('sandbox', expect.stringContaining('allow-scripts'));
     expect(screen.getByText('External documentation')).toBeInTheDocument();
+    expect(screen.getByText('Web preview')).toBeInTheDocument();
+    expect(document.querySelector('[data-tool-name="render_url_preview"]')).toBeInTheDocument();
   });
 
   it('loads an HTML file path and renders it through the isolated HTML runtime', async () => {

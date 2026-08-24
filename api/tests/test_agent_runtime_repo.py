@@ -131,21 +131,23 @@ async def test_chat_runtime_model_selection_can_advance_between_turns(
             connection_id="codex:account",
             agent_settings={"reasoning_effort": "low"},
         )
-        switched_source = await repo.set_runtime_model_selection(
-            chat_id,
-            runtime_type="codex",
-            model_id="codex:managed:company:gpt-default",
-            connection_id="codex:api",
-            agent_settings={"reasoning_effort": "high"},
-        )
+        with pytest.raises(
+            ValueError,
+            match="runtime connection is fixed for the Chat",
+        ):
+            await repo.set_runtime_model_selection(
+                chat_id,
+                runtime_type="codex",
+                model_id="codex:managed:company:gpt-default",
+                connection_id="codex:managed:company",
+                agent_settings={"reasoning_effort": "high"},
+            )
         await session.commit()
 
     assert switched_model is not None
     assert switched_model["runtime_model_id"] == "codex:account:gpt-second"
     assert switched_model["runtime_agent_settings"]["reasoning_effort"] == "low"
-    assert switched_source is not None
-    assert switched_source["runtime_model_id"] == "codex:managed:company:gpt-default"
-    assert switched_source["runtime_connection_id"] == "codex:api"
+    assert switched_model["runtime_connection_id"] == "codex:account"
 
 
 @pytest.mark.asyncio

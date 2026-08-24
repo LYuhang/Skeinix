@@ -128,10 +128,11 @@ test('Preview renders real office, PDF, and table files and protects text revisi
     return `<a id="open-${id}" href="/data/preview-acceptance/${name}">${name}</a>`;
   }).join(' ');
   const prompt = [
-    'Call render_interactive exactly once and do not call any other tool.',
-    'Use title "Preview Acceptance Index", require_human_confirm=false, and one html_preview view.',
-    `Use this exact HTML body: <main>${links}</main>.`,
-    'Do not emit prose after the tool call.',
+    'Create /data/preview-acceptance/index.html with this exact HTML body:',
+    `<main>${links}</main>.`,
+    'Then call render_interactive exactly once with path="/data/preview-acceptance/index.html",',
+    'title="Preview Acceptance Index", and require_human_confirm=false.',
+    'Do not use the retired nested view/type arguments and do not emit prose after the Preview call.',
   ].join(' ');
   const composer = page.locator('[data-role="agent-composer-input"]');
   await composer.fill(prompt);

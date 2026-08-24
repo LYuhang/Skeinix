@@ -26,7 +26,7 @@ test.beforeEach(async ({ context }: { context: BrowserContext }) => {
   await session.seed(context, 'en');
 });
 
-test('LangChain renders durable HTML, saves to VFS, and continues through a hidden control Turn', async ({ page }: { page: Page }) => {
+test('LangChain renders a durable HTML file, saves to VFS, and continues through a hidden control Turn', async ({ page }: { page: Page }) => {
   page.on('request', (request) => {
     if (request.method() === 'POST') {
       console.log(`[interactive-e2e] POST ${new URL(request.url()).pathname}`);
@@ -52,14 +52,14 @@ test('LangChain renders durable HTML, saves to VFS, and continues through a hidd
   console.log('[interactive-e2e] new Chat selected');
 
   const prompt = [
-    'Call the render_interactive tool exactly once and do not call any other tool.',
-    'Use title "Acceptance Gate", require_human_confirm=true, and an html_preview view.',
-    'The HTML must contain:',
+    'Create /data/acceptance/index.html, then call render_interactive exactly once',
+    'with path="/data/acceptance/index.html", title="Acceptance Gate", and require_human_confirm=true.',
+    'The saved HTML file must contain:',
     '1. a button id="save" labeled "Save annotation" that, on a real click, PUTs',
     '{"accepted":true,"label":"verified"} as application/json to /data/acceptance/labels.json;',
     '2. a status element id="status" changed to "Saved" only after fetch succeeds;',
     '3. an anchor id="open-result" href="/data/acceptance/labels.json" labeled "Open saved result".',
-    'Do not emit prose after the tool call.',
+    'Do not use the retired nested view/type arguments and do not emit prose after the Preview call.',
   ].join(' ');
 
   const composer = page.locator('[data-role="agent-composer-input"]');

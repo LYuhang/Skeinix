@@ -62,9 +62,15 @@ describe('initAuthExtensionSync', () => {
     expect(syncMock).toHaveBeenLastCalledWith(true, 'tenant_1');
     const callsAfterModelSettings = syncMock.mock.calls.length;
 
+    useAgentSettingsStore.getState().set({ reasoningEffort: 'high' });
+
+    expect(syncMock).toHaveBeenCalledTimes(callsAfterModelSettings + 1);
+    expect(syncMock).toHaveBeenLastCalledWith(true, 'tenant_1');
+    const callsAfterReasoning = syncMock.mock.calls.length;
+
     useAgentSettingsStore.getState().setApprovalMode('always_ask');
 
-    expect(syncMock).toHaveBeenCalledTimes(callsAfterModelSettings);
+    expect(syncMock).toHaveBeenCalledTimes(callsAfterReasoning);
 
     document.dispatchEvent(new CustomEvent('skeinix:extension-auth-refresh'));
     expect(syncMock).toHaveBeenLastCalledWith(true, 'tenant_1');

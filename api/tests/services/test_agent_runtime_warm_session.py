@@ -740,3 +740,73 @@ async def test_runtime_binding_cannot_switch_inside_one_session(
         ]
 
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_runtime_rejects_account_and_broker_rebinding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    provider = _FakeProvider()
+    monkeypatch.setattr(manager_module, "BusBroker", _FakeBroker)
+    monkeypatch.setattr(
+        manager_module,
+        "resolve_codex_executable",
+        lambda: "/bin/true",
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "codex_cli_readonly_root",
+        lambda _path: "/bin",
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "codex_cli_node_runtime",
+        lambda _path: None,
+    )
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    account_auth = tmp_path / "account" / "auth.json"
+    account_auth.parent.mkdir()
+    account_auth.write_text('{"auth_mode":"chatgpt"}', encoding="utf-8")
+    session = SandboxSession(
+        tenant_id="tenant",
+        wf_id="chat",
+        run_dir=None,
+        overlay_dir=None,
+        provider=provider,
+        base_binds=[],
+        runtime_dir=str(runtime_dir),
+        account_auth_file=str(account_auth),
+        expose_run=False,
+    )
+
+    account_events = [
+        event
+        async for event in session.run_agent_runtime_stream(
+            _runtime_request(
+                "turn-account",
+                runtime_type="codex",
+                model={"connection_type": "chatgpt_account"},
+            )
+        )
+    ]
+    with pytest.raises(RuntimeError, match="sandbox_runtime_binding_mismatch"):
+        _ = [
+            event
+            async for event in session.run_agent_runtime_stream(
+                _runtime_request("turn-broker", runtime_type="codex")
+            )
+        ]
+
+    assert account_events[0]["turn_id"] == "turn-account"
+    assert provider.launches == 1
+    # The rejected transport attempt tears down the resident process rather
+    # than risking reuse after a caller violates the immutable binding.
+    assert provider.stops == 1
+    assert session._bound_runtime_type == "codex"
+    assert session._bound_runtime_uses_codex_account is True
+    assert (runtime_dir / ".codex" / "auth.json").read_text(
+        encoding="utf-8"
+    ) == '{"auth_mode":"chatgpt"}'
+    await session.close()

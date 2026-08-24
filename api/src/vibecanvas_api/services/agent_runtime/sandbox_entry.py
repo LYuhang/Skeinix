@@ -78,6 +78,7 @@ def _command_instruction_projection(
 
 
 _codex_client = None
+_codex_client_startup_key: str | None = None
 _codex_hub_gateways = {}
 _codex_threads = {}
 _active_mcp_hub: SandboxMcpHub | None = None
@@ -118,18 +119,32 @@ async def _wait_for_bus_socket(socket_path: str) -> None:
 
 
 async def _close_codex_runtime_resources() -> None:
-    global _codex_client, _codex_hub_gateways, _codex_threads
+    global _codex_client, _codex_client_startup_key
+    global _codex_hub_gateways, _codex_threads
     client = _codex_client
     hub_gateways = _codex_hub_gateways
     _codex_client = None
+    _codex_client_startup_key = None
     _codex_hub_gateways = {}
     _codex_threads = {}
+
+    async def finish(coroutine) -> None:
+        # Runtime shutdown can cancel the owner task while subprocess pipes and
+        # MCP task groups are still closing. Let each bounded cleanup finish in
+        # its own task so asyncio does not report pipe/cancel-scope tracebacks
+        # during an otherwise normal sandbox hibernation.
+        task = asyncio.create_task(coroutine)
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+
     if client is not None:
         with suppress(Exception):
-            await client.close()
+            await finish(client.close())
     for gateway in reversed(list(hub_gateways.values())):
         with suppress(Exception):
-            await gateway.close()
+            await finish(gateway.close())
 
 
 async def _control_loop(
@@ -221,6 +236,63 @@ async def _run_langchain(channel, request: RuntimeTurnRequest) -> None:
         )
         seq += 1
         return result
+
+    # Every production LangChain Turn carries a short-lived, host-minted model
+    # capability in ``api_key``. Reject malformed/unconfigured requests before
+    # reconciling MCP manifests or importing the LangChain MCP adapter stack.
+    # This preserves the normal product event contract while avoiding a long
+    # cold-start delay merely to discover that model execution is impossible.
+    if not str((request.model or {}).get("api_key") or "").strip():
+        message_id = (
+            f"{request.chat_id}:{request.turn_id}:assistant:init_error"
+        )
+        init_error = (
+            "Agent init error: No model credential is configured. "
+            "Connect a compatible model account or API source in Settings, "
+            "then select its model in Chat."
+        )
+        await _emit(channel, event("runtime.started", {}))
+        for payload in (
+            {
+                "type": "message_start",
+                "message_id": message_id,
+                "role": "assistant",
+            },
+            {
+                "type": "message_replace",
+                "message_id": message_id,
+                "content": init_error,
+            },
+            {"type": "message_end", "message_id": message_id},
+        ):
+            await _emit(
+                channel,
+                event(
+                    "projection",
+                    {
+                        "event_type": "CHAT_EVENT",
+                        "payload": payload,
+                        "signal_id": None,
+                    },
+                ),
+            )
+        await _emit(
+            channel,
+            event(
+                "projection",
+                {
+                    "event_type": "NO_OP",
+                    "payload": {},
+                    "signal_id": None,
+                },
+            ),
+        )
+        await _emit(channel, event("runtime.completed", {}))
+        state_client.fail_all("runtime turn completed")
+        control_task.cancel()
+        await asyncio.gather(control_task, return_exceptions=True)
+        await channel.send({"type": MSG_RUNTIME_RESULT})
+        return
 
     async def request_tool_approval(
         tool_name: str,
@@ -706,14 +778,23 @@ async def _run(channel, request: RuntimeTurnRequest) -> None:
         # The Codex adapter owns its app-server process and never initializes
         # the LangGraph/checkpointer stack above.
         from vibecanvas_api.services.agent_runtime.codex import (
+            codex_app_server_startup_key,
             create_codex_app_server,
             run_codex_turn,
         )
 
         global _active_mcp_adapter, _active_mcp_hub
-        global _codex_client, _codex_hub_gateways, _codex_threads
+        global _codex_client, _codex_client_startup_key
+        global _codex_hub_gateways, _codex_threads
+        startup_key = codex_app_server_startup_key(request)
+        if (
+            _codex_client is not None
+            and _codex_client_startup_key != startup_key
+        ):
+            await _close_codex_runtime_resources()
         if _codex_client is None:
             _codex_client = create_codex_app_server(request)
+            _codex_client_startup_key = startup_key
         from vibecanvas_api.services.agent_runtime.mcp_hub_adapter import (
             SandboxMcpRuntimeAdapter,
         )

@@ -272,7 +272,7 @@ function ToolActivityGroup({
       >
         <div
           className={cn(
-            'text-xs transition-colors',
+            'text-tool transition-colors',
             open
               ? 'rounded-md border border-edge-subtle bg-surface-sunken/40'
               : 'rounded-md bg-transparent',
@@ -311,7 +311,7 @@ function ToolActivityGroup({
                     ? t('agent.tool_activity.complete_one', '{{count}} tool used', { count })
                     : t('agent.tool_activity.complete_other', '{{count}} tools used', { count })}
             </span>
-            <span className="hidden max-w-48 truncate text-content-tertiary sm:block">
+            <span className="text-meta hidden max-w-48 truncate sm:block">
               {currentToolName}
             </span>
           </button>

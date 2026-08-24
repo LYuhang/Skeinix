@@ -52,6 +52,7 @@ class CodexAppServer:
         cwd: str | None = None,
         experimental: bool = False,
         outer_sandboxed: bool = False,
+        config_overrides: tuple[str, ...] = (),
         read_limit_bytes: int | None = None,
     ) -> None:
         self._executable = executable
@@ -59,6 +60,9 @@ class CodexAppServer:
         self._cwd = cwd
         self._experimental = experimental
         self._outer_sandboxed = outer_sandboxed
+        self._config_overrides = tuple(
+            value for value in config_overrides if value.strip()
+        )
         self._read_limit_bytes = (
             _jsonl_read_limit_bytes()
             if read_limit_bytes is None
@@ -86,6 +90,8 @@ class CodexAppServer:
             # boundary, and can make startup fail before the per-thread policy
             # is applied.
             arguments.extend(("-c", _CODEX_OUTER_SANDBOX_CONFIG))
+        for override in self._config_overrides:
+            arguments.extend(("-c", override))
         arguments.extend(("app-server", "--stdio"))
         self._process = await asyncio.create_subprocess_exec(
             *arguments,

@@ -263,6 +263,17 @@ async def test_platform_mcp_workflow_permission_matrix_and_create(
         tool_name="get_workflow",
         arguments={},
     )
+    viewer_without_selection = _context(
+        organization_id=organization_id,
+        user_id=users["viewer"],
+        store=store,
+    )
+    await prepare_platform_workflow_tool(
+        viewer_without_selection,
+        server="workflow",
+        tool_name="get_workflow",
+        arguments={"workflow_id": workflow_id},
+    )
     await prepare_platform_workflow_tool(
         viewer,
         server="build",

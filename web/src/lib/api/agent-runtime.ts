@@ -90,6 +90,7 @@ export interface RuntimeModelOption {
   input_modalities?: string[];
   output_modalities?: string[];
   supports_tools?: boolean | null;
+  supports_web_search?: boolean;
   input_price?: string | null;
   output_price?: string | null;
   available?: boolean;

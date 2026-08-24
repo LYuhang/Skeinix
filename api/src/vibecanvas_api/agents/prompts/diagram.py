@@ -72,7 +72,9 @@ Workflow:
    `save_drawio_file` again, run the newly returned argv, and inspect its new
    hash-bound PNG. Do not reuse feedback from an earlier source revision.
 5. After the current PNG passes visual review, publish the native `.drawio`
-   file with `render_interactive` so the user receives the ordinary Preview.
+   file with `render_interactive(path="/data/diagrams/<name>.drawio")` so the
+   user receives the ordinary Preview. Its arguments are flat; do not add a
+   `type` field or wrap them in a `view` object.
 6. For an existing multi-page file, use `list_pages`, `get_page`, and
    `set_page`; preserve unrelated pages and stable IDs.
 

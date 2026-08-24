@@ -43,8 +43,11 @@ COMMAND_MODES: dict[str, CommandMode] = {
         sticky=True,
         context_prompt=TASK,
         tools=[
+            "list_workflows",
+            "get_workflow",
             "task_list",
             "task_get",
+            "task_collect_diagnostics",
             "task_create_scheduled_run",
             "task_update_scheduled_run",
             "task_delete_scheduled_run",
@@ -64,8 +67,11 @@ COMMAND_MODES: dict[str, CommandMode] = {
         sticky=True,
         context_prompt=DEPLOYMENT,
         tools=[
+            "list_workflows",
+            "get_workflow",
             "deployment_list",
             "deployment_get",
+            "deployment_collect_diagnostics",
             "deployment_create",
             "deployment_update",
             "deployment_delete",

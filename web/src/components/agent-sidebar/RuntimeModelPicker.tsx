@@ -27,6 +27,7 @@ import type { AgentSettings } from '@/stores/agent-settings';
 import { cn } from '@/lib/utils';
 
 const NO_MODEL_AVAILABLE = '__no_model_available__';
+const MODEL_RENDER_LIMIT = 80;
 
 interface RuntimeModelPickerProps {
   capabilities?: AgentRuntimeCapabilities;
@@ -105,6 +106,7 @@ export function RuntimeModelPicker({
     (model) => model.id === selectedValue,
   );
   const selectedMissing = !!modelId && !selectedModel;
+  const connectionLocked = capabilities?.bound_agent_settings != null;
 
   const sourceLabel = (source: string) => {
     if (source === 'managed_api') {
@@ -154,6 +156,16 @@ export function RuntimeModelPicker({
       ].filter(Boolean).join(' ').toLocaleLowerCase().includes(deferredQuery);
     });
   }, [activeGroup, deferredQuery]);
+  const displayedModels = useMemo(() => {
+    if (visibleModels.length <= MODEL_RENDER_LIMIT) return visibleModels;
+    const selected = visibleModels.find((model) => model.id === selectedValue);
+    if (!selected) return visibleModels.slice(0, MODEL_RENDER_LIMIT);
+    return [
+      selected,
+      ...visibleModels.filter((model) => model.id !== selected.id),
+    ].slice(0, MODEL_RENDER_LIMIT);
+  }, [selectedValue, visibleModels]);
+  const hiddenModelCount = visibleModels.length - displayedModels.length;
 
   const selectedLabel = selectedMissing
     ? `${modelId} · ${t('agent_settings.unavailable', 'Unavailable')}`
@@ -242,7 +254,7 @@ export function RuntimeModelPicker({
                   <p className="px-3 py-8 text-center text-sm text-muted-foreground">
                     {t('agent_settings.no_matching_models', 'No matching models')}
                   </p>
-                ) : visibleModels.map((model) => {
+                ) : displayedModels.map((model) => {
                   const free = isFreeModel(model);
                   const inputPrice = pricePerMillion(model.input_price);
                   const outputPrice = pricePerMillion(model.output_price);
@@ -298,16 +310,35 @@ export function RuntimeModelPicker({
                     </button>
                   );
                 })}
+                {hiddenModelCount > 0 ? (
+                  <p className="px-3 py-2 text-center text-xs text-muted-foreground">
+                    {t(
+                      'agent_settings.refine_model_search',
+                      'Search to find {{count}} more models',
+                      { count: hiddenModelCount },
+                    )}
+                  </p>
+                ) : null}
               </div>
             </>
           ) : (
             <>
               <div className="border-b border-edge-subtle px-4 py-3">
                 <h3 className="text-sm font-semibold">
-                  {t('agent_settings.choose_source', 'Choose a model source')}
+                  {connectionLocked
+                    ? t('agent_settings.connection_locked_title', 'Model connection')
+                    : t('agent_settings.choose_source', 'Choose a model source')}
                 </h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t('agent_settings.choose_source_hint', 'Sources are filtered by the Runtime selected in Settings.')}
+                  {connectionLocked
+                    ? t(
+                      'agent_settings.connection_locked_hint',
+                      'This Chat stays on its current connection. Start a new Chat to use another source.',
+                    )
+                    : t(
+                      'agent_settings.choose_source_hint',
+                      'Sources are filtered by the Runtime selected in Settings.',
+                    )}
                 </p>
               </div>
               <div className="p-1.5">

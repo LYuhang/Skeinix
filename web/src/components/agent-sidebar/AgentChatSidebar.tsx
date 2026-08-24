@@ -288,11 +288,20 @@ export function AgentChatSidebar({
     }
     if (discoveredWfRef.current === lastWfId) return;
     discoveredWfRef.current = lastWfId;
+    if (activeChatId) {
+      queueMicrotask(() => setActiveRunDiscoveryStatus('ready'));
+      return;
+    }
     let disposed = false;
     void (async () => {
       setActiveRunDiscoveryStatus('pending');
       const discovered = await readServerActiveTurns(lastWfId);
-      if (disposed) return;
+      // New Chat/history selection is a synchronous user decision. Do not let
+      // an older startup request replace it after the network response lands.
+      if (
+        disposed
+        || useUIStore.getState().activeChatIds[chatSurface] !== null
+      ) return;
       if (discovered === null) {
         setActiveRunDiscoveryStatus('error');
         return;
@@ -308,7 +317,7 @@ export function AgentChatSidebar({
     return () => {
       disposed = true;
     };
-  }, [chatSurface, lastWfId, setActiveChatId]);
+  }, [activeChatId, chatSurface, lastWfId, setActiveChatId]);
 
   // Restore the latest persisted Sidepanel Chat even when it has no active Run:
   // post-tool Continue gates outlive their originating Turn, so active-run

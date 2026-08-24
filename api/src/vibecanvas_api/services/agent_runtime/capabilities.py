@@ -208,6 +208,7 @@ def langchain_capabilities(
                     input_modalities=list(model.get("input_modalities") or []),
                     output_modalities=list(model.get("output_modalities") or []),
                     supports_tools=bool(model.get("supports_tools")),
+                    supports_web_search=bool(model.get("supports_web_search")),
                     input_price=(
                         str(pricing["prompt"])
                         if pricing.get("prompt") is not None else None
@@ -419,6 +420,7 @@ async def codex_capabilities(
                     input_modalities=list(model.get("input_modalities") or []),
                     output_modalities=list(model.get("output_modalities") or []),
                     supports_tools=bool(model.get("supports_tools")),
+                    supports_web_search=bool(model.get("supports_web_search")),
                     input_price=(
                         str(pricing["prompt"])
                         if pricing.get("prompt") is not None else None

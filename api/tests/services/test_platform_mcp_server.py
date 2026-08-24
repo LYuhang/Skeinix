@@ -299,6 +299,7 @@ async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None
     assert set(task_tools) == {
         "task_list",
         "task_get",
+        "task_collect_diagnostics",
         "task_create_scheduled_run",
         "task_update_scheduled_run",
         "task_delete_scheduled_run",
@@ -306,6 +307,7 @@ async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None
         "task_resume",
     }
     assert task_tools["task_list"].annotations.readOnlyHint is True
+    assert task_tools["task_collect_diagnostics"].annotations.readOnlyHint is True
     assert (
         task_tools["task_create_scheduled_run"]
         .inputSchema["properties"]["require_user_auth"]["default"]
@@ -317,11 +319,17 @@ async def test_task_and_deployment_platform_mcps_export_crud_contracts() -> None
     assert set(deployment_tools) == {
         "deployment_list",
         "deployment_get",
+        "deployment_collect_diagnostics",
         "deployment_create",
         "deployment_update",
         "deployment_delete",
     }
     assert deployment_tools["deployment_get"].annotations.readOnlyHint is True
+    assert (
+        deployment_tools["deployment_collect_diagnostics"]
+        .annotations.readOnlyHint
+        is True
+    )
     assert (
         deployment_tools["deployment_create"]
         .inputSchema["properties"]["require_user_auth"]["default"]

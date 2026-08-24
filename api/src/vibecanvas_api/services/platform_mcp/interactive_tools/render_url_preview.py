@@ -8,15 +8,15 @@ from langchain_core.tools import tool
 
 from vibecanvas_api.agents.tools.decorator import tool_error_boundary
 from vibecanvas_api.services.platform_mcp.interactive_tools.render_interactive import (
-    render_interactive,
+    _render_view,
 )
 
 
 @tool(response_format="content_and_artifact")
 @tool_error_boundary(tool="render_url_preview")
 async def render_url_preview(
-    title: str,
     url: str,
+    title: str = "",
     description: str = "",
     *,
     runtime: ToolRuntime,
@@ -30,16 +30,14 @@ async def render_url_preview(
     site can still refuse iframe embedding with its own browser security
     policy, in which case the user can open it in a separate tab.
 
-    Supply a concise user-facing ``title``, the absolute ``url``, and an
-    optional ``description`` explaining what the page contains.
+    Supply the absolute ``url``. ``title`` and ``description`` are optional;
+    the Preview uses a neutral title when one is omitted.
     """
-    return await render_interactive.coroutine(
+    return await _render_view(
+        type="url_preview",
         title=title,
-        view={
-            "type": "url_preview",
-            "url": url,
-            "description": description,
-        },
+        url=url,
+        description=description,
         require_human_confirm=False,
         runtime=runtime,
     )

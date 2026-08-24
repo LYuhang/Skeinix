@@ -102,6 +102,7 @@ export interface OpenRouterModel {
   input_modalities: string[];
   output_modalities: string[];
   supports_tools: boolean;
+  supports_web_search: boolean;
   supported_reasoning_efforts: string[];
   default_reasoning_effort: string | null;
   pricing: { prompt?: string | null; completion?: string | null };

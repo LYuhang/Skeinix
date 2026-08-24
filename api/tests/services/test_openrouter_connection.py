@@ -63,6 +63,7 @@ def test_catalog_keeps_only_text_tool_models_and_preserves_unavailable_current()
     models = subject.normalize_catalog({"data": [_model(), image_only, no_tools]})
     assert [model["id"] for model in models] == ["openai/gpt-5"]
     assert models[0]["supports_tools"] is True
+    assert models[0]["supports_web_search"] is False
     assert models[0]["context_length"] == 400_000
     assert models[0]["supported_reasoning_efforts"] == ["low", "medium", "high"]
     assert models[0]["default_reasoning_effort"] == "medium"
@@ -72,6 +73,31 @@ def test_catalog_keeps_only_text_tool_models_and_preserves_unavailable_current()
     )
     assert merged[-1]["id"] == "anthropic/retired-model"
     assert merged[-1]["available"] is False
+
+
+def test_catalog_keeps_max_effort_selectable_but_uses_a_balanced_default() -> None:
+    model = _model("stealth/ox-alpha")
+    model["reasoning"] = {
+        "supported_efforts": ["low", "high", "max"],
+        "default_effort": "max",
+    }
+
+    normalized = subject.normalize_model(model)
+
+    assert normalized is not None
+    assert normalized["supported_reasoning_efforts"] == ["low", "high", "max"]
+    assert normalized["default_reasoning_effort"] == "low"
+
+
+def test_catalog_preserves_hosted_web_search_capability_separately() -> None:
+    searchable = _model()
+    searchable["supported_parameters"].append("web_search_options")
+
+    model = subject.normalize_model(searchable)
+
+    assert model is not None
+    assert model["supports_tools"] is True
+    assert model["supports_web_search"] is True
 
 
 @pytest.mark.asyncio

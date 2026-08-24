@@ -19246,6 +19246,11 @@
             "title": "Supports Tools",
             "default": false
           },
+          "supports_web_search": {
+            "type": "boolean",
+            "title": "Supports Web Search",
+            "default": false
+          },
           "supported_reasoning_efforts": {
             "items": {
               "type": "string"
@@ -21095,6 +21100,11 @@
               }
             ],
             "title": "Supports Tools"
+          },
+          "supports_web_search": {
+            "type": "boolean",
+            "title": "Supports Web Search",
+            "default": false
           },
           "input_price": {
             "anyOf": [

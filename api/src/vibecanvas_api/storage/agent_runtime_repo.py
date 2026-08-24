@@ -272,10 +272,11 @@ class AgentRuntimeRepo:
     ) -> dict | None:
         """Persist the model/settings used by the next accepted Turn.
 
-        The Runtime type remains fixed for the Chat, while a user may switch
-        models, reasoning effort, or API sources between idle Turns.  The row
-        lock makes the latest accepted selection authoritative for Resume.
-        Each AgentRun separately stores its immutable execution snapshot.
+        Runtime type and the exact credential/account connection remain fixed
+        after the first accepted Turn. A user may switch models and reasoning
+        effort within that connection between idle Turns. The row lock makes
+        the latest accepted selection authoritative for Resume; each AgentRun
+        separately stores its immutable execution snapshot.
         """
         if not model_id.strip() or not connection_id.strip():
             raise ValueError("runtime model id is required")
@@ -294,6 +295,11 @@ class AgentRuntimeRepo:
             return None
         if chat.runtime_type != runtime_type:
             raise ValueError("runtime binding changed during model selection")
+        if (
+            chat.runtime_connection_id is not None
+            and chat.runtime_connection_id != connection_id
+        ):
+            raise ValueError("runtime connection is fixed for the Chat")
         normalized_settings = {**agent_settings, "model_id": model_id}
         chat.runtime_connection_id = connection_id
         chat.runtime_model_id = model_id

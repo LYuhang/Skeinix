@@ -483,6 +483,85 @@ class TasksRepo:
         )
         return int(result.scalar_one_or_none() or 0)
 
+    async def event_counts_for_task(
+        self,
+        *,
+        task_id: uuid.UUID,
+        from_: datetime,
+        to: datetime,
+    ) -> dict[str, int]:
+        """Return exact event-type counts for one authorized diagnostic window."""
+        result = await self.session.execute(
+            select(TaskEvent.event_type, func.count())
+            .where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.ts >= from_,
+                TaskEvent.ts <= to,
+            )
+            .group_by(TaskEvent.event_type)
+        )
+        return {
+            str(event_type): int(count)
+            for event_type, count in result.all()
+        }
+
+    async def scheduled_execution_summary(
+        self,
+        *,
+        schedule_id: uuid.UUID,
+        from_: datetime,
+        to: datetime,
+    ) -> dict[str, Any]:
+        """Aggregate scheduled execution status and duration without reading inputs."""
+        result = await self.session.execute(
+            select(
+                ScheduledRunExecution.status,
+                func.count(),
+                func.count(
+                    ScheduledRunExecution.finished_at
+                    - ScheduledRunExecution.started_at
+                ),
+                func.avg(
+                    func.extract(
+                        "epoch",
+                        ScheduledRunExecution.finished_at
+                        - ScheduledRunExecution.started_at,
+                    )
+                    * 1000.0
+                ),
+            )
+            .where(
+                ScheduledRunExecution.schedule_id == schedule_id,
+                ScheduledRunExecution.triggered_at >= from_,
+                ScheduledRunExecution.triggered_at <= to,
+            )
+            .group_by(ScheduledRunExecution.status)
+        )
+        status_counts: dict[str, int] = {}
+        duration_weighted_total = 0.0
+        duration_count = 0
+        for status, count, completed_count, average_duration_ms in result.all():
+            normalized_count = int(count)
+            status_counts[str(status)] = normalized_count
+            if average_duration_ms is not None:
+                duration_weighted_total += (
+                    float(average_duration_ms) * int(completed_count)
+                )
+                duration_count += int(completed_count)
+        total = sum(status_counts.values())
+        failed = status_counts.get("failed", 0)
+        return {
+            "total": total,
+            "status_counts": status_counts,
+            "failures": failed,
+            "failure_rate": (failed / total if total else 0.0),
+            "average_duration_ms": (
+                duration_weighted_total / duration_count
+                if duration_count
+                else None
+            ),
+        }
+
     async def create_schedule(
         self,
         *,

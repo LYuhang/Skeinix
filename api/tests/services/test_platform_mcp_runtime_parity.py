@@ -16,6 +16,7 @@ from vibecanvas_api.config import config
 from vibecanvas_api.services.agent_runtime.protocol import (
     RuntimeCapabilities,
     RuntimeModelOption,
+    RuntimeReasoningEffortOption,
     RuntimeType,
 )
 from vibecanvas_api.services.agent_runtime.model_capability import (
@@ -306,7 +307,19 @@ async def test_codex_personal_api_uses_the_host_model_broker(
         model = RuntimeModelOption(
             id=public_model_id,
             label="Codex personal API",
+            description="Versioned personal provider model",
             provider="openai",
+            context_length=128000,
+            input_modalities=["text", "image"],
+            supports_tools=True,
+            supported_reasoning_efforts=[
+                RuntimeReasoningEffortOption(
+                    id="high",
+                    label="High",
+                    description="Deeper reasoning",
+                ),
+            ],
+            default_reasoning_effort="high",
             is_default=True,
         )
         return RuntimeCapabilities(
@@ -352,6 +365,19 @@ async def test_codex_personal_api_uses_the_host_model_broker(
     model = dispatched[0].model
     assert model["id"] == "gpt-codex-personal-test"
     assert model["base_url"].endswith("/api/internal/runtime-model/v1")
+    assert model["label"] == "Codex personal API"
+    assert model["description"] == "Versioned personal provider model"
+    assert model["context_length"] == 128000
+    assert model["input_modalities"] == ["text", "image"]
+    assert model["supports_tools"] is True
+    assert model["supported_reasoning_efforts"] == [
+        {
+            "id": "high",
+            "label": "High",
+            "description": "Deeper reasoning",
+        }
+    ]
+    assert model["default_reasoning_effort"] == "high"
     assert "personal-provider-secret" not in repr(model)
     capability = verify_runtime_model_capability(
         model["api_key"],
