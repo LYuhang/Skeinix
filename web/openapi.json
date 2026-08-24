@@ -3,7 +3,7 @@
   "info": {
     "title": "Skeinix API",
     "description": "HTTP API for Skeinix workflow editing and execution.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "paths": {
     "/api/v1/auth/register": {

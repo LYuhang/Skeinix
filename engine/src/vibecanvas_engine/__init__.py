@@ -4,7 +4,7 @@ Importing this package also has the side-effect of populating
 ``node_registry`` with all built-in node classes (via ``node.py``).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .workflow import Workflow
 from .register import BaseLLM, Registry, llm_registry, node_registry

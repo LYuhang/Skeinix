@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibecanvas-engine"
-version = "0.2.0"
+version = "0.3.0"
 description = "Skeinix workflow execution engine — pure Python, no web framework."
 readme = "README.md"
 requires-python = ">=3.10"

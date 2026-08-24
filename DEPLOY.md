@@ -98,9 +98,17 @@ For each release, the workflow:
 7. verifies the attestations before completing the job.
 
 The workflow also builds, tests, packages, and attests the Chrome extension.
-The production Compose deployment uses the API and Web image digests. The
-separate Engine image is a release artifact but is not a service in the current
-Compose topology.
+After every image and extension gate passes, it attaches a public release
+bundle to the matching GitHub Release. The bundle contains the installable
+extension ZIP, an immutable image manifest, consolidated security reports, and
+one SHA-256 checksum file. If the tag does not have a Release yet, the workflow
+creates a draft so that the notes can be reviewed before publication.
+
+The production Compose deployment uses the API and Web image digests recorded
+in the manifest. The separate Engine image is a release artifact but is not a
+service in the current Compose topology. GitHub Actions artifacts remain
+available for retained build evidence; user-facing downloads come from the
+GitHub Release and are not tied to the Actions retention period.
 
 Configure required reviewers for the `production-release` environment. The
 person approving a release should not be the sole author of its production
