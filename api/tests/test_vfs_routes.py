@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -51,3 +53,33 @@ def test_retired_user_prefixed_chat_scope_is_not_decoded():
     assert chat_id_from_workspace_scope(
         "__chatws_deadbeefdeadbeefdead_chatabc"
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_workspace_list_reconciles_loaded_sandbox_without_cold_start(
+    monkeypatch,
+):
+    scope = chat_workspace_scope_id("chat-live")
+    loaded = AsyncMock()
+    manager = AsyncMock()
+    manager.get_loaded_session.return_value = loaded
+    monkeypatch.setattr(vfs, "get_sandbox_manager", lambda: manager)
+
+    assert await vfs._reconcile_loaded_chat_workspace(
+        tenant_id="tenant-1",
+        scope_id=scope,
+    )
+    manager.get_loaded_session.assert_awaited_once_with("tenant-1", scope)
+    loaded.writeback_vfs.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_non_chat_vfs_list_never_reconciles_or_allocates_sandbox(monkeypatch):
+    manager = AsyncMock()
+    monkeypatch.setattr(vfs, "get_sandbox_manager", lambda: manager)
+
+    assert not await vfs._reconcile_loaded_chat_workspace(
+        tenant_id="tenant-1",
+        scope_id="workflow-1",
+    )
+    manager.get_loaded_session.assert_not_awaited()

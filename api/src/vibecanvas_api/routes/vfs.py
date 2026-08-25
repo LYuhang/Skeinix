@@ -9,6 +9,7 @@ comes from the SAME version_str formatter the agent's read_file uses.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import os
@@ -78,6 +79,7 @@ RAW_URL_TTL_S = 300
 # Cap for the raw media endpoint — binary/image/document previews are also kept
 # conservative until the View surface has streaming/range-based rendering.
 VFS_RAW_MAX_BYTES = 5 * 1024 * 1024
+_LIVE_SANDBOX_RECONCILE_TIMEOUT_S = 15.0
 # Content-types we are willing to serve INLINE (browser renders in-place). Any
 # other type is forced to application/octet-stream + attachment so this endpoint
 # can NEVER be coerced into hosting text/html or javascript (an XSS / content-
@@ -273,6 +275,14 @@ async def list_vfs(
         service=authz,
         wf_id=wf_id,
         action=Action.VIEW,
+    )
+    # The file tree is also the user-controlled reconciliation surface.  This
+    # call never allocates a sandbox: it only flushes an already-running Chat
+    # workspace, so both the Refresh button and the existing 3-second polling
+    # are Runtime/tool agnostic.
+    await _reconcile_loaded_chat_workspace(
+        tenant_id=ctx.tenant_id,
+        scope_id=wf_id,
     )
     entries = await VfsRepo(session, object_store=get_object_store()).ls_meta(
         wf_id=wf_id or None, prefix=prefix)
@@ -645,6 +655,44 @@ _EDITABLE_EXT_CONTENT_TYPES = {
 
 def _is_user_mount_scope(scope_id: str, user_id: str) -> bool:
     return scope_id == _mount_scope_id(user_id)
+
+
+async def _reconcile_loaded_chat_workspace(
+    *, tenant_id: str, scope_id: str,
+) -> bool:
+    """Persist one already-loaded Chat sandbox before listing its VFS.
+
+    This is deliberately driven by the file-list read, not by Runtime tool
+    names.  The Explorer's manual refresh and its open-panel polling therefore
+    observe files written by any CLI, MCP, SDK, or future Runtime without
+    cold-starting an idle sandbox.  Turn-end writeback remains the durability
+    fallback when nobody has the Explorer open.
+    """
+    if chat_id_from_workspace_scope(scope_id) is None:
+        return False
+    try:
+        manager = get_sandbox_manager()
+        loaded = await manager.get_loaded_session(tenant_id, scope_id)
+        if loaded is None:
+            return False
+        await asyncio.wait_for(
+            loaded.writeback_vfs(),
+            timeout=_LIVE_SANDBOX_RECONCILE_TIMEOUT_S,
+        )
+        return True
+    except TimeoutError:
+        logger.info(
+            "vfs_live_sandbox_reconcile_timeout",
+            wf_id=scope_id,
+            timeout_s=_LIVE_SANDBOX_RECONCILE_TIMEOUT_S,
+        )
+    except Exception:  # pragma: no cover - fail-soft read-side freshness aid
+        logger.warning(
+            "vfs_live_sandbox_reconcile_failed",
+            wf_id=scope_id,
+            exc_info=True,
+        )
+    return False
 
 
 async def _ensure_writable_vfs_scope(

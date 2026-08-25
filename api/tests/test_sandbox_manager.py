@@ -745,8 +745,17 @@ async def test_runtime_tool_end_persists_before_projection_is_yielded(tmp_path):
     )
     session.sync_workspace_path.assert_awaited_once_with("/memory/state.md")
 
-    await session._write_through_runtime_tool_event(event("bash", {"command": "true"}))
-    session.writeback_vfs.assert_awaited_once()
+    for command_tool in (
+        "bash",
+        "exec_command",
+        "apply_patch",
+        "shell",
+        "file_change",
+    ):
+        await session._write_through_runtime_tool_event(
+            event(command_tool, {"command": "true"})
+        )
+    assert session.writeback_vfs.await_count == 5
 
 
 @pytest.mark.asyncio

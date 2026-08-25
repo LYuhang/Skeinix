@@ -2,15 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import {
   ChevronRight,
 } from 'lucide-react';
-import { resolveFileCapability, isTextFileCapability } from '@/lib/files/capabilities';
+import { FileWorkbenchPreview } from '@/components/files/FileWorkbenchPreview';
 import { PaneResizeHandle } from '@/components/ui/pane-resize-handle';
 import { usePersistedPaneWidth } from '@/components/ui/use-persisted-pane-width';
 import { cn } from '@/lib/utils';
 import { FileTypeIcon } from '@/components/presentation/FileTypeIcon';
 
 type LoadedFile =
-  | { kind: 'text'; text: string }
-  | { kind: 'image'; url: string }
+  | { kind: 'ready'; blob: Blob }
   | { kind: 'binary' };
 
 type FileTreeNode = {
@@ -19,10 +18,6 @@ type FileTreeNode = {
   kind: 'folder' | 'file';
   children: FileTreeNode[];
 };
-
-function isTextFile(path: string, contentType: string) {
-  return isTextFileCapability(resolveFileCapability(path, contentType));
-}
 
 function buildFileTree(paths: string[]): FileTreeNode[] {
   const roots: FileTreeNode[] = [];
@@ -82,12 +77,6 @@ function visibleTreeItems(
   ]);
 }
 
-function TextViewer({ text }: { text: string }) {
-  return (
-    <pre className="min-w-max whitespace-pre p-4 font-mono text-xs leading-5">{text}</pre>
-  );
-}
-
 export function SkillFileBrowser({
   files,
   skillMd,
@@ -132,6 +121,7 @@ export function SkillFileBrowser({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const previousSelectedPathRef = useRef<string | undefined>(undefined);
   const cacheRef = useRef(new Map<string, LoadedFile>());
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const typeaheadRef = useRef({ value: '', timer: 0 });
@@ -150,18 +140,12 @@ export function SkillFileBrowser({
     }
   }, [expanded, expansionStorageKey]);
 
-  useEffect(() => {
-    const cache = cacheRef.current;
-    return () => {
-      for (const cached of cache.values()) {
-        if (cached.kind === 'image') URL.revokeObjectURL(cached.url);
-      }
-      cache.clear();
-    };
-  }, []);
-
   const selectFile = useCallback(async (path: string) => {
     const request = ++requestRef.current;
+    // Record our intent before routing catches up. This prevents the previous
+    // URL value from restoring the old row during the same render cycle, while
+    // still allowing a genuine browser Back/Forward change to load below.
+    previousSelectedPathRef.current = path;
     setSelected(path);
     setFocusedPath(path);
     onSelectedPathChange?.(path);
@@ -180,27 +164,11 @@ export function SkillFileBrowser({
     try {
       const blob = await loadFile(path);
       if (request !== requestRef.current) return;
-      const type = blob.type.toLowerCase();
-      let next: LoadedFile;
-      if (isTextFile(path, type)) {
-        next = { kind: 'text', text: await blob.text() };
-      } else if (type.startsWith('image/')) {
-        next = { kind: 'image', url: URL.createObjectURL(blob) };
-      } else {
-        next = { kind: 'binary' };
-      }
-      if (request !== requestRef.current) {
-        if (next.kind === 'image') URL.revokeObjectURL(next.url);
-        return;
-      }
+      const next: LoadedFile = { kind: 'ready', blob };
       const cache = cacheRef.current;
       if (cache.size >= 50) {
         const oldestKey = cache.keys().next().value as string | undefined;
-        if (oldestKey) {
-          const oldest = cache.get(oldestKey);
-          if (oldest?.kind === 'image') URL.revokeObjectURL(oldest.url);
-          cache.delete(oldestKey);
-        }
+        if (oldestKey) cache.delete(oldestKey);
       }
       cache.set(path, next);
       setLoaded(next);
@@ -212,9 +180,11 @@ export function SkillFileBrowser({
   }, [loadFile, onSelectedPathChange]);
 
   useEffect(() => {
-    if (!selectedPath || !orderedFiles.includes(selectedPath) || selectedPath === selected) return;
+    if (selectedPath === previousSelectedPathRef.current) return;
+    previousSelectedPathRef.current = selectedPath;
+    if (!selectedPath || !orderedFiles.includes(selectedPath)) return;
     queueMicrotask(() => { void selectFile(selectedPath); });
-  }, [orderedFiles, selectFile, selected, selectedPath]);
+  }, [orderedFiles, selectFile, selectedPath]);
 
   const toggleFolder = (path: string) => {
     setExpanded((current) => {
@@ -275,8 +245,6 @@ export function SkillFileBrowser({
       if (match) focusItem(match.node.path);
     }
   };
-  const selectedText = selected === 'SKILL.md' ? skillMd : loaded.kind === 'text' ? loaded.text : null;
-
   return (
     <div className="flex h-full min-h-[26rem] overflow-hidden rounded-md border border-edge-subtle bg-background">
       <aside
@@ -294,7 +262,7 @@ export function SkillFileBrowser({
         />
         <div className="flex h-10 shrink-0 items-center justify-between border-b px-3">
           <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
-            <FileTypeIcon directory className="size-5 rounded-none bg-transparent" />
+            <FileTypeIcon directory className="size-6 rounded-md" />
             <span className="truncate">{labels.files}</span>
           </div>
           <span className="text-xs tabular-nums text-muted-foreground">{orderedFiles.length}</span>
@@ -337,13 +305,13 @@ export function SkillFileBrowser({
                       <FileTypeIcon
                         directory
                         open={isExpanded}
-                        className="size-5 rounded-none bg-transparent"
+                        className="size-6 rounded-md"
                       />
                     </>
                   ) : (
                     <>
                       <span className="w-3.5 shrink-0" />
-                      <FileTypeIcon fileName={node.path} className="size-5 rounded-none bg-transparent" />
+                      <FileTypeIcon fileName={node.path} className="size-6 rounded-md" />
                     </>
                   )}
                   <span className="truncate">{node.name}</span>
@@ -354,38 +322,15 @@ export function SkillFileBrowser({
         </div>
       </aside>
 
-      <section className="flex min-h-0 min-w-0 flex-col">
-        <div className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b px-3 font-mono text-xs text-muted-foreground">
-          {selected.split('/').map((part, index, parts) => (
-            <span key={`${part}:${index}`} className="flex min-w-0 items-center gap-1">
-              {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 opacity-50" /> : null}
-              <span className={index === parts.length - 1 ? 'truncate text-foreground' : 'truncate'}>{part}</span>
-            </span>
-          ))}
-        </div>
-        <div className="page-scroll-region flex-1 bg-card/40">
-          {loading ? (
-            <div className="p-8 text-sm text-muted-foreground">{labels.loading}</div>
-          ) : error ? (
-            <div className="p-8 text-sm">
-              <p className="font-medium text-destructive">{labels.failed}</p>
-              <details className="mt-2 text-xs text-muted-foreground">
-                <summary className="w-fit cursor-pointer rounded-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
-                  {labels.failed}
-                </summary>
-                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-sunken p-3 font-mono">{error}</pre>
-              </details>
-            </div>
-          ) : selectedText !== null ? (
-            <TextViewer text={selectedText} />
-          ) : loaded.kind === 'image' ? (
-            <div className="flex min-h-full items-center justify-center p-6">
-              <img src={loaded.url} alt={selected} className="max-h-full max-w-full object-contain" />
-            </div>
-          ) : (
-            <div className="p-8 text-sm text-muted-foreground">{labels.binary}</div>
-          )}
-        </div>
+      <section className="min-h-0 min-w-0 flex-1">
+        <FileWorkbenchPreview
+          fileName={selected}
+          mimeType={loaded.kind === 'ready' ? loaded.blob.type : selected === 'SKILL.md' ? 'text/markdown' : null}
+          blob={loaded.kind === 'ready' ? loaded.blob : null}
+          text={selected === 'SKILL.md' ? skillMd : null}
+          loading={loading}
+          error={error ? `${labels.failed}: ${error}` : null}
+        />
       </section>
     </div>
   );

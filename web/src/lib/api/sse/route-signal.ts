@@ -36,6 +36,7 @@ import { queryClient } from '@/app/query-client';
 import i18n from '@/lib/i18n';
 import { useChatStreamStore } from '@/stores/chat-stream';
 import type { ChatStreamEvent, StreamChunk, TodoItem } from '@/stores/chat-stream';
+import type { ToolInvocationEnvelope } from '@/components/agent-sidebar/types';
 import { fetchChatHistory, type ChatHistoryPage } from '@/lib/api/queries/chats';
 import { rememberActiveTurn, clearActiveTurn } from './active-turn';
 
@@ -212,6 +213,9 @@ function getChatEvent(payload: unknown): ChatStreamEvent | null {
       type,
       tool_call_id: payload.tool_call_id,
       content: typeof payload.content === 'string' ? payload.content : '',
+      invocation: isObject(payload.invocation)
+        ? payload.invocation as unknown as ToolInvocationEnvelope
+        : undefined,
       artifact: isObject(payload.artifact) ? payload.artifact : undefined,
       status: payload.status === 'error' ? 'error' : 'done',
     };
@@ -308,6 +312,10 @@ const VFS_MUTATING_TOOLS = new Set([
   'write_file',
   'edit_file',
   'bash',
+  'shell',
+  'exec_command',
+  'apply_patch',
+  'file_change',
   'batch_execute',
   'node_execute',
   'run_workflow',
@@ -500,7 +508,13 @@ export function routeAgentSignalWith(
           });
         }
         if (event.type === 'tool_end') {
-          const tool = toolNameFromArtifact(event.artifact);
+          // Runtime-native tool results (notably Codex ``shell`` and
+          // ``file_change``) have no artifact envelope.  Their canonical
+          // invocation still carries the tool name, so use it before the
+          // legacy artifact metadata fallback.  The backend has already
+          // completed VFS write-through before emitting this tool_end.
+          const tool = event.invocation?.name
+            || toolNameFromArtifact(event.artifact);
           if (tool === 'create_workflow' || tool === 'set_workflow') {
             const workflowId = workflowIdFromToolArtifact(event.artifact);
             client.invalidateQueries({ queryKey: ['chat-workspace', ctx.chatId] });

@@ -198,7 +198,7 @@ export function KnowledgeSourceExplorer({
         />
         <div className="flex h-10 shrink-0 items-center justify-between border-b px-3">
           <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
-            <FileTypeIcon directory className="size-5 rounded-none bg-transparent" />
+            <FileTypeIcon directory className="size-6 rounded-md" />
             <span className="truncate">{t('knowledge.sourceFiles', 'Files')}</span>
           </div>
           <div className="flex items-center gap-1">
@@ -246,7 +246,13 @@ export function KnowledgeSourceExplorer({
                     {node.kind === 'folder' ? (
                       <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', expanded.has(node.path) && 'rotate-90')} />
                     ) : <span className="w-3.5 shrink-0" />}
-                    <FileTypeIcon fileName={node.name} directory={node.kind === 'folder'} className="size-5 shrink-0 rounded-none bg-transparent" />
+                    <FileTypeIcon
+                      fileName={node.name}
+                      mimeType={node.file?.mime_type}
+                      directory={node.kind === 'folder'}
+                      open={node.kind === 'folder' && expanded.has(node.path)}
+                      className="size-6 shrink-0 rounded-md"
+                    />
                     <span className="min-w-0 flex-1 truncate">{node.name}</span>
                   </button>
                 );
@@ -318,21 +324,9 @@ export function KnowledgeSourceExplorer({
         />
       </aside>
 
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-live="polite">
+      <section className="min-h-0 min-w-0 flex-1" aria-live="polite">
         {selected ? (
-          <>
-            <div className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b px-3 font-mono text-xs text-content-tertiary">
-              {selected.name.split('/').map((part, index, parts) => (
-                <span key={`${part}:${index}`} className="flex min-w-0 items-center gap-1">
-                  {index > 0 ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
-                  <span className={cn('truncate', index === parts.length - 1 && 'font-medium text-content-primary')}>{part}</span>
-                </span>
-              ))}
-            </div>
-            <div className="page-scroll-region min-h-0 flex-1 bg-surface-work">
-              <KnowledgeFilePreview kbId={kbId} file={selected} />
-            </div>
-          </>
+          <KnowledgeFilePreview kbId={kbId} file={selected} />
         ) : null}
       </section>
     </div>

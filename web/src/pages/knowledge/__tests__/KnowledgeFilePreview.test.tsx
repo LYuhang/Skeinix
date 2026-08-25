@@ -122,7 +122,7 @@ describe('KnowledgeFilePreview format routing', () => {
       'pptx',
     ));
     expect(await screen.findByText('Preview is not available for this file type')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Download deck.pptx' })).toHaveAttribute(
       'download',
       'deck.pptx',
     );

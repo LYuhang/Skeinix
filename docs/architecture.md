@@ -375,6 +375,13 @@ are listed and when a call is forwarded.
 VFS metadata and file content are separated by the
 [VFS store](../api/src/vibecanvas_api/storage/vfs_store.py) and
 [object-store providers](../api/src/vibecanvas_api/services/object_store.py).
+The Sandbox file explorer still reads this durable VFS view. While an
+interactive Chat sandbox is loaded, listing or manually refreshing its files
+first reconciles the live workspace into VFS; recognized file mutations also
+trigger an earlier best-effort writeback. Turn completion remains the final
+durability boundary, so visibility does not depend on a particular Agent tool
+name. See the [VFS route](../api/src/vibecanvas_api/routes/vfs.py), [Web query
+polling](../web/src/lib/api/queries/vfs.ts), and [sandbox manager](../api/src/vibecanvas_api/services/sandbox/manager.py).
 Runtime checkpoints are accessed through
 [`checkpoint_store.py`](../api/src/vibecanvas_api/services/agent_runtime/checkpoint_store.py).
 Encryption and retention behavior are described in

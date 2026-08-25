@@ -55,4 +55,43 @@ describe('<SkillFileBrowser>', () => {
     expect(onSelectedPathChange).toHaveBeenCalledWith('scripts/helpers/format.py');
     expect(screen.getByRole('treeitem', { selected: true })).toHaveTextContent('format.py');
   });
+
+  it('does not restore a stale controlled path while URL state catches up', async () => {
+    const user = userEvent.setup();
+    const loadFile = vi.fn(async () => new Blob(['logo'], { type: 'image/png' }));
+
+    render(
+      <SkillFileBrowser
+        files={['assets/logo.png']}
+        skillMd="# Skill"
+        loadFile={loadFile}
+        selectedPath="SKILL.md"
+        onSelectedPathChange={() => undefined}
+        labels={{ files: 'Package Files', loading: 'Loading File…', failed: 'Could Not Load File', binary: 'No Preview' }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'logo.png' }));
+
+    expect(await screen.findByRole('heading', { name: 'logo.png' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { selected: true })).toHaveTextContent('logo.png');
+  });
+
+  it('loads a non-SKILL file selected by a direct URL on first render', async () => {
+    const loadFile = vi.fn(async () => new Blob(['theme: light'], { type: 'text/yaml' }));
+
+    render(
+      <SkillFileBrowser
+        files={['agents/openai.yaml']}
+        skillMd="# Skill"
+        loadFile={loadFile}
+        selectedPath="agents/openai.yaml"
+        onSelectedPathChange={() => undefined}
+        labels={{ files: 'Package Files', loading: 'Loading File…', failed: 'Could Not Load File', binary: 'No Preview' }}
+      />,
+    );
+
+    expect(await screen.findByText('theme: light')).toBeInTheDocument();
+    expect(loadFile).toHaveBeenCalledWith('agents/openai.yaml');
+  });
 });

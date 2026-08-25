@@ -437,6 +437,37 @@ describe('routeAgentSignalWith', () => {
     expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['vfs'] });
   });
 
+  it.each(['shell', 'file_change', 'exec_command', 'apply_patch'])(
+    'runtime-native %s tool_end refreshes VFS from invocation metadata',
+    (toolName) => {
+      const client = makeClient();
+      routeAgentSignalWith(
+        client,
+        'CHAT_EVENT',
+        {
+          type: 'tool_end',
+          tool_call_id: `call_${toolName}`,
+          content: 'ok',
+          status: 'done',
+          invocation: {
+            schemaVersion: 1,
+            invocationId: `call_${toolName}`,
+            runtime: { type: 'codex' },
+            origin: 'runtime_native',
+            capability: 'filesystem',
+            name: toolName,
+            status: 'success',
+            input: {},
+          },
+        },
+        ctx,
+      );
+
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['vfs'] });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['storage'] });
+    },
+  );
+
   it('done flips state to complete and invalidates chat history + sessions', () => {
     const client = makeClient();
     useChatStreamStore.getState().setState('streaming');

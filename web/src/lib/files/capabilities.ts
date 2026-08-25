@@ -9,6 +9,11 @@ export type FilePreviewKind =
   | 'delimited'
   | 'jsonl'
   | 'workbook'
+  | 'pdf'
+  | 'document'
+  | 'presentation'
+  | 'archive'
+  | 'code'
   | 'text'
   | 'link'
   | 'binary'
@@ -38,6 +43,21 @@ const EXTENSION_MIME: Record<string, string> = {
   csv: 'table/csv',
   tsv: 'table/tsv',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  odt: 'application/vnd.oasis.opendocument.text',
+  rtf: 'application/rtf',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odp: 'application/vnd.oasis.opendocument.presentation',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  '7z': 'application/x-7z-compressed',
+  rar: 'application/vnd.rar',
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -84,8 +104,8 @@ function normalizedMime(contentType?: string | null): string {
 }
 
 function capability(kind: FilePreviewKind, mime: string, label: string): FileCapability {
-  const source = ['markdown', 'html', 'python', 'json', 'delimited', 'jsonl', 'text'].includes(kind);
-  const preview = !['binary', 'unknown'].includes(kind);
+  const source = ['markdown', 'html', 'python', 'json', 'delimited', 'jsonl', 'code', 'text'].includes(kind);
+  const preview = !['binary', 'unknown', 'document', 'presentation', 'archive'].includes(kind);
   return {
     kind,
     mime,
@@ -94,7 +114,7 @@ function capability(kind: FilePreviewKind, mime: string, label: string): FileCap
     source,
     editable: source,
     safeRenderedPreview: kind === 'markdown' || kind === 'html',
-    progressive: ['video', 'delimited', 'jsonl', 'workbook', 'text', 'python', 'json'].includes(kind),
+    progressive: ['video', 'delimited', 'jsonl', 'workbook', 'text', 'python', 'json', 'code'].includes(kind),
   };
 }
 
@@ -124,10 +144,46 @@ export function resolveFileCapability(path: string, contentType?: string | null)
   if (mime === 'table/jsonl' || mime === 'application/x-ndjson') return capability('jsonl', mime, 'JSONL');
   if (mime === 'table/csv' || mime === 'text/csv') return capability('delimited', 'table/csv', 'CSV');
   if (mime === 'table/tsv' || mime === 'text/tab-separated-values') return capability('delimited', 'table/tsv', 'TSV');
-  if (mime === 'table/xlsx' || mime.includes('spreadsheetml.sheet')) return capability('workbook', mime, 'Excel');
+  if (
+    mime === 'table/xlsx'
+    || mime.includes('spreadsheetml.sheet')
+    || mime === 'application/vnd.ms-excel'
+    || mime === 'application/vnd.oasis.opendocument.spreadsheet'
+  ) return capability('workbook', mime, 'Excel');
+  if (mime === 'application/pdf') return capability('pdf', mime, 'PDF');
+  if (
+    mime === 'application/msword'
+    || mime.includes('wordprocessingml.document')
+    || mime === 'application/vnd.oasis.opendocument.text'
+    || mime === 'application/rtf'
+  ) return capability('document', mime, 'Document');
+  if (
+    mime === 'application/vnd.ms-powerpoint'
+    || mime.includes('presentationml.presentation')
+    || mime === 'application/vnd.oasis.opendocument.presentation'
+  ) return capability('presentation', mime, 'Presentation');
+  if (
+    mime === 'application/zip'
+    || mime === 'application/gzip'
+    || mime === 'application/x-tar'
+    || mime === 'application/x-7z-compressed'
+    || mime === 'application/vnd.rar'
+  ) return capability('archive', mime, 'Archive');
   if (mime.startsWith('link/')) return capability('link', mime, 'Link');
-  if (mime.startsWith('text/') || /javascript|xml|yaml|toml/.test(mime)) {
-    return capability('text', mime, ext ? ext.toLocaleUpperCase() : 'Text');
+  const structuredTextMime = /javascript|yaml|toml/.test(mime)
+    || mime === 'application/xml'
+    || mime === 'text/xml'
+    || mime.endsWith('+xml');
+  if (mime.startsWith('text/') || structuredTextMime) {
+    const codeExtensions = new Set([
+      'c', 'cc', 'cpp', 'css', 'go', 'h', 'hpp', 'java', 'js', 'jsx', 'rs',
+      'scss', 'sh', 'sql', 'toml', 'ts', 'tsx', 'xml', 'yaml', 'yml',
+    ]);
+    return capability(
+      codeExtensions.has(ext) ? 'code' : 'text',
+      mime,
+      ext ? ext.toLocaleUpperCase() : 'Text',
+    );
   }
   if (mime === 'application/octet-stream' || mime === 'binary/octet-stream') {
     return capability('binary', mime, ext ? ext.toLocaleUpperCase() : 'Binary');
@@ -136,5 +192,5 @@ export function resolveFileCapability(path: string, contentType?: string | null)
 }
 
 export function isTextFileCapability(value: FileCapability): boolean {
-  return ['markdown', 'html', 'python', 'json', 'delimited', 'jsonl', 'text'].includes(value.kind);
+  return ['markdown', 'html', 'python', 'json', 'delimited', 'jsonl', 'code', 'text'].includes(value.kind);
 }

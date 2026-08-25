@@ -18,7 +18,7 @@ export function renderVfsContent(entry: VfsReadOut): JSX.Element {
         ? HtmlRenderer
         : kind === 'link'
           ? LinkRenderer
-          : kind === 'text' || kind === 'markdown' || kind === 'python'
+          : kind === 'text' || kind === 'markdown' || kind === 'python' || kind === 'code'
             ? TextRenderer
             : FallbackRenderer;
   return <C entry={entry} />;

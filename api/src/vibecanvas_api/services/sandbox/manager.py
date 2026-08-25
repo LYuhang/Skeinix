@@ -2602,7 +2602,19 @@ class SandboxSession:
         tool_input = tool_input if isinstance(tool_input, dict) else {}
         if tool_name in {"write_file", "edit_file"}:
             await self.sync_workspace_path(str(tool_input.get("path") or ""))
-        elif tool_name in {"bash", "exec_command", "apply_patch"}:
+        elif tool_name in {
+            "bash",
+            "exec_command",
+            "apply_patch",
+            # Codex app-server projects native commandExecution items as
+            # ``shell`` and native patch items as ``file_change``.  Both can
+            # mutate several workspace paths, so they need the same completed-
+            # tool sweep as the legacy command adapters.  The sweep finishes
+            # before tool_end is yielded to the browser, making the VFS view
+            # immediately authoritative while the Turn is still running.
+            "shell",
+            "file_change",
+        }:
             # These tools may mutate several paths. The command process has
             # completed at tool_end, so the bounded workspace sweep is stable.
             await self.writeback_vfs()

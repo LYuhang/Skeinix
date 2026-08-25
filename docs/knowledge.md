@@ -37,6 +37,12 @@ files in the package.
 The Web application therefore presents a package as a file browser: choose a
 file in the directory tree and read its original content in the main pane.
 Index maintenance is automatic and is not part of the normal user workflow.
+The content pane selects a viewer from the file itself: Markdown uses a
+document reading layout, source files use syntax highlighting with line
+numbers and folding, and images, audio, video, and PDF use native media
+surfaces. Office documents and unsupported binary formats remain clearly
+identified and available for download rather than being rendered as plain
+text.
 
 Use **Upload knowledge** to create a package from a complete local folder or
 ZIP archive. The importer preserves nested paths, accepts a single outer folder
